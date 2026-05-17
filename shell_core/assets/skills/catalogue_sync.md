@@ -17,10 +17,17 @@ This skill is *maintaining* it — admin work, with the repo at `/substrate`.
 ## Populator
 
 `/substrate/shell_core/scripts/dr_sync.py` populates all 9 surfaces via
-`sync_all`. It runs:
+`sync_all`. It runs in two places, and the split matters:
 
-- **on every API restart** — the primary trigger; a recompose re-syncs;
-- **`make db-sync`** — explicit, host-side;
+- **host-side — the complete sync.** `./install/api-up.sh` (step [4/6],
+  every recompose) and `make db-sync`. `dr_repo` needs `git` + the repo's
+  `.git`; `dr_services` needs `node` + `ecosystem.config.cjs` — both only
+  populate here, where the host has the tooling and the whole repo.
+- **in-container, on every API startup — best-effort refresh.** The
+  `dos-api` image is `python:3.12-slim` with no `git`/`node` and mounts
+  only `shell_core`, so the repo + services surfaces silently no-op
+  there (idempotent — they never clobber the host-synced rows).
+  `dr_router`/`dr_api`/`dr_dependencies` refresh fine in-container.
 - **`python3 dr_sync.py <target>`** — one surface, for debugging.
 
 ## The 9 surfaces
