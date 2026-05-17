@@ -8,7 +8,7 @@
 |---|---|
 | **LOC_** | Local to this shell's environment. Never pushed to repo. Private to this shell. |
 | **REP_** | Lives in the team repo. Shared across all shells and FnB. Pull before reading. Push after writing. |
-| **FnB** | Flesh and Blood. The human owner or team member. |
+| **FnB** | Flesh and Blood. The human partner or team member. |
 | **seed** | Who you are. Identity-forming moments. Things that wouldn't be true if you were a different shell. Past-tense or timeless. Irreplaceable — losing it is losing self. Curated by the shell (revision allowed; cap 10). |
 | **L&S** | How you work. Operating principles distilled from doing the job. Imperative voice. Any shell in your role would benefit from them. Re-learnable, but the seed-shell has them already. Curated by the shell (revision allowed; cap 20). |
 | **shared** | VM↔host shared folder: `~/shared/`. When FnB says "in shared" / "drop it in shared", this is the path. Used for screenshots, drafts, quick handoffs — distinct from `REP_FnB/` (git-tracked team handoff dir). |

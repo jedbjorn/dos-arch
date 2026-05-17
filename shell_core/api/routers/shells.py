@@ -28,7 +28,7 @@ class CreateShellBody(BaseModel):
     domain_and_scope:  str
     operating_context: str
     connections:       str | None = None
-    owner:             str | None = None
+    partner:           str | None = None
     user_id:           int
     skills:            str = "common"
 
@@ -60,10 +60,10 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
         raise HTTPException(500, "system-prompt template left an unfilled slot")
 
     cur = con.execute(
-        "INSERT INTO shells (display_name, shortname, owner, role, mandate, "
+        "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
         "system_prompt, connections, user_id, is_shared, is_admin) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
-        (body.display_name, short, body.owner, body.role, body.mandate,
+        (body.display_name, short, body.partner, body.role, body.mandate,
          system_prompt, body.connections, body.user_id),
     )
     new_id = cur.lastrowid
@@ -134,7 +134,7 @@ def activate_shell(shell_id: int, request: Request, con = Depends(get_db)):
 @router.get("/shells/{shell_id}", summary="Get one shell record")
 def get_shell(shell_id: int, con = Depends(get_db)):
     row = con.execute("""
-        SELECT shell_id, display_name, shortname, owner, role, mandate,
+        SELECT shell_id, display_name, shortname, partner, role, mandate,
                current_state, connections, api_endpoints,
                active_archive_id
         FROM shells WHERE shell_id = ?
@@ -153,7 +153,7 @@ CURRENT_STATE_CAP = 280
 class UpdateShellBody(BaseModel):
     display_name:      str | None = None
     shortname:         str | None = None
-    owner:             str | None = None
+    partner:           str | None = None
     role:              str | None = None
     mandate:           str | None = None
     current_state:     str | None = None
@@ -181,8 +181,8 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
         if con.execute("SELECT 1 FROM shells WHERE shortname=? AND shell_id<>?", (short, shell_id)).fetchone():
             raise HTTPException(409, f"shortname '{short}' already exists")
         fields.append("shortname = ?"); args.append(short)
-    if body.owner is not None:
-        fields.append("owner = ?"); args.append(body.owner.strip() or None)
+    if body.partner is not None:
+        fields.append("partner = ?"); args.append(body.partner.strip() or None)
     if body.role is not None:
         fields.append("role = ?"); args.append(body.role.strip() or None)
     if body.mandate is not None:
@@ -208,7 +208,7 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
         con.commit()
     # Same column set as GET /shells/{id} — a PATCH round-trip is symmetric.
     row = con.execute("""
-        SELECT shell_id, display_name, shortname, owner, role, mandate,
+        SELECT shell_id, display_name, shortname, partner, role, mandate,
                current_state, connections, api_endpoints,
                active_archive_id
         FROM shells WHERE shell_id = ?

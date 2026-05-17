@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS "shells" (
     shell_id              INTEGER PRIMARY KEY,
     display_name          TEXT    NOT NULL,
     shortname             TEXT,
-    owner                 TEXT,
+    partner               TEXT,
     role                  TEXT,
     mandate               TEXT,
     system_prompt         TEXT    NOT NULL,

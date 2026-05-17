@@ -24,7 +24,7 @@ rendered into this session's CLAUDE.md:
 ```
 
 That `user_id` owns the new shell — pass it as `user_id`, the username as
-`owner`. If the OPERATOR block is missing, stop and ask the operator to
+`partner`. If the OPERATOR block is missing, stop and ask the operator to
 relaunch Forge from a current substrate.
 
 ---
@@ -79,7 +79,7 @@ curl -fsS -X POST "$DOS_API_URL/shells" \
         "domain_and_scope":  "<2b prose>",
         "operating_context": "<2c prose>",
         "connections":       "<2d prose>",
-        "owner":             "<operator username>",
+        "partner":           "<operator username>",
         "user_id":           <operator user_id>,
         "skills":            "common"
       }'
