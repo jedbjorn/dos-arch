@@ -85,7 +85,7 @@ The credential broker reads two secrets from a repo-root `.env`. It is not in
 the repo — create it from the template **as the operator**, in your clone:
 
 ```bash
-cd /path/to/dos-arch          # your clone
+cd ~/dos-arch                 # your clone — adjust if you cloned elsewhere
 cp .env.example .env
 ```
 
@@ -153,12 +153,15 @@ session rows in `shell_db.db`; `make install`/`make bootstrap` write
 never collides with the operator's `git pull`.
 
 ```bash
-setfacl -m u:dos-arch:x /home/<operator>
-setfacl -R    -m u:dos-arch:rwX /path/to/dos-arch   # existing files
-setfacl -R -d -m u:dos-arch:rwX /path/to/dos-arch   # default ACL — inherited by files created later
+setfacl -m u:dos-arch:x ~  # let dos-arch traverse into your home directory
+setfacl -R    -m u:dos-arch:rwX ~/dos-arch  # existing files in the clone
+setfacl -R -d -m u:dos-arch:rwX ~/dos-arch  # default ACL — files created later inherit it
 ```
 
-Run the grants **after** creating `.env` so it is covered too. The default
+Run the grants **as the operator** (not with `sudo`, not as `dos-arch`) so
+`~` resolves to your home — and **after** creating `.env` so it is covered
+too. If your clone is not at `~/dos-arch`, use its real path in the last two
+lines. The default
 ACL (`-d`) is load-bearing: `shell_db.db` and `node_modules/` do not exist
 yet at this point, so without it the files `dos-arch` creates later would
 not be covered. The operator still owns the clone and runs `git pull`;
