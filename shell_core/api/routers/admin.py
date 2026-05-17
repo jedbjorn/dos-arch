@@ -1,6 +1,7 @@
-"""Admin operations — shell assignment, skill attachment, browser-chat targeting."""
+"""Admin operations — shell assignment, skill attachment, browser-chat targeting, catalogue-sync health."""
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
+import json
 import sqlite3
 
 from api.common.db import get_db
@@ -189,3 +190,50 @@ def admin_delete_skill(request: Request, skill_id: int, con = Depends(get_db)):
     con.execute("UPDATE skills SET is_deleted=1 WHERE skill_id=?", (skill_id,))
     con.commit()
     return {"ok": True, "skill_id": skill_id}
+
+
+_SYNC_COLS = ("run_id, run_at, trigger_kind, surfaces, total_insert, "
+              "total_update, had_error, error")
+
+
+def _sync_row(r):
+    """dr_sync_runs row → dict, with the surfaces JSON string decoded to an object."""
+    d = dict(r)
+    try:
+        d["surfaces"] = json.loads(d["surfaces"]) if d.get("surfaces") else {}
+    except (ValueError, TypeError):
+        pass  # leave the raw string if it somehow isn't valid JSON
+    return d
+
+
+@router.get("/admin/catalogue-sync", summary="Admin: dr_* catalogue sync health — recent runs + staleness check")
+def admin_catalogue_sync(request: Request, con = Depends(get_db)):
+    """Health view over dr_sync_runs — the dr_* catalogue sync audit log.
+
+    `stale` is the cron-didn't-fire signal: true when no cron run has landed in
+    the last 26h (a 24h cron + slack), or none ever has. A run that never
+    started leaves no row, so staleness is computed from absence, not a flag.
+    """
+    _require_admin(request)
+    runs = con.execute(
+        f"SELECT {_SYNC_COLS} FROM dr_sync_runs ORDER BY run_id DESC LIMIT 20"
+    ).fetchall()
+    last_cron = con.execute(
+        f"SELECT {_SYNC_COLS} FROM dr_sync_runs WHERE trigger_kind='cron' "
+        "ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()
+    fresh_cron = con.execute(
+        "SELECT 1 FROM dr_sync_runs WHERE trigger_kind='cron' "
+        "AND run_at >= datetime('now','-26 hours') LIMIT 1"
+    ).fetchone()
+    recent_errors = con.execute(
+        "SELECT COUNT(*) FROM dr_sync_runs WHERE had_error=1 "
+        "AND run_at >= datetime('now','-7 days')"
+    ).fetchone()[0]
+    return {
+        "latest":        _sync_row(runs[0]) if runs else None,
+        "last_cron":     _sync_row(last_cron) if last_cron else None,
+        "stale":         fresh_cron is None,
+        "recent_errors": recent_errors,
+        "runs":          [_sync_row(r) for r in runs],
+    }
