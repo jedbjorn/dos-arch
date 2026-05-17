@@ -40,6 +40,7 @@ image and run via `docker exec` inside the container.
 ### Install — Arch / CachyOS
 
 ```bash
+sudo pacman -Syu     # rolling distro — sync the package db first, or pacman -S 404s on stale entries
 sudo pacman -S --needed git base-devel python nodejs npm docker docker-buildx slirp4netns fuse-overlayfs acl
 sudo npm install -g pm2
 ```
@@ -68,6 +69,11 @@ need adapting.
 The system has two layers, documented in two files, plus a bridge step
 (`api-up.sh`) that sits at the seam between them. The real end-to-end
 sequence — repo link → working shell:
+
+> **Before step 1 — Arch/CachyOS:** bring the system fully current first —
+> `sudo pacman -Syu` (reboot if it updates the kernel). The install scripts
+> call `pacman -S`, which 404s (`failed retrieving file …`) against a stale
+> package database on a rolling distro.
 
 ### Layer 1 — Docker host
 
