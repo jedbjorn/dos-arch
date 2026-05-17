@@ -134,9 +134,11 @@ Docker, which only `dos-arch` can reach. `launch-dos-arch` is a shortcut,
 defined in your operator login's shell, that hops into a `dos-arch` session
 and runs `make launch` from any directory.
 
-Replace `/path/to/dos-arch` with your clone's absolute path. The path is
-absolute because inside the `dos-arch` session `~` is `/home/dos-arch`, not
-your clone.
+The functions use `$HOME/dos-arch` — your shell expands `$HOME` *before*
+entering the `dos-arch` session, so the session receives your real clone
+path. (Inside a `dos-arch` session `~` is `/home/dos-arch`, not your home —
+which is why the path can't be written `~/dos-arch` here.) Change it only if
+you cloned somewhere other than `~/dos-arch`.
 
 **fish** — define a function and persist it (`funcsave` writes it to
 `~/.config/fish/functions/`, so it survives new sessions):
@@ -144,7 +146,7 @@ your clone.
 **Enters the Dos-arch dir**
 ```fish
 function enter-dos-arch
-    sudo machinectl shell dos-arch@ /bin/bash -lc 'cd /path/to/dos-arch && make launch'
+    sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"
 end
 funcsave enter-dos-arch
 ```
@@ -152,7 +154,7 @@ funcsave enter-dos-arch
 **Launches the Shell Renderer**
 ```fish
 function launch-dos-arch
-    sudo machinectl shell dos-arch@ /bin/bash -lc 'cd /path/to/dos-arch && make launch'
+    sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"
 end
 funcsave launch-dos-arch
 ```
@@ -170,7 +172,7 @@ source ~/.bashrc
 **Launches the Shell Renderer**
 ```bash
 cat >> ~/.bashrc <<'EOF'
-launch-dos-arch() { sudo machinectl shell dos-arch@ /bin/bash -lc 'cd /path/to/dos-arch && make launch'; }
+launch-dos-arch() { sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"; }
 EOF
 source ~/.bashrc
 ```

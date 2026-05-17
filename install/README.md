@@ -173,14 +173,14 @@ not be covered. The operator still owns the clone and runs `git pull`;
 builds the broker image from `shell_core/broker/`, and `broker-up.sh` reads
 secrets from the repo-root `.env`. The Phase 0–1 `~/setup` staging (just
 `install/` + `docker/`) is **not** enough: run from `~/setup` and the broker
-build fails. Run these from the operator's clone:
+build fails. The one-liner below opens a `dos-arch` session and runs both
+scripts from your clone — `$HOME` expands in *your* shell first, so the
+session receives your real clone path, and `-l` (login shell) loads the
+`PATH` / `DOCKER_HOST` that step 2 wrote to `~/.bashrc`:
 
 ```bash
-sudo machinectl shell dos-arch@     # skip if already in a dos-arch session
-source ~/.bashrc                    # ensure PATH + DOCKER_HOST are set
-cd /path/to/dos-arch                # the operator's clone — NOT ~/setup
-./install/build-image.sh            # dos-shell + dos-broker + dos-api; optional pinned Claude version
-./install/broker-up.sh              # dos-net network + dos-broker container
+sudo machinectl shell dos-arch@ /bin/bash -lc \
+  "cd $HOME/dos-arch && ./install/build-image.sh && ./install/broker-up.sh"
 ```
 
 `build-image.sh` builds all three images (`dos-shell`, `dos-broker`,
@@ -259,7 +259,7 @@ also remove these — as the operator:
 
 ```bash
 setfacl -b ~                                   # drop the dos-arch traverse ACL on your home
-rm -rf /path/to/dos-arch                       # the clone — INCLUDING .env (real secrets)
+rm -rf ~/dos-arch                              # the clone — INCLUDING .env (real secrets)
 sudo rm -f /etc/sudoers.d/launch-dos-arch      # the NOPASSWD drop-in, if you added one
 rm -rf ~/db_backups/dos-arch                   # boot DB snapshots, if any
 ```
