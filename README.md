@@ -105,6 +105,7 @@ Detailed in **[Cold bootstrap](#cold-bootstrap)** below.
 | 6.5 | `./install/api-up.sh` | dos-arch | [runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000` — needs `shell_db.db`, so it runs *after* `make bootstrap`](#cold-bootstrap) |
 | 8 | `make up` | dos-arch | [pm2 starts the UI (`127.0.0.1:5173`)](#cold-bootstrap) |
 | 9 | `make launch` | dos-arch | [`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`](#cold-bootstrap) |
+| 10 | `./install/cron-install.sh` | dos-arch | [installs the daily dr_* catalogue sync cron — the only *automatic* full sync; logs each run to `dr_sync_runs`. Run once.](#cold-bootstrap) |
 
 Steps 6–9 run in **one `dos-arch` session**; the `git pull` refresh is the
 operator's job (you own the clone). Cold bootstrap below has the one-liner
@@ -345,7 +346,7 @@ docker/
   shell/                  Dockerfile for the dos-shell image — one container per shell instance
   broker/                 Dockerfile for the dos-broker image — the credential broker
   api/                    Dockerfile for the dos-api image — the substrate memory API
-install/                  Rootless-Docker host bootstrap — host-setup / rootless-setup / build-image / broker-up / api-up / teardown (see install/README.md)
+install/                  Rootless-Docker host bootstrap — host-setup / rootless-setup / build-image / broker-up / api-up / cron-install / teardown (see install/README.md)
 docs/                     harness-spec.md — the harness specification
 shells/<shortname>/       Per-shell working dirs (managed by run.py; CLAUDE.md regenerated each session; bind-mounted into the shell's container as /workspace)
 .env.example              Template for .env — broker secrets (ANTHROPIC_API_KEY, GITHUB_TOKEN); .env is gitignored

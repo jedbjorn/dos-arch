@@ -65,7 +65,7 @@ db-backup:
 	@TS=$$(date +%Y%m%d_%H%M%S); cp "$(DB)" "$(BACKUP_DIR)/shell_db.bak.$${TS}.db" && echo "Backed up -> $(BACKUP_DIR)/shell_db.bak.$${TS}.db"
 
 db-sync:
-	@./.venv/bin/python3 $(CORE)/scripts/dr_sync.py
+	@PY=./.venv/bin/python3; [ -x "$$PY" ] || PY=python3; "$$PY" $(CORE)/scripts/dr_sync.py
 
 catalogue:
 	@python3 $(CORE)/scripts/catalogue.py $(ARGS)

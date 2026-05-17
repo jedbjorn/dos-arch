@@ -162,10 +162,11 @@ async def _populate_catalogue() -> None:
     db_path     = here.parents[2] / "shell_core" / "shell_db.db"
     _sys.path.insert(0, str(scripts_dir))
     try:
-        from dr_sync import sync_all  # type: ignore[import-not-found]
+        from dr_sync import sync_all, _record_run  # type: ignore[import-not-found]
         conn = sqlite3.connect(db_path)
         try:
             results = sync_all(conn, app=app)
+            _record_run(conn, "startup", results)
             conn.commit()
             for target, counts in results.items():
                 if "error" in counts:
