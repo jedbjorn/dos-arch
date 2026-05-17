@@ -22,7 +22,7 @@ import sqlite3
 import shutil
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from db_init import ensure_forge
@@ -275,11 +275,17 @@ def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> s
     state = _docker("inspect", "-f", "{{.State.Running}}", name)
 
     if state.returncode != 0:                       # container does not exist
+        # Host↔container shared folder. Mounted at /root/shared so the
+        # container's `~/shared` (HOME=/root) resolves to it — the path the
+        # system prompt's `shared` definition names. (Sys-Admin E2E gap 13.)
+        shared_dir = Path.home() / "shared"
+        shared_dir.mkdir(exist_ok=True)
         run_args = [
             "run", "-d",
             "--name", name,
             "--network", DOCKER_NETWORK,
             "-v", f"{workdir}:/workspace",
+            "-v", f"{shared_dir}:/root/shared",
         ]
         if is_admin:
             # Admin shells (Sys-Admin) get the substrate repo mounted RW, so
@@ -420,7 +426,11 @@ def open_session(con: sqlite3.Connection, shell_id: int) -> tuple[str, int]:
         (shell_id,),
     ).fetchone()[0]
     next_session = f"{(last or 0) + 1:04d}"
-    now_hm = datetime.now().strftime("%H:%M")
+    # UTC, not host-local: shell containers run on UTC, so a shell appending
+    # [HH:MM] narrative lines uses UTC. The launcher writes the session-start
+    # line; matching UTC keeps every [HH:MM] entry on one clock and linearly
+    # sortable. (Sys-Admin E2E gap 12 — launcher/container TZ drift.)
+    now_hm = datetime.now(timezone.utc).strftime("%H:%M")
     today = str(date.today())
     narrative = f"# {next_session} | {today} | session opened\n\n## Narrative\n\n[{now_hm}] Session start.\n"
     cur = con.execute("""
