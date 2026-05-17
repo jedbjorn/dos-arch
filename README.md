@@ -232,15 +232,20 @@ First, **as the operator**, refresh it:
 cd ~/dos-arch && git pull
 ```
 
-Then open a `dos-arch` session — this one-liner drops you into one already
-sitting in your clone (`$HOME` expands in *your* shell first, so the session
-lands in the right directory):
+Now open a `dos-arch` session for the build. **Run this from your operator
+login** — your normal shell, prompt showing your own username. If the prompt
+shows `dos-arch@…` you are still in a `dos-arch` session from Layer 1: type
+`exit` first, or `sudo` asks for a `dos-arch` password that does not exist
+(`dos-arch` is passwordless and not a sudoer). The one-liner drops you into a
+fresh session already sitting in your clone — `$HOME` expands in *your* shell
+first, so it lands in the right directory:
 
 ```bash
 sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
 ```
 
-Inside that `dos-arch` session, build the substrate:
+It prompts once for **your** password. Inside that `dos-arch` session, build
+the substrate:
 
 ```bash
 make install              # python venv + pip + npm

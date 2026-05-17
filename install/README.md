@@ -170,7 +170,7 @@ yet at this point, so without it the files `dos-arch` creates later would
 not be covered. The operator still owns the clone and runs `git pull`;
 `dos-arch` never needs GitHub credentials and never clones anything.
 
-### 4 — Build images + start the broker (as dos-arch, from ~/Home)
+### 4 — Build images + start the broker (as dos-arch)
 
 `build-image.sh` and `broker-up.sh` need the **full repo** — `build-image.sh`
 builds the broker image from `shell_core/broker/`, and `broker-up.sh` reads
@@ -181,7 +181,11 @@ scripts from your clone — `$HOME` expands in *your* shell first, so the
 session receives your real clone path, and `-l` (login shell) loads the
 `PATH` / `DOCKER_HOST` that step 2 wrote to `~/.bashrc`:
 
-Run from ~/home in Terminal:
+**Run this from your operator login** — your normal shell, prompt showing
+your own username. If it shows `dos-arch@…`, you are still in the step-2
+`dos-arch` session: type `exit` first, or `sudo` asks for a `dos-arch`
+password that does not exist.
+
 ```bash
 sudo machinectl shell dos-arch@ /bin/bash -lc \
   "cd $HOME/dos-arch && ./install/build-image.sh && ./install/broker-up.sh"
