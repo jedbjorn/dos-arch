@@ -1,0 +1,42 @@
+# Database — local-only; bootstrap with `make db-init`
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+
+# Node
+node_modules/
+ui/node_modules/
+dist/
+ui/dist/
+.svelte-kit/
+
+# Logs / certs (regenerate locally with mkcert)
+*.log
+*.pem
+*.key
+*.crt
+certs/
+
+# PM2
+.pm2/
+
+# Editor
+.DS_Store
+.vscode/
+*.swp
+
+# Secrets
+.env.local
+secrets.json
+
+# Backups
+_backups/

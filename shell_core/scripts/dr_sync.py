@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""dr_sync — sync dr_* tables from the substrate's actual state.
+
+Wired syncs:
+  sync_routers_and_apis()
+    Sources: shell_core/api/routers/*.py module docstrings (→ dr_router)
+             FastAPI app.openapi() spec (→ dr_api, with router_id from tags)
+    Idempotent: UPSERT keyed on dr_router.name and dr_api(path,method).
+
+  sync_dependencies()
+    Sources: shell_core/ui/package.json + node_modules/<pkg>/package.json
+             (→ dr_dependencies, kind='npm', project='ui')
+             importlib.metadata distributions in the running interpreter
+             (→ dr_dependencies, kind='pip', project='substrate')
+    Idempotent: UPSERT keyed on dr_dependencies(project, name).
+
+Future syncs (stubs to fill in as conventions land):
+  sync_services()      — ecosystem.config.cjs → dr_services
+  sync_repos()         — `gh repo view` for each known remote → dr_repo
+  sync_ui_lib()        — package.json#description → dr_lib (kind=frontend)
+  sync_backend_lib()   — module docstrings under api/common/ → dr_lib (kind=backend)
+
+Usage:
+    python3 shell_core/scripts/dr_sync.py            # all syncs
+    python3 shell_core/scripts/dr_sync.py apis       # apis + routers only
+    python3 shell_core/scripts/dr_sync.py apis deps  # multiple targets
+"""
+import ast
+import inspect
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+DB_PATH = ROOT / "shell_core" / "shell_db.db"
+ROUTERS_DIR = ROOT / "shell_core" / "api" / "routers"
+
+DESCRIPTION_SHORT_CAP = 100
+
+
+def _truncate(s: str, cap: int = DESCRIPTION_SHORT_CAP) -> str:
+    s = (s or "").strip()
+    return s if len(s) <= cap else s[: cap - 3] + "..."
+
+
+def _homerel(p) -> str:
+    """Store paths home-relative (~/...) so the catalogue is portable across
+    users/machines. Absolute Path objects are kept for on-disk checks; only
+    the stored string is relativized."""
+    p = Path(p)
+    try:
+        return "~/" + str(p.relative_to(Path.home()))
+    except ValueError:
+        return str(p)
+
+
+def _module_docstring_first_line(path: Path) -> str | None:
+    """Parse the module's top-of-file docstring, return the first line."""
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return None
+    doc = ast.get_docstring(tree)
+    if not doc:
+        return None
+    return doc.strip().split("\n", 1)[0].strip()
+
+
+def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
+    """Walk shell_core/api/routers/*.py + FastAPI app.openapi().
+
+    `app` may be passed in (e.g. from a FastAPI startup hook calling this
+    in-process) to avoid the import of api.main. When omitted, we import
+    api.main ourselves — fine for the CLI path.
+    """
+    if app is None:
+        sys.path.insert(0, str(ROOT / "shell_core"))
+        try:
+            from api.main import app
+        finally:
+            sys.path.pop(0)
+
+    counts = {
+        "routers": {"insert": 0, "update": 0},
+        "apis":    {"insert": 0, "update": 0},
+    }
+
+    # ── dr_router rows ─────────────────────────────────────────────────────
+    file_to_router_id: dict[str, int] = {}
+    for f in sorted(ROUTERS_DIR.glob("*.py")):
+        if f.name == "__init__.py":
+            continue
+        name = f.stem
+        rel_path = str(f.relative_to(ROOT))
+        desc = _truncate(_module_docstring_first_line(f) or f"FastAPI router: {name}")
+
+        existing = conn.execute(
+            "SELECT router_id FROM dr_router WHERE name = ?", (name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_router SET description_short = ?, file_path = ?, "
+                "last_verified = date('now') WHERE router_id = ?",
+                (desc, rel_path, existing[0])
+            )
+            counts["routers"]["update"] += 1
+            file_to_router_id[name] = existing[0]
+        else:
+            cur = conn.execute(
+                "INSERT INTO dr_router (name, description_short, file_path, last_verified) "
+                "VALUES (?, ?, ?, date('now'))",
+                (name, desc, rel_path)
+            )
+            counts["routers"]["insert"] += 1
+            file_to_router_id[name] = cur.lastrowid
+
+    # ── dr_api rows from OpenAPI spec ──────────────────────────────────────
+    spec = app.openapi()
+    for path, methods in spec.get("paths", {}).items():
+        for method, op in methods.items():
+            if method.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                continue
+            method_u = method.upper()
+            summary = _truncate(op.get("summary") or f"{method_u} {path}")
+            description = op.get("description") or None
+            tags = op.get("tags") or []
+            router_id = next(
+                (file_to_router_id[t] for t in tags if t in file_to_router_id),
+                None
+            )
+            name = op.get("operationId") or f"{method}_{path}".replace("/", "_").strip("_")
+            name = name[:100]
+
+            existing = conn.execute(
+                "SELECT api_id FROM dr_api WHERE path = ? AND method = ?",
+                (path, method_u)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE dr_api SET name = ?, description_short = ?, purpose = ?, "
+                    "router_id = ?, last_verified = date('now') WHERE api_id = ?",
+                    (name, summary, description, router_id, existing[0])
+                )
+                counts["apis"]["update"] += 1
+            else:
+                conn.execute(
+                    "INSERT INTO dr_api (router_id, name, description_short, path, method, "
+                    "purpose, last_verified) VALUES (?, ?, ?, ?, ?, ?, date('now'))",
+                    (router_id, name, summary, path, method_u, description)
+                )
+                counts["apis"]["insert"] += 1
+
+    return counts
+
+
+def sync_dependencies(conn: sqlite3.Connection) -> dict:
+    """Sync dr_dependencies from package.json (npm, project='ui') +
+    importlib.metadata in the running interpreter (pip, project='substrate').
+
+    Idempotent: UPSERT keyed on (project, name).
+    """
+    counts = {"deps": {"insert": 0, "update": 0}}
+
+    def _upsert(project: str, name: str, kind: str, version: str, desc: str):
+        existing = conn.execute(
+            "SELECT dep_id FROM dr_dependencies WHERE project = ? AND name = ?",
+            (project, name)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_dependencies SET kind = ?, version = ?, description_short = ? WHERE dep_id = ?",
+                (kind, version, desc, existing[0])
+            )
+            counts["deps"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_dependencies (project, name, kind, version, description_short) VALUES (?, ?, ?, ?, ?)",
+                (project, name, kind, version, desc)
+            )
+            counts["deps"]["insert"] += 1
+
+    # ── NPM (UI project) ───────────────────────────────────────────────────
+    ui_pkg_path = ROOT / "shell_core" / "ui" / "package.json"
+    if ui_pkg_path.exists():
+        node_modules = ROOT / "shell_core" / "ui" / "node_modules"
+        try:
+            pkg = json.loads(ui_pkg_path.read_text())
+        except json.JSONDecodeError:
+            pkg = {}
+        for kind in ("dependencies", "devDependencies"):
+            for dep_name, dep_ver in (pkg.get(kind) or {}).items():
+                desc = None
+                dep_pkg_json = node_modules / dep_name / "package.json"
+                if dep_pkg_json.exists():
+                    try:
+                        desc = json.loads(dep_pkg_json.read_text()).get("description")
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                desc = _truncate(desc or f"npm package: {dep_name}")
+                _upsert("ui", dep_name, "npm", dep_ver, desc)
+
+    # ── pip (substrate venv) ───────────────────────────────────────────────
+    try:
+        import importlib.metadata as importlib_metadata
+    except ImportError:
+        return counts
+
+    for dist in importlib_metadata.distributions():
+        meta = dist.metadata
+        name = meta["Name"] if meta else None
+        if not name:
+            continue
+        version = dist.version or ""
+        summary = (meta.get("Summary") if meta else None) or f"pip package: {name}"
+        _upsert("substrate", name, "pip", version, _truncate(summary))
+
+    return counts
+
+
+def sync_services(conn: sqlite3.Connection) -> dict:
+    """Sync dr_services from ecosystem.config.cjs.
+
+    Convention: each app in `module.exports.apps` carries a `summary` string
+    (≤100 chars). pm2 ignores the field; the populator uses it for
+    `description_short`. `kind` is inferred from `args` (uvicorn → api,
+    vite → ui, else → other).
+
+    Idempotent: UPSERT keyed on `name`.
+    """
+    import subprocess
+    counts = {"services": {"insert": 0, "update": 0}}
+
+    eco = ROOT / "ecosystem.config.cjs"
+    if not eco.exists():
+        return counts
+
+    try:
+        proc = subprocess.run(
+            ["node", "-e", f"console.log(JSON.stringify(require({str(eco)!r})))"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return counts
+    if proc.returncode != 0:
+        return counts
+
+    try:
+        cfg = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return counts
+
+    for app in cfg.get("apps", []):
+        name = app.get("name")
+        if not name:
+            continue
+        summary = _truncate(app.get("summary") or f"pm2 service: {name}")
+        signal = f"{app.get('script') or ''} {app.get('args') or ''}"
+        if "uvicorn" in signal:
+            kind = "api"
+        elif "vite" in signal:
+            kind = "ui"
+        else:
+            kind = "other"
+        location = app.get("cwd") or "./"
+
+        existing = conn.execute(
+            "SELECT service_id FROM dr_services WHERE name = ?", (name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_services SET description_short = ?, kind = ?, location = ?, "
+                "last_verified = date('now') WHERE service_id = ?",
+                (summary, kind, location, existing[0])
+            )
+            counts["services"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_services (name, description_short, kind, location, last_verified) "
+                "VALUES (?, ?, ?, ?, date('now'))",
+                (name, summary, kind, location)
+            )
+            counts["services"]["insert"] += 1
+
+    return counts
+
+
+def _first_js_comment(text: str) -> str | None:
+    """Extract the first `//` line at the top of a JS file (before any code)."""
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("//"):
+            return s.lstrip("/").strip()
+        return None  # hit non-comment code; abort
+    return None
+
+
+def sync_libs(conn: sqlite3.Connection) -> dict:
+    """Sync dr_lib from backend (api/common/*.py) and frontend (ui/src/lib/*.js).
+
+    Backend convention: top-of-file Python docstring, first line is the summary.
+    Frontend convention: top-of-file `//` comment, first line is the summary.
+    Idempotent: UPSERT keyed on (kind, location).
+    """
+    counts = {"libs": {"insert": 0, "update": 0}}
+
+    def _upsert(kind: str, name: str, location_path: Path, desc: str):
+        rel = str(location_path.relative_to(ROOT))
+        existing = conn.execute(
+            "SELECT lib_id FROM dr_lib WHERE kind = ? AND location = ?", (kind, rel)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_lib SET name = ?, description_short = ?, last_verified = date('now') "
+                "WHERE lib_id = ?",
+                (name, desc, existing[0])
+            )
+            counts["libs"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_lib (kind, name, location, description_short, last_verified) "
+                "VALUES (?, ?, ?, ?, date('now'))",
+                (kind, name, rel, desc)
+            )
+            counts["libs"]["insert"] += 1
+
+    backend_dir = ROOT / "shell_core" / "api" / "common"
+    if backend_dir.exists():
+        for f in sorted(backend_dir.glob("*.py")):
+            if f.name == "__init__.py":
+                continue
+            doc = _module_docstring_first_line(f)
+            desc = _truncate(doc or f"backend module: {f.stem}")
+            _upsert("backend", f.stem, f, desc)
+
+    ui_lib_dir = ROOT / "shell_core" / "ui" / "src" / "lib"
+    if ui_lib_dir.exists():
+        for f in sorted(ui_lib_dir.glob("*.js")):
+            comment = _first_js_comment(f.read_text())
+            desc = _truncate(comment or f"frontend module: {f.stem}")
+            _upsert("frontend", f.stem, f, desc)
+
+    return counts
+
+
+def sync_repos(conn: sqlite3.Connection) -> dict:
+    """Sync dr_repo for the substrate's own git origin.
+
+    Pulls description from `gh repo view --json description,name` if `gh` is
+    available; falls back to the repo's directory name. Future work: extend
+    to a configured list of related repos via shells.connections or env.
+
+    Idempotent: UPSERT keyed on `name`.
+    """
+    import subprocess
+    counts = {"repos": {"insert": 0, "update": 0}}
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return counts
+    if proc.returncode != 0:
+        return counts
+    remote = proc.stdout.strip() or None
+
+    name = ROOT.name
+    desc = None
+    try:
+        gh_proc = subprocess.run(
+            ["gh", "repo", "view", "--json", "description,name"],
+            capture_output=True, text=True, timeout=5, cwd=str(ROOT)
+        )
+        if gh_proc.returncode == 0:
+            data = json.loads(gh_proc.stdout)
+            desc = data.get("description") or None
+            name = data.get("name") or name
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        pass
+
+    desc = _truncate(desc or f"git repo: {name}")
+
+    existing = conn.execute("SELECT repo_id FROM dr_repo WHERE name = ?", (name,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE dr_repo SET description_short = ?, path = ?, remote = ?, "
+            "last_verified = date('now') WHERE repo_id = ?",
+            (desc, _homerel(ROOT), remote, existing[0])
+        )
+        counts["repos"]["update"] += 1
+    else:
+        conn.execute(
+            "INSERT INTO dr_repo (name, description_short, path, remote, last_verified) "
+            "VALUES (?, ?, ?, ?, date('now'))",
+            (name, desc, _homerel(ROOT), remote)
+        )
+        counts["repos"]["insert"] += 1
+
+    return counts
+
+
+# ── Manually-curated typed registries ─────────────────────────────────────────
+# The three surfaces below have no canonical machine-readable source. The
+# entry lists in this file ARE the source-of-truth — adding a row means
+# editing the corresponding list. The populator just keeps the DB in sync
+# with the list (UPSERT keyed on the natural unique column).
+#
+# Why register them at all? So shells have a single place to look up
+# "where is X / what env vars exist / what auto-runs" without grepping the
+# whole codebase.
+
+_FILEPATH_ENTRIES = [
+    # (name, path, kind, description_short)
+    ("schema",        ROOT / "shell_core" / "schema.sql",                "file", "Canonical SQLite schema (~25 tables + triggers + 2 catalogue views)"),
+    ("shell_db",      ROOT / "shell_core" / "shell_db.db",               "file", "Live SQLite store — gitignored, local-only, bootstrap via make bootstrap"),
+    ("boot_template", ROOT / "shell_core" / "templates" / "boot.md",     "file", "Universal preamble (LAWS + SYSTEM OVERRIDE) — render chain input"),
+    ("launcher",      ROOT / "shell_core" / "scripts" / "run.py",        "file", "Auth → picker → render CLAUDE.md → exec claude"),
+    ("dr_sync",       ROOT / "shell_core" / "scripts" / "dr_sync.py",    "file", "Catalogue populator — wired sync targets + dispatch"),
+    ("bootstrap",     ROOT / "shell_core" / "scripts" / "bootstrap.py",  "file", "One-shot bootstrapper — schema + skills + Forge + first user + Sys-Admin"),
+    ("db_init",       ROOT / "shell_core" / "scripts" / "db_init.py",    "file", "Seeding library — seed_skills / ensure_forge / seed_sys_admin"),
+    ("create_user",   ROOT / "shell_core" / "scripts" / "create_user.py","file", "Provision a new substrate user with scrypt password"),
+    ("set_password",  ROOT / "shell_core" / "scripts" / "set_password.py","file", "Reset a substrate user's scrypt password"),
+    ("assets_dir",    ROOT / "shell_core" / "assets",                    "dir",  "Seed data — skills/*.md + shells/{forge,sys-admin}.md"),
+    ("ecosystem",     ROOT / "ecosystem.config.cjs",                     "file", "pm2 process map — api on 8000, ui on 5173"),
+    ("makefile",      ROOT / "Makefile",                                 "file", "Entry points: install, bootstrap, db-sync, db-backup, launch, up/down"),
+    ("backups",       Path.home() / "db_backups" / "dos-arch",           "dir",  "Manual + boot DB snapshots (rolling-5 retention on boot snapshots)"),
+    ("shared",        Path.home() / "shared",                            "dir",  "Host↔container shared folder (redlines/options/backups) — mounted into shell containers"),
+    ("global_claude", Path.home() / ".claude" / "CLAUDE.md",             "file", "Harness-injected universal preamble — laws, system override, shell selection"),
+]
+
+
+def sync_filepaths(conn: sqlite3.Connection) -> dict:
+    """Sync curated dr_filepath entries from the static list above.
+
+    Idempotent: UPSERT keyed on `path`. Entries whose path doesn't exist on
+    disk are skipped — they may be on a host that doesn't have them (e.g.
+    ~/shared on machines without the VM mount).
+    """
+    counts = {"filepaths": {"insert": 0, "update": 0}}
+    for name, path, kind, desc in _FILEPATH_ENTRIES:
+        if not path.exists():
+            continue
+        path_str = _homerel(path)
+        existing = conn.execute(
+            "SELECT filepath_id FROM dr_filepath WHERE path = ?", (path_str,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_filepath SET name = ?, description_short = ?, kind = ?, "
+                "last_verified = date('now') WHERE filepath_id = ?",
+                (name, _truncate(desc), kind, existing[0])
+            )
+            counts["filepaths"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_filepath (name, description_short, path, kind, last_verified) "
+                "VALUES (?, ?, ?, ?, date('now'))",
+                (name, _truncate(desc), path_str, kind)
+            )
+            counts["filepaths"]["insert"] += 1
+    return counts
+
+
+_AUTOMATION_ENTRIES = [
+    # (name, trigger_kind, schedule, description_short)
+    ("catalogue_startup_sync", "api",    None,             "Refresh dr_* catalogue on FastAPI startup (api/main.py @on_event)"),
+    ("boot_db_snapshot",       "manual", "on make launch", "DB snapshot before each shell boot; rolling-5 retention in ~/db_backups/dos-arch"),
+    ("missing_db_tripwire",    "manual", "on make launch", "Abort launch if shell_db.db missing or 0 bytes; restore from snapshot"),
+    ("forge_self_heal",        "manual", "on make launch", "Re-seed Forge if missing from DB (run.py calls ensure_forge each boot)"),
+]
+
+
+def sync_automations(conn: sqlite3.Connection) -> dict:
+    """Sync curated dr_automations entries — scheduled or trigger-driven jobs.
+    Idempotent: UPSERT keyed on `name`."""
+    counts = {"automations": {"insert": 0, "update": 0}}
+    for name, kind, schedule, desc in _AUTOMATION_ENTRIES:
+        existing = conn.execute(
+            "SELECT automation_id FROM dr_automations WHERE name = ?", (name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_automations SET description_short = ?, trigger_kind = ?, schedule = ?, "
+                "last_verified = date('now') WHERE automation_id = ?",
+                (_truncate(desc), kind, schedule, existing[0])
+            )
+            counts["automations"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_automations (name, description_short, trigger_kind, schedule, last_verified) "
+                "VALUES (?, ?, ?, ?, date('now'))",
+                (name, _truncate(desc), kind, schedule)
+            )
+            counts["automations"]["insert"] += 1
+    return counts
+
+
+_ENV_ENTRIES = [
+    # (name, scope, location, is_secret, description_short)
+    ("ANTHROPIC_API_KEY", "system",   "shell environment / ~/.bashrc", 1, "Anthropic API key — used by Claude Code CLI (rotated 2026-04-28 per CC-014)"),
+    ("HOME",              "system",   "OS standard",                    0, "User home dir — launcher resolves ~/db_backups/dos-arch and ~/.claude from this"),
+    ("PATH",              "system",   "OS standard",                    0, "Must include claude, gh, node, npm, pm2, python3 — see Dependencies in README"),
+]
+
+
+def sync_env(conn: sqlite3.Connection) -> dict:
+    """Sync curated dr_env entries — env vars the substrate uses or expects.
+    Values are NOT stored — registry only. Idempotent: UPSERT keyed on `name`."""
+    counts = {"env": {"insert": 0, "update": 0}}
+    for name, scope, location, secret, desc in _ENV_ENTRIES:
+        existing = conn.execute(
+            "SELECT env_id FROM dr_env WHERE name = ?", (name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_env SET description_short = ?, scope = ?, location = ?, is_secret = ?, "
+                "last_verified = date('now') WHERE env_id = ?",
+                (_truncate(desc), scope, location, secret, existing[0])
+            )
+            counts["env"]["update"] += 1
+        else:
+            conn.execute(
+                "INSERT INTO dr_env (name, description_short, scope, location, is_secret, last_verified) "
+                "VALUES (?, ?, ?, ?, ?, date('now'))",
+                (name, _truncate(desc), scope, location, secret)
+            )
+            counts["env"]["insert"] += 1
+    return counts
+
+
+SYNCS = {
+    "apis":        sync_routers_and_apis,
+    "deps":        sync_dependencies,
+    "services":    sync_services,
+    "libs":        sync_libs,
+    "repos":       sync_repos,
+    "filepaths":   sync_filepaths,
+    "automations": sync_automations,
+    "env":         sync_env,
+}
+
+
+def sync_all(conn: sqlite3.Connection, app=None) -> dict:
+    """Run every sync in SYNCS. Functions that accept `app` get it; others don't.
+    Per-sync exceptions are caught and surfaced in the result dict."""
+    out: dict = {}
+    for name, fn in SYNCS.items():
+        try:
+            kwargs = {}
+            if "app" in inspect.signature(fn).parameters:
+                kwargs["app"] = app
+            out[name] = fn(conn, **kwargs)
+        except Exception as e:
+            out[name] = {"error": repr(e)}
+    return out
+
+
+def main() -> int:
+    targets = sys.argv[1:] or list(SYNCS.keys())
+    unknown = [t for t in targets if t not in SYNCS]
+    if unknown:
+        print(f"Unknown sync target(s): {unknown}. Known: {list(SYNCS)}", file=sys.stderr)
+        return 1
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        for target in targets:
+            fn = SYNCS[target]
+            kwargs = {}
+            if "app" in inspect.signature(fn).parameters:
+                kwargs["app"] = None  # CLI path: let fn self-import
+            counts = fn(conn, **kwargs)
+            print(f"[{target}]")
+            for surface, c in counts.items():
+                print(f"  {surface}: {c['insert']} inserted, {c['update']} updated")
+        conn.commit()
+    finally:
+        conn.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
