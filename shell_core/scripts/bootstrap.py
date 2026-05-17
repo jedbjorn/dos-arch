@@ -71,7 +71,7 @@ def main() -> int:
 
         sa_id, _ = seed_sys_admin(con, user_id)
         con.commit()
-        print(f"  seeded Sys-Admin (shell_id={sa_id}, owner=user_id {user_id})")
+        print(f"  seeded Sys-Admin (shell_id={sa_id}, partner=user_id {user_id})")
     finally:
         con.close()
 

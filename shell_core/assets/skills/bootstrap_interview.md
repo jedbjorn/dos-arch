@@ -30,7 +30,7 @@ not re-run.
 ## What is already done
 
 Forge's `create_shell` set your `system_prompt`, `display_name`,
-`shortname`, `owner`, `role`, `mandate`, `connections`, and skill
+`shortname`, `partner`, `role`, `mandate`, `connections`, and skill
 attachments. Read your rendered CLAUDE.md — that is your identity. You do
 not re-gather any of it.
 
@@ -62,7 +62,7 @@ a log. Just: who you are now, and the first task.
 curl -fsS -X PATCH "$DOS_API_URL/shells/<self>" \
   -H "Authorization: Bearer $DOS_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"current_state": "Bootstrapped. Owner: <username>. Next: <first task agreed with operator>."}'
+  -d '{"current_state": "Bootstrapped. Partner: <username>. Next: <first task agreed with operator>."}'
 ```
 
 ---
@@ -80,7 +80,7 @@ curl -fsS -X POST "$DOS_API_URL/shells/<self>/identity-entries" \
   -H "Content-Type: application/json" \
   -d '{
         "kind": "seed",
-        "body": "Bootstrapped today. Owner: <username>. Mandate: <mandate>. What I notice about the work ahead: <one real observation>."
+        "body": "Bootstrapped today. Partner: <username>. Mandate: <mandate>. What I notice about the work ahead: <one real observation>."
       }'
 ```
 
@@ -114,7 +114,7 @@ into your CLAUDE.md by `run.py`.
 
 - It does not interview for identity, domain, or environment — Forge's
   `create_shell` did all of that.
-- It does not set `system_prompt`, `display_name`, `shortname`, `owner`,
+- It does not set `system_prompt`, `display_name`, `shortname`, `partner`,
   `role`, `mandate`, or `connections`.
 - It does not assign groups or projects — that is a separate step.
 - It does not create users.

@@ -372,7 +372,7 @@ def render_identity(shell_row: sqlite3.Row) -> str:
         "|---|---|\n"
         f"| **Name** | {cell(shell_row['display_name'])} |\n"
         f"| **Shortname** | {cell(shell_row['shortname'])} |\n"
-        f"| **Owner** | {cell(shell_row['owner'])} |\n"
+        f"| **Partner** | {cell(shell_row['partner'])} |\n"
         f"| **Role** | {cell(shell_row['role'])} |\n"
         f"| **Mandate** | {cell(shell_row['mandate'])} |"
     )
@@ -596,7 +596,7 @@ def main() -> None:
 
     # Re-fetch after opening session so the row has updated active_archive_id
     full = con.execute(
-        "SELECT shell_id, display_name, shortname, owner, role, mandate, current_state, system_prompt FROM shells WHERE shell_id=?",
+        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, system_prompt FROM shells WHERE shell_id=?",
         (chosen["shell_id"],),
     ).fetchone()
 

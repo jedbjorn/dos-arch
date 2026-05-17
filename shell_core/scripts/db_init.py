@@ -148,7 +148,7 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     # is_admin=1 — Sys-Admin is the substrate's one admin shell; its API key
     # carries the admin scope. Worker shells created later default to 0.
     cur = con.execute(
-        "INSERT INTO shells (display_name, shortname, owner, role, mandate, "
+        "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
         "system_prompt, user_id, is_shared, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1)",
         (meta["display_name"], shortname, username, meta.get("role"),
          meta.get("mandate"), system_prompt, user_id),
