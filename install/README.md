@@ -170,7 +170,7 @@ yet at this point, so without it the files `dos-arch` creates later would
 not be covered. The operator still owns the clone and runs `git pull`;
 `dos-arch` never needs GitHub credentials and never clones anything.
 
-### 4 — Build images + start the broker (runs as dos-arch, from user /Home in Terminal)
+### 4 — Build images + start the broker (as dos-arch, from ~/Home)
 
 `build-image.sh` and `broker-up.sh` need the **full repo** — `build-image.sh`
 builds the broker image from `shell_core/broker/`, and `broker-up.sh` reads
