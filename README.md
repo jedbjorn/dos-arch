@@ -326,8 +326,9 @@ Then return to your operator login:
 exit
 ```
 
-Before an update that includes a schema change, snapshot the DB first —
-`make db-backup`, run in the same `dos-arch` session.
+`api-up.sh` applies any pending DB migrations on the way up and snapshots
+the DB automatically first — so no manual backup step is needed before an
+update. `make db-backup` is there if you want an extra snapshot.
 
 #### Rebuilding images (when Dockerfiles change)
 
@@ -444,6 +445,7 @@ make launch                                   # picker: auth, pick a shell, laun
 make launch-<shortname>                       # boot that shell directly (skip picker)
 make create-user                              # provision a new substrate user
 make set-password                             # reset a user's launcher password
+make gen-api-key                              # issue/rotate a shell's substrate-API key (ARGS=<shortname>)
 make up                                       # pm2 start the UI (API + broker run as containers)
 make down                                     # pm2 delete the UI
 make restart                                  # bounce the UI
@@ -453,7 +455,6 @@ make health                                   # GET /health
 make db-backup                                # snapshot shell_db.db -> ~/db_backups/dos-arch/<ts>.db
 make bootstrap                                # one-shot fresh-substrate setup; refuses if DB exists
 make migrate                                  # apply pending DB migrations (ARGS=--status to preview)
-make db-sync                                  # refresh the catalogue (dr_*) from current substrate state
 make catalogue                                # print the catalogue (filter via ARGS=, e.g. ARGS='flag')
 ```
 
@@ -618,7 +619,7 @@ shell_core/
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
   templates/              boot.md (preamble) + shell_system_prompt.md (new-shell template)
-  migrations/             Historical migrations — schema.sql is now canonical; migrations are reference
+  migrations/             Versioned *.sql migrations — applied in order by migrate.py (auto-run in api-up.sh; on demand via make migrate). schema.sql builds a fresh DB; migrations carry an existing one forward.
 docker/
   shell/                  Dockerfile for the dos-shell image — one container per shell instance
   broker/                 Dockerfile for the dos-broker image — the credential broker
@@ -670,7 +671,8 @@ is the canonical schema. Tables, grouped by purpose:
 
 **The catalogue** (`dr_*` family + `shell_dr_link` + 2 views) — a live
 index of substrate components (routes, routers, deps, libs, services,
-repos, files, automations, env vars). Auto-syncs on API restart. Each row
+repos, files, automations, env vars). Refreshed by a daily cron and on
+every API restart. Each row
 carries `name` + `description_short` (≤100 chars) for fast lookup. See the
 **The catalogue** section below for the full architecture.
 
@@ -874,11 +876,18 @@ Six surfaces auto-derive from real state. Three are curated lists in
 
 ### Sync triggers
 
-- **FastAPI startup event** — every API restart calls `sync_all`,
-  refreshing all 9 surfaces. Idempotent UPSERT (no duplicates). Failures
-  log but don't block startup. This is the primary trigger because most
-  populator sources require an API restart to take effect anyway.
-- **`make db-sync`** — explicit on-demand refresh. Runs the same `sync_all`.
+- **Daily cron** — `cron-install.sh` (Quickstart step 11) installs a
+  04:00 host-side `make db-sync`. This is the only *automatic full* (9/9
+  surface) sync, and the primary one — it runs host-side with `git`, Node,
+  and the whole repo in reach. Each run records a row in `dr_sync_runs`
+  (`trigger_kind='cron'`); a stale newest `run_at` means the cron stopped.
+- **FastAPI startup event** — every API restart runs `sync_all`. But the
+  `dos-api` container can't reach `git` or `ecosystem.config.cjs`, so it
+  no-ops `dr_repo` + `dr_services` — 7 of the 9 surfaces refresh.
+  Idempotent UPSERT; failures log but don't block startup.
+- **`make db-sync`** — explicit on-demand full refresh, host-side (the
+  cron command, minus the schedule). Run it after a change you don't want
+  to wait until 04:00 to pick up.
 - **`python3 shell_core/scripts/dr_sync.py <target>`** — single-target
   refresh during debugging.
 
