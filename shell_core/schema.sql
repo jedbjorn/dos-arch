@@ -612,6 +612,7 @@ SELECT
     effective_end,
     CASE
         WHEN resolved = 1 THEN 'resolved'
+        WHEN resolved = 0 THEN 'in_progress'   -- Open: active work, regardless of schedule dates
         WHEN effective_start IS NULL THEN 'unscheduled'
         WHEN effective_start <= DATE('now') THEN 'in_progress'
         ELSE 'scheduled'

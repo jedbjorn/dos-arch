@@ -10,7 +10,7 @@ router = APIRouter(tags=["flags"])
 
 FLAG_PRIORITIES = ('High', 'Medium', 'Low')
 
-ACTION_LABELS = {0: "Reopened", 1: "Resolved", 2: "Tracking"}
+ACTION_LABELS = {0: "Opened", 1: "Resolved", 2: "Tracking"}
 
 # Includes scheduling fields from the flag_schedule view (effective_start,
 # effective_end, schedule_status). The view computes these from
@@ -74,6 +74,8 @@ class FlagBody(BaseModel):
     display_name:   str = Field(max_length=250)
     priority:       str = Field(max_length=15)
     description:    str = ""
+    status:         int | None = Field(
+        default=None, description="0 = Open (default), 1 = Resolved, 2 = Tracking")
     start_date:     str = Field(default="", max_length=25)
     parent_flag_id: int | None = None
     estimated_days: float | None = None
@@ -132,7 +134,13 @@ def create_flag(body: FlagBody, con = Depends(get_db)):
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
     _valid_date(body.start_date)
     start_date = body.start_date.strip() or None
-    resolved = 2 if (start_date is None and body.parent_flag_id is None) else 0
+    # New flags default to Open (0); Tracking (2) is opt-in via `status`.
+    if body.status is not None:
+        if body.status not in (0, 1, 2):
+            raise HTTPException(422, "status must be 0 (Open), 1 (Resolved), or 2 (Tracking)")
+        resolved = body.status
+    else:
+        resolved = 0
     _validate_parent(con, body.parent_flag_id)
     con.execute("""
         INSERT INTO flags (display_name, priority, description,
@@ -284,7 +292,11 @@ def resolve_flag(flag_id: int, body: ResolveBody, con = Depends(get_db)):
     flag = con.execute("SELECT resolved, resolution_notes FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
+    # status=0 is "Reopened" only when the flag was actually Resolved before;
+    # a first transition (e.g. Tracking → Open) reads as "Opened".
     action        = ACTION_LABELS[status]
+    if status == 0 and flag["resolved"] == 1:
+        action = "Reopened"
     stamp         = date.today().strftime("%b %-d, %Y")
     entry         = f"## {action}: {stamp}"
     if body.effective_notes:
