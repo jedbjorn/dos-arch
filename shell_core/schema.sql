@@ -40,8 +40,14 @@ CREATE TABLE IF NOT EXISTS "shells" (
     user_id               INTEGER REFERENCES users(user_id),
     is_shared             INTEGER NOT NULL DEFAULT 0,
     is_admin              INTEGER NOT NULL DEFAULT 0,
+    api_auth              INTEGER NOT NULL DEFAULT 0,
     api_key_hash          TEXT
 );
+-- api_auth: 0 = CLI shell — interactive Claude Code, browser-auth on first
+--   launch (subscription billing), no Anthropic env, bypasses the broker's
+--   /anthropic route. 1 = API shell — the launcher points it at the broker's
+--   /anthropic route (ANTHROPIC_BASE_URL), which injects the real key. Any
+--   shell exposing a web-app interface must be api_auth=1 (Anthropic ToS).
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_shells_api_key_hash ON shells(api_key_hash);
 

@@ -44,6 +44,10 @@ CONTAINER_PREFIX = "shell-"            # container name = shell-<shortname>
 SHELL_IMAGE      = "dos-shell:latest"
 DOCKER_NETWORK   = "dos-net"
 
+# Broker's /anthropic route — API shells (shells.api_auth=1) are pointed here
+# instead of api.anthropic.com; the broker holds and injects the real key.
+BROKER_ANTHROPIC_URL = "http://dos-broker:8788/anthropic"
+
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -266,8 +270,9 @@ def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> s
     persistent: the dos-shell image's CMD (`sleep infinity` under tini)
     holds it open; a session attaches via `docker exec`. The shell's workdir
     is bind-mounted to /workspace so the rendered CLAUDE.md is visible
-    inside. Anthropic auth is intentionally NOT injected — CLI shells
-    browser-auth on first `claude` launch (subscription, not API).
+    inside. Anthropic auth is intentionally NOT injected at the container
+    level — it is set per shell type on the `docker exec` (see main()):
+    CLI shells browser-auth, API shells route through the broker.
 
     Returns the container name. Exits on docker failure; the caller runs
     this BEFORE opening a session so a failure burns no session number.
@@ -631,7 +636,7 @@ def main() -> None:
 
     # Re-fetch after opening session so the row has updated active_archive_id
     full = con.execute(
-        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, system_prompt FROM shells WHERE shell_id=?",
+        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, system_prompt, api_auth FROM shells WHERE shell_id=?",
         (chosen["shell_id"],),
     ).fetchone()
 
@@ -648,14 +653,31 @@ def main() -> None:
     # DOS_API_TOKEN` with no value makes docker read it from this process's
     # environment, so the plaintext never lands in the docker argv / `ps`.
     os.environ["DOS_API_TOKEN"] = api_token
+
+    exec_args = ["docker", "exec", "-it",
+                 "-e", "DOS_API_TOKEN", "-e", "IS_SANDBOX=1"]
+
+    # Anthropic auth — by shell type (shells.api_auth, migration 014).
+    #   api_auth=0 (CLI shell): no Anthropic env — `claude` browser-auths on
+    #     first launch (subscription billing) and reaches Anthropic directly.
+    #   api_auth=1 (API shell): point `claude` at the broker's /anthropic
+    #     route. The broker holds the key and injects x-api-key on the way
+    #     out — the key never enters the container. ANTHROPIC_AUTH_TOKEN is a
+    #     non-secret placeholder: it satisfies Claude Code's "a credential is
+    #     present" check (so it skips browser login) and the broker overrides
+    #     it regardless. See shell_core/broker/README.md.
+    if full["api_auth"]:
+        exec_args += ["-e", f"ANTHROPIC_BASE_URL={BROKER_ANTHROPIC_URL}",
+                      "-e", "ANTHROPIC_AUTH_TOKEN=broker-injected"]
+        print("→ API shell — Anthropic routed through the broker")
+
     # Shells run with permission prompts off — the rootless-Docker container
     # IS the sandbox boundary, so prompting again inside it adds nothing.
     # `IS_SANDBOX=1` lets `--dangerously-skip-permissions` run as the
     # container's root user (Claude Code otherwise refuses that flag as root).
-    os.execvp("docker", ["docker", "exec", "-it",
-                         "-e", "DOS_API_TOKEN", "-e", "IS_SANDBOX=1",
-                         "-w", "/workspace", container,
-                         "claude", "--dangerously-skip-permissions"])
+    exec_args += ["-w", "/workspace", container,
+                  "claude", "--dangerously-skip-permissions"]
+    os.execvp("docker", exec_args)
 
 
 if __name__ == "__main__":

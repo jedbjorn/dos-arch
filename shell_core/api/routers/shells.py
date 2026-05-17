@@ -31,6 +31,7 @@ class CreateShellBody(BaseModel):
     partner:           str | None = None
     user_id:           int
     skills:            str = "common"
+    api_auth:          int = 0   # 0 = CLI shell (browser-auth); 1 = API shell (broker-routed)
 
 
 @router.post("/shells", summary="Create a new shell from the system-prompt template (Forge / admin / UI only)")
@@ -61,10 +62,11 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
 
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "system_prompt, connections, user_id, is_shared, is_admin) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
+        "system_prompt, connections, user_id, is_shared, is_admin, api_auth) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
         (body.display_name, short, body.partner, body.role, body.mandate,
-         system_prompt, body.connections, body.user_id),
+         system_prompt, body.connections, body.user_id,
+         1 if body.api_auth else 0),
     )
     new_id = cur.lastrowid
 
@@ -136,7 +138,7 @@ def get_shell(shell_id: int, con = Depends(get_db)):
     row = con.execute("""
         SELECT shell_id, display_name, shortname, partner, role, mandate,
                current_state, connections, api_endpoints,
-               active_archive_id
+               active_archive_id, api_auth
         FROM shells WHERE shell_id = ?
     """, (shell_id,)).fetchone()
     if not row:
@@ -160,6 +162,7 @@ class UpdateShellBody(BaseModel):
     connections:       str | None = None
     api_endpoints:     str | None = None
     active_archive_id: int | None = None
+    api_auth:          int | None = None
 
 
 @router.patch("/shells/{shell_id}", summary="Update one or more shell fields")
@@ -202,6 +205,11 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
         fields.append("api_endpoints = ?"); args.append(body.api_endpoints.strip() or None)
     if body.active_archive_id is not None:
         fields.append("active_archive_id = ?"); args.append(body.active_archive_id)
+    if body.api_auth is not None:
+        # 0 = CLI shell (browser-auth) · 1 = API shell (broker-routed Anthropic).
+        # Takes effect on the shell's next `make launch` — run.py reads api_auth
+        # at boot to decide whether to inject the broker's ANTHROPIC_BASE_URL.
+        fields.append("api_auth = ?"); args.append(1 if body.api_auth else 0)
     if fields:
         args.append(shell_id)
         con.execute(f"UPDATE shells SET {', '.join(fields)} WHERE shell_id = ?", args)
@@ -210,7 +218,7 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     row = con.execute("""
         SELECT shell_id, display_name, shortname, partner, role, mandate,
                current_state, connections, api_endpoints,
-               active_archive_id
+               active_archive_id, api_auth
         FROM shells WHERE shell_id = ?
     """, (shell_id,)).fetchone()
     return dict(row)

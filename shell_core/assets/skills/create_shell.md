@@ -50,6 +50,16 @@ where things live (distinct from 2c's *rules*).
 **2e. Skills** — default `common` (every role-agnostic skill). The operator
 may name extras, comma-separated (e.g. `common, redline_review`).
 
+**2f. Anthropic auth** → `api_auth`. How the shell reaches Anthropic:
+- `0` — **CLI shell** (default). Interactive Claude Code; browser-login on
+  first boot, billed to the Claude subscription.
+- `1` — **API shell**. Routed through the credential broker's API key.
+  **Required** for any shell that exposes a web-app / HTTP interface —
+  Anthropic's ToS bars subscription auth from backing a web app.
+
+Ask: *does this shell expose a web-app interface?* Yes → `1`. Interactive
+CLI work → `0`. Unsure → `0`; Sys-Admin can flip it later.
+
 ---
 
 ## 3. Synthesis discipline
@@ -81,7 +91,8 @@ curl -fsS -X POST "$DOS_API_URL/shells" \
         "connections":       "<2d prose>",
         "partner":           "<operator username>",
         "user_id":           <operator user_id>,
-        "skills":            "common"
+        "skills":            "common",
+        "api_auth":          0
       }'
 ```
 
