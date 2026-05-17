@@ -33,28 +33,41 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
   exit 1
 }
 
-echo "==> [1/5] network ${NET}"
+echo "==> [1/6] network ${NET}"
 docker network inspect "${NET}" >/dev/null 2>&1 \
   || docker network create "${NET}" >/dev/null
 echo "    ${NET} ready"
 
-echo "==> [2/5] stop ${NAME} (migrations apply with no DB writer)"
+echo "==> [2/6] stop ${NAME} (migrations apply with no DB writer)"
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
 # Apply pending DB migrations before the API serves. migrate.py exits
 # non-zero on failure → set -e aborts here, leaving dos-api stopped: a
 # half-migrated DB never goes live. Restore from the snapshot it prints.
-echo "==> [3/5] pending DB migrations"
+echo "==> [3/6] pending DB migrations"
 python3 "${CORE}/scripts/migrate.py"
 
-echo "==> [4/5] start ${NAME}"
+# Catalogue sync MUST run host-side: dr_repo needs `git` + the repo's .git,
+# dr_services needs `node` + ecosystem.config.cjs — none of which exist in
+# the dos-api image (python:3.12-slim, shell_core-only bind mount), so the
+# API's in-container startup sync silently no-ops those two surfaces. This
+# host-side run is the complete one. Prefer the venv python (has fastapi,
+# so the apis/routers sync runs too); fall back to bare python3 — repos +
+# services need only stdlib + subprocess. Non-fatal: best-effort refresh.
+echo "==> [4/6] catalogue sync (host-side — git/node + full repo)"
+DRSYNC_PY="${REPO}/.venv/bin/python3"
+[[ -x "${DRSYNC_PY}" ]] || DRSYNC_PY="python3"
+"${DRSYNC_PY}" "${CORE}/scripts/dr_sync.py" \
+  || echo "    WARNING: catalogue sync reported errors (non-fatal)" >&2
+
+echo "==> [5/6] start ${NAME}"
 docker run -d --name "${NAME}" --network "${NET}" \
   -v "${CORE}:/substrate/shell_core" \
   -p 127.0.0.1:8000:8000 \
   --restart unless-stopped "${IMAGE}" >/dev/null
 echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8000"
 
-echo "==> [5/5] health check"
+echo "==> [6/6] health check"
 sleep 2
 docker run --rm --network "${NET}" --entrypoint python "${IMAGE}" -c \
   "import urllib.request as u; print(u.urlopen('http://${NAME}:8000/health').read().decode())"
