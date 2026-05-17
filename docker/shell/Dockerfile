@@ -81,6 +81,13 @@ RUN git config --global url."http://dos-broker:8788/gh/".insteadOf \
 # `docker exec` time, never baked into the image.
 ENV DOS_API_URL="http://dos-api:8000"
 
+# ── Claude Code config — auto-memory off ─────────────────────────────────────
+# Shells keep all memory in the substrate DB (reached via the dos-api
+# container), never in Claude Code's file-based memory/ + MEMORY.md. Disabling
+# auto-memory in user settings means it is never created inside a container.
+RUN mkdir -p /root/.claude \
+ && printf '{\n  "autoMemoryEnabled": false\n}\n' > /root/.claude/settings.json
+
 # ── runtime ──────────────────────────────────────────────────────────────────
 # Persistent container: `tini -- sleep infinity` holds it open; the
 # orchestrator attaches a session with `docker exec -it shell-<name> claude`
