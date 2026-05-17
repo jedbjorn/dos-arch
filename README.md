@@ -75,8 +75,8 @@ Detailed in **[install/README.md](install/README.md)**.
 
 | # | Command | User | What it does |
 |---|---------|------|--------------|
-| 0 | `git clone … ~/dos-arch` | operator | [private repo; operator owns the clone](install/README.md#prerequisites) |
-| 1 | `sudo ./install/host-setup.sh` | operator | [creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`](install/README.md#1--host-bootstrap-operator-sudo) |
+| 0 | `git clone https://github.com/jedbjorn/dos-arch` | operator | [private repo; operator owns the clone](install/README.md#prerequisites) |
+| 1 | cd ~/dos-arch `sudo ./install/host-setup.sh` | operator | [creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`](install/README.md#1--host-bootstrap-operator-sudo) |
 | 2 | `machinectl shell dos-arch@` → `rootless-setup.sh` | dos-arch | [fetches version-matched rootless-extras, runs the setuptool, persists `PATH`+`DOCKER_HOST` in `.bashrc`, `docker run hello-world`](install/README.md#2--rootless-docker-as-dos-arch) |
 | 3 | `cp .env.example .env` + fill + `setfacl` grants | operator | [broker secrets; grants `dos-arch` access to the clone](install/README.md#3--create-env-operator) |
 | 4 | `./install/build-image.sh` | dos-arch | [builds 3 images: `dos-shell`, `dos-broker`, `dos-api`](install/README.md#4--build-images--start-the-broker-as-dos-arch) |
