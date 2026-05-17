@@ -607,8 +607,14 @@ def main() -> None:
     # DOS_API_TOKEN` with no value makes docker read it from this process's
     # environment, so the plaintext never lands in the docker argv / `ps`.
     os.environ["DOS_API_TOKEN"] = api_token
+    # Shells run with permission prompts off — the rootless-Docker container
+    # IS the sandbox boundary, so prompting again inside it adds nothing.
+    # `IS_SANDBOX=1` lets `--dangerously-skip-permissions` run as the
+    # container's root user (Claude Code otherwise refuses that flag as root).
     os.execvp("docker", ["docker", "exec", "-it",
-                         "-e", "DOS_API_TOKEN", "-w", "/workspace", container, "claude"])
+                         "-e", "DOS_API_TOKEN", "-e", "IS_SANDBOX=1",
+                         "-w", "/workspace", container,
+                         "claude", "--dangerously-skip-permissions"])
 
 
 if __name__ == "__main__":
