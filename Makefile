@@ -41,9 +41,9 @@ gen-api-key:
 	@python3 $(CORE)/scripts/gen_api_key.py $(ARGS)
 
 install:
-	@command -v pm2 >/dev/null || { echo "ERROR: pm2 not found — npm i -g pm2"; exit 1; }
-	@command -v node >/dev/null || { echo "ERROR: node not found"; exit 1; }
-	@command -v python3 >/dev/null || { echo "ERROR: python3 not found"; exit 1; }
+	@command -v pm2 >/dev/null     || { echo "ERROR: pm2 not found — host dependencies skipped. As the operator: sudo npm install -g pm2  (see README Quickstart Step 0)."; exit 1; }
+	@command -v node >/dev/null    || { echo "ERROR: node not found — host dependencies skipped. Run README Quickstart Step 0 as the operator."; exit 1; }
+	@command -v python3 >/dev/null || { echo "ERROR: python3 not found — host dependencies skipped. Run README Quickstart Step 0 as the operator."; exit 1; }
 	@echo "Creating .venv (PEP 668 hosts require an isolated env)..."
 	@python3 -m venv .venv
 	@echo "Installing python deps into .venv..."

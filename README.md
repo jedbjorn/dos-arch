@@ -18,12 +18,8 @@ everything together.
 
 ## Dependencies
 
-Install the base packages below, then run the dockerized-host install —
-**[install/README.md](install/README.md)** — which sets up the `dos-arch`
-service user, rootless Docker, and the `dos-shell`, `dos-broker`, and
-`dos-api` images. Finish with **Cold bootstrap** (below) for the substrate.
-
-What's needed:
+The substrate runs on a handful of host packages. **[Quickstart Step 0](#quickstart)**
+below has the install commands — this is what each one is for:
 
 - **git**, **make** — clone the repo + Make entry points
 - **Python 3.10+** — FastAPI runtime, launcher, admin scripts
@@ -37,23 +33,7 @@ What's needed:
 `claude` is **not** a host dependency — it is baked into the `dos-shell`
 image and run via `docker exec` inside the container.
 
-### Install — Arch / CachyOS
-
-```bash
-sudo pacman -Syu     # rolling distro — sync the package db first, or pacman -S 404s on stale entries
-sudo pacman -S --needed git base-devel python nodejs npm docker docker-buildx slirp4netns fuse-overlayfs acl
-sudo npm install -g pm2
-```
-
-### Install — Ubuntu (24.04+)
-
-```bash
-sudo apt update
-sudo apt install -y git build-essential python3 python3-venv nodejs npm docker.io docker-buildx slirp4netns fuse-overlayfs uidmap acl
-sudo npm install -g pm2
-```
-
-The commands above install the packages. The **rootless-Docker
+Installing the packages is only the start: the **rootless-Docker
 configuration** — service user, rootless daemon, the substrate images — is
 the scripted procedure in **[install/README.md](install/README.md)**. Those
 scripts are Arch-specific (`pacman`); on Ubuntu the rootless-Docker steps
@@ -70,10 +50,36 @@ The system has two layers, documented in two files, plus a bridge step
 (`api-up.sh`) that sits at the seam between them. The real end-to-end
 sequence — repo link → working shell:
 
-> **Before step 1 — Arch/CachyOS:** bring the system fully current first —
-> `sudo pacman -Syu` (reboot if it updates the kernel). The install scripts
-> call `pacman -S`, which 404s (`failed retrieving file …`) against a stale
-> package database on a rolling distro.
+### Step 0 — dependencies & clone (operator)
+
+The whole install runs on a handful of host packages. **Install them
+first** — a skipped dependency doesn't fail loudly here; it surfaces much
+later as a `<name> not found` error (`pm2 not found`, `node not found`, …).
+See **[Dependencies](#dependencies)** above for what each one does.
+
+**Arch / CachyOS:**
+
+```bash
+sudo pacman -Syu     # rolling distro — sync the package db first, or pacman -S 404s on stale entries
+sudo pacman -S --needed git base-devel python nodejs npm docker docker-buildx slirp4netns fuse-overlayfs acl
+sudo npm install -g pm2
+```
+
+If `pacman -Syu` updates the kernel, reboot before continuing.
+
+**Ubuntu (24.04+):**
+
+```bash
+sudo apt update
+sudo apt install -y git build-essential python3 python3-venv nodejs npm docker.io docker-buildx slirp4netns fuse-overlayfs uidmap acl
+sudo npm install -g pm2
+```
+
+Then clone the repo into your home directory:
+
+```bash
+git clone https://github.com/jedbjorn/dos-arch.git ~/dos-arch
+```
 
 ### Layer 1 — Docker host
 
@@ -81,7 +87,6 @@ Detailed in **[install/README.md](install/README.md)**.
 
 | # | Command | User | What it does |
 |---|---------|------|--------------|
-| 0 | `git clone https://github.com/jedbjorn/dos-arch` | operator | [private repo; operator owns the clone](install/README.md#prerequisites) |
 | 1 | cd ~/dos-arch `sudo ./install/host-setup.sh` | operator | [creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`](install/README.md#1--host-bootstrap-operator-sudo) |
 | 2 | `machinectl shell dos-arch@` → `rootless-setup.sh` | dos-arch | [fetches version-matched rootless-extras, runs the setuptool, persists `PATH`+`DOCKER_HOST` in `.bashrc`, `docker run hello-world`](install/README.md#2--rootless-docker-as-dos-arch) |
 | 3 | `cp .env.example .env` + fill + `setfacl` grants | operator | [broker secrets; grants `dos-arch` access to the clone](install/README.md#3--create-env-operator) |
@@ -104,6 +109,15 @@ Detailed in **[Cold bootstrap](#cold-bootstrap)** below.
 Steps 6–9 run in **one `dos-arch` session**; the `git pull` refresh is the
 operator's job (you own the clone). Cold bootstrap below has the one-liner
 that opens that session already sitting in your clone.
+
+### Troubleshooting
+
+| Symptom | Cause → fix |
+|---|---|
+| `pm2 not found` / `node not found` / `python3 not found` (from `make install`) | A dependency was skipped — run **Step 0** above, then retry. |
+| `failed retrieving file …` (during `host-setup.sh`) | Stale package database on a rolling distro — `sudo pacman -Syu` (reboot if the kernel updates), then re-run the step. |
+| `docker: command not found` (`build-image.sh` / `api-up.sh` / `make launch`) | Not in a `dos-arch` session, or its `PATH` isn't loaded — use the `sudo machinectl shell dos-arch@ /bin/bash -lc "…"` one-liner forms; the `-l` login shell loads `~/.bashrc`. |
+| `sudo` asks for a `dos-arch` password | You ran `sudo` *inside* a `dos-arch` session — `dos-arch` is passwordless and not a sudoer. `exit` to the operator first; `sudo` is the operator's. |
 
 ---
 
