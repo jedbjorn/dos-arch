@@ -7,34 +7,36 @@ command: --flags
 ---
 # surface_flags
 
-Surface open flags for this shell. Run on demand with `--flags`.
+Surface this shell's open flags. Run on demand with `--flags`.
 
-Replace `<YOUR_SHELL_ID>` with your shell_id from the ACTIVE SESSION block.
+Memory is read over the substrate API — no DB file (see MEMORY ARCHITECTURE
+in your system prompt). `$DOS_API_URL` and `$DOS_API_TOKEN` are in your
+container environment; `<self>` is your shell_id, in `## ACTIVE SESSION` of
+your CLAUDE.md.
 
-```python
-import sqlite3
-SHELL_ID = <YOUR_SHELL_ID>
-conn = sqlite3.connect('shell_db.db')
-cur = conn.cursor()
-cur.execute('''
-    SELECT f.flag_id, f.display_name, f.priority, f.description,
-           f.start_date, f.estimated_days, f.parent_flag_id,
-           fs.effective_start, fs.effective_end, fs.status AS schedule_status
-    FROM flags f
-    LEFT JOIN flag_schedule fs ON fs.flag_id = f.flag_id
-    WHERE f.shell_id = ? AND f.resolved = 0 AND f.is_deleted = 0
-    ORDER BY CASE f.priority WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END,
-             fs.effective_start ASC NULLS LAST,
-             f.flag_id ASC
-''', (SHELL_ID,))
-rows = cur.fetchall()
-conn.close()
+`GET /flags` returns every flag in the substrate, each with its schedule
+fields. Fetch, then keep only this shell's open ones:
+
+```bash
+curl -fsS -H "Authorization: Bearer $DOS_API_TOKEN" "$DOS_API_URL/flags" \
+  | python3 -c "
+import sys, json
+SHELL_ID = <self>          # your shell_id — see ## ACTIVE SESSION
+prio = {'High': 1, 'Medium': 2, 'Low': 3}
+rows = [f for f in json.load(sys.stdin)
+        if f['shell_id'] == SHELL_ID and f['resolved'] == 0]
+rows.sort(key=lambda f: (prio.get(f['priority'], 4),
+                         f['effective_start'] or '9999', f['flag_id']))
+for f in rows:
+    print(f)
+"
 ```
 
 Output:
 
 **Open Flags** — columns: ID | Priority | Status | Description | Effective Start | Effective End | Parent
-- Status comes from `flag_schedule.status` (`scheduled` / `in_progress` / `unscheduled`).
-- Effective Start/End come from the `flag_schedule` recursive view (`parent_flag_id` chain + `start_date` override + `estimated_days`).
-- Sort: High → Medium → Low, then by effective_start ascending.
+- Status is `schedule_status` (`scheduled` / `in_progress` / `unscheduled`).
+- Effective Start/End come from the flag-schedule view (`parent_flag_id`
+  chain + `start_date` override + `estimated_days`).
+- Sort: High → Medium → Low, then effective_start ascending.
 - If none: state "No open flags."
