@@ -28,6 +28,7 @@ Usage:
 import ast
 import inspect
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -468,6 +469,7 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
 _AUTOMATION_ENTRIES = [
     # (name, trigger_kind, schedule, description_short)
     ("catalogue_startup_sync", "api",    None,             "Refresh dr_* catalogue on FastAPI startup (api/main.py @on_event)"),
+    ("catalogue_cron_sync",    "cron",   "daily 04:00",    "Full host-side dr_* catalogue sync via cron; runs db-sync, logs to dr_sync_runs"),
     ("boot_db_snapshot",       "manual", "on make launch", "DB snapshot before each shell boot; rolling-5 retention in ~/db_backups/dos-arch"),
     ("missing_db_tripwire",    "manual", "on make launch", "Abort launch if shell_db.db missing or 0 bytes; restore from snapshot"),
     ("forge_self_heal",        "manual", "on make launch", "Re-seed Forge if missing from DB (run.py calls ensure_forge each boot)"),
@@ -559,7 +561,41 @@ def sync_all(conn: sqlite3.Connection, app=None) -> dict:
     return out
 
 
+def _record_run(conn, trigger_kind, results, fatal_error=None):
+    """Write one dr_sync_runs row summarizing a sync invocation.
+
+    `results` is the {target: counts} map — counts is {surface: {insert,update}}
+    or the {"error": ...} shape sync_all uses for a whole-target failure.
+    `fatal_error` is set when the run aborted before/around sync; it takes the
+    error slot ahead of any per-surface error. The error column is truncated to
+    100 chars so a too-long message never makes this logging insert itself fail.
+    """
+    total_ins = total_upd = 0
+    first_err = fatal_error
+    for target, counts in (results or {}).items():
+        if isinstance(counts, dict) and "error" in counts:
+            if first_err is None:
+                first_err = f"{target}: {counts['error']}"
+            continue
+        for surface, c in (counts or {}).items():
+            if "error" in c:
+                if first_err is None:
+                    first_err = f"{surface}: {c['error']}"
+            else:
+                total_ins += c.get("insert", 0)
+                total_upd += c.get("update", 0)
+    conn.execute(
+        "INSERT INTO dr_sync_runs (run_at, trigger_kind, surfaces, total_insert, "
+        "total_update, had_error, error) VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)",
+        (trigger_kind, json.dumps(results or {}), total_ins, total_upd,
+         1 if first_err else 0, _truncate(first_err) if first_err else None),
+    )
+
+
 def main() -> int:
+    # 'cron' when invoked by the scheduled host sync (it sets DR_SYNC_TRIGGER);
+    # 'manual' for an interactive `make db-sync` / direct CLI run.
+    trigger_kind = os.environ.get("DR_SYNC_TRIGGER", "manual")
     targets = sys.argv[1:] or list(SYNCS.keys())
     unknown = [t for t in targets if t not in SYNCS]
     if unknown:
@@ -567,20 +603,44 @@ def main() -> int:
         return 1
 
     conn = sqlite3.connect(DB_PATH)
+    results: dict = {}
+    rc = 0
     try:
         for target in targets:
             fn = SYNCS[target]
             kwargs = {}
             if "app" in inspect.signature(fn).parameters:
                 kwargs["app"] = None  # CLI path: let fn self-import
-            counts = fn(conn, **kwargs)
+            try:
+                counts = fn(conn, **kwargs)
+            except Exception as e:  # mirror sync_all — one bad target never aborts the run
+                counts = {"error": repr(e)}
+            results[target] = counts
             print(f"[{target}]")
-            for surface, c in counts.items():
-                print(f"  {surface}: {c['insert']} inserted, {c['update']} updated")
+            if "error" in counts:
+                print(f"  ERROR {counts['error']}")
+                rc = 1
+            else:
+                for surface, c in counts.items():
+                    if "error" in c:
+                        print(f"  {surface}: ERROR {c['error']}")
+                        rc = 1
+                    else:
+                        print(f"  {surface}: {c['insert']} inserted, {c['update']} updated")
+        _record_run(conn, trigger_kind, results)
         conn.commit()
+    except Exception as e:
+        # Catastrophic failure (DB, commit, etc.) — still try to leave a row.
+        print(f"dr_sync FAILED: {e!r}", file=sys.stderr)
+        try:
+            _record_run(conn, trigger_kind, results, fatal_error=repr(e))
+            conn.commit()
+        except Exception:
+            pass
+        rc = 1
     finally:
         conn.close()
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

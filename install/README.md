@@ -222,6 +222,7 @@ docker run --rm --network dos-net --entrypoint python dos-broker:latest \
 | `build-image.sh`    | `dos-arch`  | repo clone | build + verify `dos-shell` + `dos-broker` + `dos-api` |
 | `broker-up.sh`      | `dos-arch`  | repo clone | `dos-net` network + `dos-broker` container |
 | `api-up.sh`         | `dos-arch`  | repo clone | `dos-net` network + `dos-api` container (run after `make bootstrap`) |
+| `cron-install.sh`   | `dos-arch`  | repo clone | daily dr_* catalogue sync cron (run once, after `make bootstrap`) |
 | `teardown.sh`       | `dos-arch`  | `~/setup` or clone | remove containers/images + rootless Docker |
 
 All idempotent — safe to re-run.

@@ -474,6 +474,32 @@ CREATE TABLE dr_log (
     changed_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- dr_sync_runs — audit log of dr_* catalogue sync invocations. One row per run:
+-- a cron full-sync, an in-container FastAPI-startup partial-sync, or a manual
+-- `make db-sync`. This is the monitoring surface for catalogue drift — a stale
+-- newest run_at means the cron is not firing; a had_error=1 row means a run
+-- started but failed (error truncated to 100 chars). A run that never started
+-- leaves no row at all: the signal there is the gap, not a row. Rolling-100
+-- retention via the trigger below.
+CREATE TABLE dr_sync_runs (
+    run_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    trigger_kind  TEXT    NOT NULL CHECK (trigger_kind IN ('cron','startup','manual')),
+    surfaces      TEXT,                       -- JSON: {target: {surface: {insert,update} | {error}}}
+    total_insert  INTEGER NOT NULL DEFAULT 0,
+    total_update  INTEGER NOT NULL DEFAULT 0,
+    had_error     INTEGER NOT NULL DEFAULT 0,
+    error         TEXT                        -- first/worst error, <=100 chars; NULL if clean
+);
+
+CREATE TRIGGER trg_dr_sync_runs_rolling
+AFTER INSERT ON dr_sync_runs
+BEGIN
+  DELETE FROM dr_sync_runs WHERE run_id NOT IN (
+    SELECT run_id FROM dr_sync_runs ORDER BY run_id DESC LIMIT 100
+  );
+END;
+
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
 CREATE INDEX idx_ui_logs_user   ON app_ui_logs(user_id);

@@ -20,9 +20,10 @@ This skill is *maintaining* it — admin work, with the repo at `/substrate`.
 `sync_all`. It runs in two places, and the split matters:
 
 - **host-side — the complete sync.** `./install/api-up.sh` (step [4/6],
-  every recompose) and `make db-sync`. `dr_repo` needs `git` + the repo's
-  `.git`; `dr_services` needs `node` + `ecosystem.config.cjs` — both only
-  populate here, where the host has the tooling and the whole repo.
+  every recompose), `make db-sync`, and a daily cron (see *Run log +
+  monitoring*). `dr_repo` needs `git` + the repo's `.git`; `dr_services`
+  needs `node` + `ecosystem.config.cjs` — both only populate here, where
+  the host has the tooling and the whole repo.
 - **in-container, on every API startup — best-effort refresh.** The
   `dos-api` image is `python:3.12-slim` with no `git`/`node` and mounts
   only `shell_core`, so the repo + services surfaces silently no-op
@@ -60,6 +61,23 @@ Six auto-derive from real state; three are curated lists inside `dr_sync.py`:
 It re-syncs at the next recompose (`./install/api-up.sh`), or run
 `make db-sync` host-side. Never hand-write a `dr_*` row — the next sync
 overwrites it from source.
+
+## Run log + monitoring
+
+Every `sync_all` invocation writes one row to `dr_sync_runs` — `trigger_kind`
+is `cron`, `startup`, or `manual`. Each row carries the per-surface counts as
+JSON, `total_insert`/`total_update`, `had_error`, and a 100-char `error`.
+Rolling-100 retention via trigger. It's the audit trail for catalogue drift.
+
+The only *automatic* full sync is a host-side cron — `daily 04:00`, installed
+once via `./install/cron-install.sh`. Nothing else refreshes
+`dr_repo`/`dr_services` on its own; without the cron they drift stale between
+recomposes.
+
+Monitor via `GET /admin/catalogue-sync` (admin-gated): recent runs,
+`last_cron`, `recent_errors`, and `stale` — true when no cron run landed in
+the last 26h. A run that never started leaves no row at all, so `stale` is
+the cron-didn't-fire signal. Watching this is the admin shell's job.
 
 ## Adding a sync target
 
