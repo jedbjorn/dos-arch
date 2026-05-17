@@ -45,6 +45,17 @@ def main() -> int:
         con.executescript(SCHEMA_PATH.read_text())
         print(f"  schema applied → {DB_PATH.relative_to(ROOT)}")
 
+        # schema.sql already reflects every shipped migration — stamp them so
+        # migrate.py sees a freshly-bootstrapped DB as up to date (it would
+        # otherwise re-apply them and collide with the existing tables).
+        migs = sorted(p.name for p in (ROOT / "shell_core" / "migrations").glob("*.sql"))
+        con.executemany(
+            "INSERT OR IGNORE INTO schema_migrations (migration_id) VALUES (?)",
+            [(m,) for m in migs],
+        )
+        con.commit()
+        print(f"  stamped {len(migs)} migration(s) as applied")
+
         seeded = seed_skills(con)
         con.commit()
         print(f"  seeded {len(seeded)} skills")

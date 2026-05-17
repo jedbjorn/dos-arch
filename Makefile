@@ -3,7 +3,7 @@ DB   := $(CORE)/shell_db.db
 SCHEMA := $(CORE)/schema.sql
 BACKUP_DIR := $(HOME)/db_backups/dos-arch
 
-.PHONY: help install bootstrap db-backup db-sync catalogue up down restart status logs health launch set-password create-user gen-api-key
+.PHONY: help install bootstrap migrate db-backup db-sync catalogue up down restart status logs health launch set-password create-user gen-api-key
 
 help:
 	@echo "shell-infra — host-level substrate"
@@ -15,6 +15,7 @@ help:
 	@echo "  make gen-api-key ARGS=<shortname>  issue/rotate a shell's substrate-API key"
 	@echo "  make install             pip + npm dependencies"
 	@echo "  make bootstrap           one-shot: schema + skills + Forge + first user + Sys-Admin (refuses if DB exists)"
+	@echo "  make migrate             apply pending DB migrations (ARGS=--status to preview)"
 	@echo "  make db-backup           snapshot $(DB) to $(BACKUP_DIR)/<ts>.db"
 	@echo "  make db-sync             refresh dr_router + dr_api from live routes"
 	@echo "  make catalogue           print the substrate catalogue (filter via ARGS=, e.g. ARGS='api')"
@@ -55,6 +56,9 @@ install:
 
 bootstrap:
 	@python3 $(CORE)/scripts/bootstrap.py
+
+migrate:
+	@python3 $(CORE)/scripts/migrate.py $(ARGS)
 
 db-backup:
 	@mkdir -p $(BACKUP_DIR)

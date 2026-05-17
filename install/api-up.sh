@@ -33,20 +33,28 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
   exit 1
 }
 
-echo "==> [1/3] network ${NET}"
+echo "==> [1/5] network ${NET}"
 docker network inspect "${NET}" >/dev/null 2>&1 \
   || docker network create "${NET}" >/dev/null
 echo "    ${NET} ready"
 
-echo "==> [2/3] (re)start ${NAME}"
+echo "==> [2/5] stop ${NAME} (migrations apply with no DB writer)"
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
+
+# Apply pending DB migrations before the API serves. migrate.py exits
+# non-zero on failure → set -e aborts here, leaving dos-api stopped: a
+# half-migrated DB never goes live. Restore from the snapshot it prints.
+echo "==> [3/5] pending DB migrations"
+python3 "${CORE}/scripts/migrate.py"
+
+echo "==> [4/5] start ${NAME}"
 docker run -d --name "${NAME}" --network "${NET}" \
   -v "${CORE}:/substrate/shell_core" \
   -p 127.0.0.1:8000:8000 \
   --restart unless-stopped "${IMAGE}" >/dev/null
 echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8000"
 
-echo "==> [3/3] health check"
+echo "==> [5/5] health check"
 sleep 2
 docker run --rm --network "${NET}" --entrypoint python "${IMAGE}" -c \
   "import urllib.request as u; print(u.urlopen('http://${NAME}:8000/health').read().decode())"

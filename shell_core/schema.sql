@@ -616,3 +616,13 @@ SELECT
         ELSE 'scheduled'
     END AS status
 FROM walk;
+
+-- ── migration tracking ───────────────────────────────────────────────────────
+-- One row per applied migration file (see shell_core/migrations/*.sql).
+-- migrate.py computes the pending set as migrations/*.sql minus this table;
+-- bootstrap.py stamps every shipped migration here right after loading this
+-- schema (schema.sql already reflects them). Never edited by hand.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_id  TEXT PRIMARY KEY,
+    applied_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
