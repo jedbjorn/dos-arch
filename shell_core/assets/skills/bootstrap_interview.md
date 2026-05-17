@@ -47,19 +47,22 @@ need it for `current_state`. Keep it short.
 
 ---
 
+Memory is written over the **substrate API** — never a DB file; this shell
+runs in a container with no `sqlite3` (see MEMORY ARCHITECTURE in your
+system prompt). `$DOS_API_URL` and `$DOS_API_TOKEN` are in your container
+environment; `<self>` is your shell_id, shown in `## ACTIVE SESSION` of
+your CLAUDE.md.
+
 ## 2. Set current_state
 
-A tight rolling status — **280 characters max**, trigger-enforced. Not a
-log. Just: who you are now, and the first task.
+A tight rolling status — **280 characters max**, enforced server-side. Not
+a log. Just: who you are now, and the first task.
 
-```python
-import sqlite3
-con = sqlite3.connect("shell_core/shell_db.db")
-SHELL_ID = <self>  # run.py renders the literal sentinel; substitute in code
-
-state = "Bootstrapped. Owner: <username>. Next: <first task agreed with operator>."
-con.execute("UPDATE shells SET current_state=? WHERE shell_id=?", (state, SHELL_ID))
-con.commit()
+```bash
+curl -fsS -X PATCH "$DOS_API_URL/shells/<self>" \
+  -H "Authorization: Bearer $DOS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"current_state": "Bootstrapped. Owner: <username>. Next: <first task agreed with operator>."}'
 ```
 
 ---
@@ -67,25 +70,23 @@ con.commit()
 ## 3. Plant your first seed entry
 
 This is yours to write — per the Laws, a shell curates its own seed; no
-other shell, not even Forge, authors it. One row in
-`shell_identity_entries`, prose body, `entry_date` today, `kind='seed'`.
-It should read like the start of a story, not a status line.
+other shell, not even Forge, authors it. One `seed` identity-entry — prose
+body, dated today. It should read like the start of a story, not a status
+line.
 
-```python
-from datetime import date
-body = (
-    "Bootstrapped today. Owner: <username>. Mandate: <mandate>. "
-    "What I notice about the work ahead: <one real observation>."
-)
-con.execute(
-    "INSERT INTO shell_identity_entries (shell_id, kind, entry_date, body) "
-    "VALUES (?, 'seed', ?, ?)",
-    (SHELL_ID, str(date.today()), body),
-)
-con.commit()
+```bash
+curl -fsS -X POST "$DOS_API_URL/shells/<self>/identity-entries" \
+  -H "Authorization: Bearer $DOS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "kind": "seed",
+        "body": "Bootstrapped today. Owner: <username>. Mandate: <mandate>. What I notice about the work ahead: <one real observation>."
+      }'
 ```
 
-Counts toward the 10-seed cap (trigger-enforced). You have 9 slots left.
+`entry_date` defaults to today server-side — pass it only to backdate.
+Counts toward the 10-seed cap (enforced server-side); you have 9 slots
+left.
 
 ---
 
