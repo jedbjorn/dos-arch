@@ -15,9 +15,13 @@ def _caller_shell(request: Request) -> int | None:
 
 
 def _require_admin(request: Request) -> None:
-    """Admin-only ops. An API-key shell is never an admin caller; the UI is."""
-    if _caller_shell(request) is not None:
-        raise HTTPException(403, "API-key callers may not perform admin operations.")
+    """Admin-only ops. Allowed for the keyless localhost UI, and for an
+    API-key caller whose shell is flagged `is_admin=1` (Sys-Admin). Every
+    other API-key caller — the worker shells — is refused."""
+    if _caller_shell(request) is None:
+        return  # the localhost UI
+    if not getattr(request.state, "shell_is_admin", False):
+        raise HTTPException(403, "This shell is not an admin shell.")
 
 
 def _require_shell_self(shell_id: int, request: Request) -> None:

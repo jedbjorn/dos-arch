@@ -37,10 +37,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 MUTATION_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 
 
-def _resolve_caller_shell(request: Request) -> tuple[int | None, str | None, bool]:
-    """Resolve an API-key token to a shell. Returns (shell_id, shortname, bad);
-    `bad` is True when a token was presented but matched no shell. No token at
-    all → (None, None, False)."""
+def _resolve_caller_shell(request: Request) -> tuple[int | None, str | None, bool, bool]:
+    """Resolve an API-key token to a shell. Returns
+    (shell_id, shortname, is_admin, bad); `bad` is True when a token was
+    presented but matched no shell. No token at all → (None, None, False, False)."""
     token = ""
     authz = request.headers.get("authorization", "")
     if authz[:7].lower() == "bearer ":
@@ -48,29 +48,30 @@ def _resolve_caller_shell(request: Request) -> tuple[int | None, str | None, boo
     if not token:
         token = (request.query_params.get("api_key") or "").strip()
     if not token:
-        return None, None, False
+        return None, None, False, False
     digest = hashlib.sha256(token.encode()).hexdigest()
     con = db()
     try:
         row = con.execute(
-            "SELECT shell_id, shortname FROM shells WHERE api_key_hash=?", (digest,)
+            "SELECT shell_id, shortname, is_admin FROM shells WHERE api_key_hash=?", (digest,)
         ).fetchone()
     finally:
         con.close()
     if row is None:
-        return None, None, True
-    return row["shell_id"], row["shortname"], False
+        return None, None, False, True
+    return row["shell_id"], row["shortname"], bool(row["is_admin"]), False
 
 
 @app.middleware("http")
 async def auth_passthrough(request: Request, call_next):
     request.state.user_id   = 1
     request.state.is_admin  = True
-    shell_id, shell_name, bad = _resolve_caller_shell(request)
+    shell_id, shell_name, shell_is_admin, bad = _resolve_caller_shell(request)
     if bad:
         return JSONResponse(status_code=401, content={"detail": "Invalid API key."})
-    request.state.shell_id   = shell_id
-    request.state.shell_name = shell_name
+    request.state.shell_id       = shell_id
+    request.state.shell_name     = shell_name
+    request.state.shell_is_admin = shell_is_admin
     t0 = time.monotonic()
     response = await call_next(request)
     if request.method in MUTATION_METHODS:

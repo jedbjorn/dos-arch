@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS "shells" (
     active_archive_id     INTEGER,
     user_id               INTEGER REFERENCES users(user_id),
     is_shared             INTEGER NOT NULL DEFAULT 0,
+    is_admin              INTEGER NOT NULL DEFAULT 0,
     api_key_hash          TEXT
 );
 
