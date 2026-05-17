@@ -26,6 +26,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from db_init import ensure_forge
+from shared_dirs import ensure_shared_dirs, shared_dir_container_path
 
 SUBSTRATE_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH        = SUBSTRATE_ROOT / "shell_core" / "shell_db.db"
@@ -384,6 +385,18 @@ def render_identity(shell_row: sqlite3.Row) -> str:
     )
 
 
+def render_shared_dirs(shell_row: sqlite3.Row) -> str:
+    """The shell's own scratch space under the shared mount — rendered as the
+    container-relative path the shell sees from inside its own container."""
+    base = shared_dir_container_path(shell_row["shell_id"], shell_row["shortname"])
+    return (
+        f"`{base}/` is your directory inside the shared mount — it contains\n"
+        "`redlines/`, `review/`, `repos/`, and `backups/`. This dir and its\n"
+        "subdirs are yours, to use in collaboration with FnB. Other shells can\n"
+        "see it; by convention it is yours."
+    )
+
+
 def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
     rows = con.execute("""
         SELECT s.name, s.description
@@ -460,6 +473,7 @@ def compose_claude_md(
     system_prompt = system_prompt.replace("<self>", str(shell_row["shell_id"]))
     identity = render_identity(shell_row)
     operator = render_operator(user_row)
+    shared_dirs = render_shared_dirs(shell_row)
 
     parts = [
         template.rstrip(),
@@ -483,6 +497,12 @@ def compose_claude_md(
         "## IDENTITY",
         "",
         identity,
+        "",
+        "---",
+        "",
+        "## YOUR SPACE",
+        "",
+        shared_dirs,
         "",
         "---",
         "",
@@ -587,6 +607,11 @@ def main() -> None:
     workdir = SHELLS_DIR / chosen["shortname"]
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / DIR_SENTINEL).write_text("managed by shell_core/scripts/run.py\n")
+
+    # Verify-and-create the shell's scratch tree under ~/shared. Idempotent —
+    # catches shells created via POST /shells, whose creation runs inside the
+    # dos-api container and so cannot reach the host's ~/shared.
+    ensure_shared_dirs(chosen["shell_id"], chosen["shortname"])
 
     # Ensure the shell's container is up BEFORE opening a session — a failed
     # container launch must not burn a session number.
