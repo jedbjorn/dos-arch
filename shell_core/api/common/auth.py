@@ -24,6 +24,20 @@ def _require_admin(request: Request) -> None:
         raise HTTPException(403, "This shell is not an admin shell.")
 
 
+def _require_shell_creator(request: Request, con) -> None:
+    """Creating a shell: allowed for the keyless localhost UI, an admin shell
+    (Sys-Admin), or a shared bootstrap shell (Forge, is_shared=1). Every other
+    API-key caller — the worker shells — is refused."""
+    caller = _caller_shell(request)
+    if caller is None:
+        return  # the localhost UI
+    row = con.execute(
+        "SELECT is_admin, is_shared FROM shells WHERE shell_id=?", (caller,)
+    ).fetchone()
+    if not row or not (row["is_admin"] or row["is_shared"]):
+        raise HTTPException(403, "Only Forge or an admin shell may create shells.")
+
+
 def _require_shell_self(shell_id: int, request: Request) -> None:
     """An API-key shell may act only on its own shell_id."""
     caller = _caller_shell(request)

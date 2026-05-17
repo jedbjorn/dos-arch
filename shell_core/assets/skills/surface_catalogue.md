@@ -1,59 +1,38 @@
 ---
 name: surface_catalogue
-description: Surface the substrate catalogue (dr_*) on demand. Run before grepping the codebase to find what exists.
+description: Surface the substrate catalogue (dr_*) on demand — routes, routers, deps, libs, services, repos, files, automations, env. Query it before grepping the codebase.
 category: workflow
 common: 1
 ---
 # surface_catalogue
 
-Surface the dr_* catalogue on demand — print every catalogued component
-(routes, routers, deps, libs, services, repos, files, automations, env)
-grouped by ref_table, with optional filtering. Runs before you grep the
-codebase to find something.
+A live index of what exists in the substrate. Query it before grepping —
+one call beats many `find` / `grep` / `Read` calls.
 
-## Quick reference
+`$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment.
 
 ```bash
-# Full listing (~111 rows today)
-make catalogue
+# everything
+curl -fsS -H "Authorization: Bearer $DOS_API_TOKEN" "$DOS_API_URL/catalogue"
 
-# Substring filter on name + ref_table (e.g. find anything related to flags)
-make catalogue ARGS="flag"
+# one surface — table is a ref_table: dr_api, dr_router, dr_services,
+# dr_filepath, dr_env, dr_repo, dr_lib, dr_dependencies, dr_automations
+curl -fsS -H "Authorization: Bearer $DOS_API_TOKEN" "$DOS_API_URL/catalogue?table=dr_api"
 
-# One ref_table only
-make catalogue ARGS="--table dr_api"
-
-# Per-shell view (uses v_shell_catalogue, includes role)
-make catalogue ARGS="--shell 1"
-
-# Combined
-make catalogue ARGS="--shell 1 --table dr_api flag"
+# substring search across name + description
+curl -fsS -H "Authorization: Bearer $DOS_API_TOKEN" "$DOS_API_URL/catalogue?q=flag"
 ```
 
-Or call the script directly (no `ARGS=` wrapper):
-
-```bash
-python3 shell_core/scripts/catalogue.py flag
-python3 shell_core/scripts/catalogue.py --table dr_services
-python3 shell_core/scripts/catalogue.py --shell 1 --table dr_api
-```
+Each row is `{ref_table, ref_id, name, description_short}`. Group the
+output by `ref_table` when you present it.
 
 ## When to use
 
-- Cold start — orienting in an unfamiliar substrate. One query beats many `find`/`grep`/`Read` calls.
-- "Where does X live?" — `make catalogue ARGS="<X>"` searches names + ref_tables.
-- "Is there an API for Y?" — beats reading all five router files.
-- "What auto-runs in this substrate?" — `make catalogue ARGS="--table dr_automations"`.
-- "What env vars matter?" — `make catalogue ARGS="--table dr_env"`.
+- Cold start — orienting in an unfamiliar substrate.
+- "Where does X live?" — `?q=<X>`.
+- "Is there an API for Y?" — `?table=dr_api&q=<Y>`.
+- "What auto-runs / what env vars matter?" — `?table=dr_automations`,
+  `?table=dr_env`.
 
-The catalogue auto-syncs on API startup. If something looks stale, run
-`make db-sync` first.
-
-See `catalogue_sync` skill for the full sync pipeline and `db_map` for
-direct SQL queries against `v_dr_catalogue` / `v_shell_catalogue`.
-
-## Output shape
-
-Grouped by ref_table, name in left column (truncated at 36 chars),
-description_short in right column. Per-shell mode adds a `[role: X]` tail
-when the link has a role annotation.
+The catalogue auto-syncs on every API restart. See `catalogue_sync` for the
+sync pipeline.

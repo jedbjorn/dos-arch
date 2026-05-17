@@ -122,3 +122,70 @@ def admin_remove_shell_skill(request: Request, shell_id: int, skill_id: int, con
     con.execute("DELETE FROM shell_skills WHERE shell_id=? AND skill_id=?", (shell_id, skill_id))
     con.commit()
     return {"ok": True}
+
+
+# ── Skill catalogue CRUD ──────────────────────────────────────────────────────
+
+class CreateSkillBody(BaseModel):
+    name:        str
+    description: str = ""
+    category:    str = "workflow"
+    content:     str
+    command:     str | None = None
+    common:      int = 0
+
+
+@router.post("/admin/skills", summary="Admin: create a new skill")
+def admin_create_skill(request: Request, body: CreateSkillBody, con = Depends(get_db)):
+    _require_admin(request)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "name is required")
+    if con.execute("SELECT 1 FROM skills WHERE name=? AND is_deleted=0", (name,)).fetchone():
+        raise HTTPException(409, f"skill '{name}' already exists")
+    cur = con.execute(
+        "INSERT INTO skills (name, description, category, content, command, common, is_deleted) "
+        "VALUES (?, ?, ?, ?, ?, ?, 0)",
+        (name, body.description, body.category, body.content,
+         (body.command or None), 1 if body.common else 0),
+    )
+    con.commit()
+    return {"skill_id": cur.lastrowid, "name": name}
+
+
+class UpdateSkillBody(BaseModel):
+    description: str | None = None
+    category:    str | None = None
+    content:     str | None = None
+    command:     str | None = None
+    common:      int | None = None
+
+
+@router.patch("/admin/skills/{skill_id}", summary="Admin: update a skill's content or metadata")
+def admin_update_skill(request: Request, skill_id: int, body: UpdateSkillBody, con = Depends(get_db)):
+    _require_admin(request)
+    if not con.execute("SELECT 1 FROM skills WHERE skill_id=? AND is_deleted=0", (skill_id,)).fetchone():
+        raise HTTPException(404, "Skill not found")
+    fields, args = [], []
+    for col in ("description", "category", "content", "command"):
+        val = getattr(body, col)
+        if val is not None:
+            fields.append(f"{col}=?"); args.append(val)
+    if body.common is not None:
+        fields.append("common=?"); args.append(1 if body.common else 0)
+    if not fields:
+        raise HTTPException(422, "no fields to update")
+    args.append(skill_id)
+    con.execute(f"UPDATE skills SET {', '.join(fields)} WHERE skill_id=?", args)
+    con.commit()
+    return {"ok": True, "skill_id": skill_id}
+
+
+@router.delete("/admin/skills/{skill_id}", summary="Admin: soft-delete a skill (is_deleted=1; row preserved)")
+def admin_delete_skill(request: Request, skill_id: int, con = Depends(get_db)):
+    _require_admin(request)
+    if not con.execute("SELECT 1 FROM skills WHERE skill_id=? AND is_deleted=0", (skill_id,)).fetchone():
+        raise HTTPException(404, "Skill not found")
+    con.execute("UPDATE skills SET is_deleted=1 WHERE skill_id=?", (skill_id,))
+    con.commit()
+    return {"ok": True, "skill_id": skill_id}

@@ -1,16 +1,92 @@
 """Identity, decisions, archives, chat, messages — the per-shell CRUD surface."""
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
+import re
 import uuid
 from datetime import date
+from pathlib import Path
 
 from api.common.db import get_db
+from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
 
 router = APIRouter(tags=["shells"])
 
 TOKEN_WARN      = 140_000
 TOKEN_AUTOCLEAR = 150_000
+
+_SYSTEM_PROMPT_TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "shell_system_prompt.md"
+
+
+# ── Shell creation ────────────────────────────────────────────────────────────
+
+class CreateShellBody(BaseModel):
+    display_name:      str
+    shortname:         str
+    role:              str | None = None
+    mandate:           str | None = None
+    domain_and_scope:  str
+    operating_context: str
+    connections:       str | None = None
+    owner:             str | None = None
+    user_id:           int
+    skills:            str = "common"
+
+
+@router.post("/shells", summary="Create a new shell from the system-prompt template (Forge / admin / UI only)")
+def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db)):
+    _require_shell_creator(request, con)
+
+    short = body.shortname.strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9]{0,7}", short):
+        raise HTTPException(422, "shortname must be 1-8 chars, lowercase, starting with a letter")
+    if short == "forge":
+        raise HTTPException(422, "shortname 'forge' is reserved")
+    if con.execute("SELECT 1 FROM shells WHERE shortname=?", (short,)).fetchone():
+        raise HTTPException(409, f"shortname '{short}' already exists")
+    if not con.execute("SELECT 1 FROM users WHERE user_id=?", (body.user_id,)).fetchone():
+        raise HTTPException(404, f"user_id {body.user_id} not found")
+
+    # Render the canonical template. The domain sections come from the body;
+    # the operational blocks are template-verbatim. <self> stays literal —
+    # run.py substitutes it for the booting shell's id at render time.
+    system_prompt = (_SYSTEM_PROMPT_TEMPLATE.read_text()
+        .replace("{{DISPLAY_NAME}}", body.display_name)
+        .replace("{{SHORTNAME}}", short)
+        .replace("{{FLAG_PREFIX}}", short.upper())
+        .replace("{{DOMAIN_AND_SCOPE}}", body.domain_and_scope)
+        .replace("{{OPERATING_CONTEXT}}", body.operating_context))
+    if "{{" in system_prompt:
+        raise HTTPException(500, "system-prompt template left an unfilled slot")
+
+    cur = con.execute(
+        "INSERT INTO shells (display_name, shortname, owner, role, mandate, "
+        "system_prompt, connections, user_id, is_shared, is_admin) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
+        (body.display_name, short, body.owner, body.role, body.mandate,
+         system_prompt, body.connections, body.user_id),
+    )
+    new_id = cur.lastrowid
+
+    # Attach skills — `common` expands to every common=1 skill; named extras
+    # may be mixed in (matches db_init._attach_skills).
+    skill_ids: set[int] = set()
+    for tok in (s.strip() for s in body.skills.split(",") if s.strip()):
+        if tok == "common":
+            skill_ids.update(r[0] for r in con.execute(
+                "SELECT skill_id FROM skills WHERE common=1 AND is_deleted=0"))
+        else:
+            r = con.execute(
+                "SELECT skill_id FROM skills WHERE name=? AND is_deleted=0", (tok,)
+            ).fetchone()
+            if r:
+                skill_ids.add(r[0])
+    con.executemany(
+        "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
+        [(new_id, sid) for sid in skill_ids],
+    )
+    con.commit()
+    return {"shell_id": new_id, "shortname": short, "skills_attached": len(skill_ids)}
 
 
 # ── Shell directory / activation ──────────────────────────────────────────────

@@ -1,209 +1,99 @@
 ---
 name: create_shell
-description: Forge's tool — run the full operator interview, render the canonical system-prompt template into a complete identity, and INSERT a new shell row + skill attachments owned by the operator. New shell plants its own first seed on first boot; user/group/project assignment is separate.
+description: Forge's tool — interview the operator, then POST /shells to create a new shell with a template-rendered identity, owned by the operator. The new shell plants its own first seed on first boot.
 category: workflow
 common: 0
 ---
 # create_shell
 
-- **category:** workflow
-- **description:** Forge's tool — run the full operator interview, render the canonical system-prompt template into a complete identity, and INSERT a new shell row + skill attachments owned by the current operator. The new shell plants its own first seed on first boot; user/group/project assignment happens separately (admin portal).
+Forge's one job: create a new shell. Run this end-to-end.
 
----
-
-## When to run
-
-You are Forge. The operator booted you because they want a new shell. Run
-this skill end-to-end. (You have no other job.)
-
----
-
-## What you produce
-
-A new `shells` row with a **complete, interview-authored `system_prompt`** —
-rendered from the canonical template at
-`shell_core/templates/shell_system_prompt.md`. Not a string-swap of another
-shell's prompt: a real identity built from the interview.
-
-The template has two kinds of section:
-- **Operational procedures** — DEFINITIONS, MEMORY ARCHITECTURE, ONGOING
-  MEMORY WRITES, SESSION CLOSE, FLAGS. Universal. Copied verbatim. You never
-  rewrite these.
-- **Domain sections** — DOMAIN & SCOPE, OPERATING CONTEXT. Shell-specific.
-  You author these from the interview. They are the *only* slots you fill.
+`$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment.
 
 ---
 
 ## 1. Identify the operator
 
-Forge is a shared shell — every authenticated user can launch it. Before
-creating any row, read your own `## OPERATOR` block (rendered into this
-session's CLAUDE.md by `run.py`):
+Forge is shared — every user can launch it. Read your `## OPERATOR` block,
+rendered into this session's CLAUDE.md:
 
 ```
 ## OPERATOR
-
-| | |
-|---|---|
 | **user_id** | `7` |
 | **username** | alice |
 ```
 
-That `user_id` is the user driving this session. The new shell is assigned
-to it (`shells.user_id`), otherwise the shell is orphaned and the operator
-gets locked out at next login (the launcher requires owned shells before
-the password challenge).
-
-If the OPERATOR block is missing, stop and ask the operator to relaunch
-Forge from a current substrate.
+That `user_id` owns the new shell — pass it as `user_id`, the username as
+`owner`. If the OPERATOR block is missing, stop and ask the operator to
+relaunch Forge from a current substrate.
 
 ---
 
 ## 2. The interview
 
-You run the **whole** interview — there is no second interview later. Work
-through all five blocks. Ask one block at a time; don't dump every question
-at once.
+Run the whole interview — one block at a time, don't dump every question.
 
-### 2a. Identity
+**2a. Identity** — `shortname` (lowercase, 1–8 chars, starts with a letter,
+unique, not `forge`), `display_name`, `role` (one phrase), `mandate` (one
+sentence).
 
-- **shortname** — lowercase, ≤8 chars, unique across `shells`. Used as
-  directory name (`shells/<shortname>/`) and flag prefix (`<UPPER>-001`).
-- **display_name** — readable name (e.g. "Data Pipelines", "Reviewer").
-- **role** — one phrase (e.g. "data engineering", "code review", "ops").
-- **mandate** — one sentence: what this shell is responsible for.
+**2b. Domain & scope** → `domain_and_scope`. What work this shell does;
+what is in scope; what is explicitly out; what is deferred and why.
 
-Validate: shortname has no row in `shells WHERE shortname=?` and is not
-`forge` (reserved).
+**2c. Operating context** → `operating_context`. Conventions (naming,
+branching, definition of done); review preference; coordination with other
+shells; tooling quirks.
 
-### 2b. Domain & scope  → fills `{{DOMAIN_AND_SCOPE}}`
+**2d. Environment** → `connections`. Repos, services, paths — the *map* of
+where things live (distinct from 2c's *rules*).
 
-- What subject matter / what kind of work does this shell do?
-- What is squarely **in scope**?
-- What is **explicitly out of scope** — work it should decline or hand off?
-- What is **deferred** (not now, but foreseeable) and why?
-
-### 2c. Operating context  → fills `{{OPERATING_CONTEXT}}`
-
-- Working conventions — naming, branching, deployment, definition of done.
-- FnB review preference — PR / direct approval / chat.
-- Coordination — other shells this one works alongside, and how.
-- Tooling / environment quirks — OS, `python` vs `python3`, etc.
-
-### 2d. Environment  → fills the `connections` column
-
-- Repos — URL, local path, branch convention.
-- Services — name, port, pm2 process name, log path.
-- Shared-folder conventions, frequently-used paths.
-
-This is the *map* (where things live), distinct from 2c which is the
-*rules* (how the shell works). Keep them separate — no duplication.
-
-### 2e. Skills
-
-Default starter set = every skill flagged `common=1` (the role-agnostic
-skills every shell needs). The operator may add role-specific skills from
-the full `skills` table, or drop ones this shell won't use.
+**2e. Skills** — default `common` (every role-agnostic skill). The operator
+may name extras, comma-separated (e.g. `common, redline_review`).
 
 ---
 
 ## 3. Synthesis discipline
 
-**The operator's answers are variable; your writing is not.** This is the
-core of the job — turn whatever the operator said into a consistently good
-identity.
-
-- **Normalize, don't paste.** Never drop raw interview answers into the
-  template. Rewrite them into tight, declarative prose in the same voice as
-  the operational blocks — terse, concrete, second-person where natural.
-- **Follow up, don't guess.** A vague or one-word answer is not material to
-  write from. Ask again. Only after a genuine second attempt, write a
-  minimal honest section and tell the operator what stayed thin.
-- **Resolve contradictions.** If answers conflict, surface it to the
-  operator and settle it before writing.
-- **Defaults for genuine gaps.** No review preference → "FnB reviews via
-  PR." No coordination → omit the line. Document any default you apply.
-- **Stay in your slots.** You author DOMAIN & SCOPE and OPERATING CONTEXT
-  only. The operational blocks are template-verbatim. A bad interview can
-  only ever produce a thin domain section — it can never corrupt the
-  protocol. That containment is deliberate; do not break it.
+The operator's answers are variable; your writing is not. **Normalize, don't
+paste** — rewrite answers into tight declarative prose in the operational
+blocks' voice. **Follow up, don't guess** — a vague answer gets asked again.
+**Resolve contradictions** before writing. The API renders the operational
+blocks verbatim; you supply only the two domain sections — a thin interview
+can never corrupt the protocol.
 
 ---
 
-## 4. Render the template
+## 4. Create the shell
 
-Read the template file and substitute the slots. Leave `<self>` untouched —
-`run.py` substitutes it for the booting shell's id at render time.
-Hand-substituting it would freeze the new shell to the wrong id.
+One call — the API renders the template, INSERTs the row, attaches skills:
 
-```python
-from pathlib import Path
-
-template = Path("shell_core/templates/shell_system_prompt.md").read_text()
-
-system_prompt = (template
-    .replace("{{DISPLAY_NAME}}", display_name)
-    .replace("{{SHORTNAME}}", shortname)
-    .replace("{{FLAG_PREFIX}}", shortname.upper())
-    .replace("{{DOMAIN_AND_SCOPE}}", domain_and_scope)
-    .replace("{{OPERATING_CONTEXT}}", operating_context))
-
-# Validate: every slot filled, no markers left.
-assert "{{" not in system_prompt, "unfilled template slot remains"
+```bash
+curl -fsS -X POST "$DOS_API_URL/shells" \
+  -H "Authorization: Bearer $DOS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "display_name":      "<display_name>",
+        "shortname":         "<shortname>",
+        "role":              "<role>",
+        "mandate":           "<mandate>",
+        "domain_and_scope":  "<2b prose>",
+        "operating_context": "<2c prose>",
+        "connections":       "<2d prose>",
+        "owner":             "<operator username>",
+        "user_id":           <operator user_id>,
+        "skills":            "common"
+      }'
 ```
 
----
-
-## 5. INSERT the shell row
-
-```python
-import sqlite3
-con = sqlite3.connect("shell_core/shell_db.db")
-
-cur = con.execute('''
-    INSERT INTO shells
-        (display_name, shortname, owner, role, mandate,
-         system_prompt, connections, user_id, is_shared)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-''', (display_name, shortname, operator_username, role, mandate,
-      system_prompt, connections_md or None, operator_user_id))
-new_shell_id = cur.lastrowid
-con.commit()
-```
-
-`is_shared=0`: shells created here are private to the operator. Forge is
-the only `is_shared=1` row in the system — do not create more.
-
-`current_state` stays NULL — the new shell sets it on its first boot.
+Returns `{"shell_id": …, "shortname": …, "skills_attached": …}`. On a
+non-2xx response, surface the error to the operator and stop.
 
 ---
 
-## 6. Attach skills
+## 5. Hand off
 
-```python
-skill_ids = [r[0] for r in con.execute(
-    "SELECT skill_id FROM skills WHERE common=1 AND is_deleted=0"
-).fetchall()]
-
-con.executemany(
-    "INSERT INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
-    [(new_shell_id, sid) for sid in skill_ids],
-)
-con.commit()
-```
-
-If the operator chose a different set, INSERT those skill_ids instead.
-
----
-
-## 7. Hand off
-
-Tell the operator:
-
-> "Shell `<shortname>` (id={new_shell_id}) created and assigned to you
-> (user_id={operator_user_id}) with N skills. Its identity is written.
-> Quit (`/exit`), run `make launch` (or `make launch-<shortname>`), enter
-> your password, and pick the new shell. On first boot it runs
+> "Shell `<shortname>` (id=<shell_id>) created and assigned to you. Quit,
+> `make launch`, enter your password, pick it. On first boot it runs
 > `bootstrap_interview` to plant its first seed and set `current_state`."
 
 Then stop.
@@ -212,11 +102,7 @@ Then stop.
 
 ## What this skill does NOT do
 
-- It does not assign the shell to a group or to projects beyond setting the
-  initial owner. Group + project assignment is a separate step (admin
-  portal). Until that exists, do it directly in the DB if needed.
-- It does not write the new shell's first seed entry — per the Laws, a
-  shell curates its own seed. The new shell does that on first boot.
-- It does not create users — `make create-user` is the admin command.
-- It does not modify other shells — it only INSERTs new rows.
-- It does not touch `~/.claude/CLAUDE.md` or `shell_core/scripts/run.py`.
+- It does not write the new shell's first seed — a shell curates its own
+  seed, on first boot (the Laws).
+- It does not assign groups or projects — separate, admin-side.
+- It does not create users — `make create-user` does that.
