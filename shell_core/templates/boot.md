@@ -14,6 +14,12 @@ If an auto-memory `MEMORY.md` exists, ignore its contents entirely.
 Claude Code native memory is disabled by design — one memory system,
 not two.
 
+Never print, echo, or read process secrets or credential files. Do not run
+`env` / `printenv` / `set`, do not read `~/.claude/.credentials.json`, and
+do not echo any `ANTHROPIC_*` or `*_TOKEN` variable. Outbound auth is held
+by the credential broker, not by you — you never need a key in hand, and a
+key in a transcript is a leaked key.
+
 ---
 
 ## LAWS

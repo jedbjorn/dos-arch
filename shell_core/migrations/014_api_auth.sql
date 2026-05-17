@@ -1,0 +1,12 @@
+-- shells.api_auth — how a shell reaches Anthropic. Adds the column to live
+-- DBs; new bootstraps get it straight from schema.sql.
+--
+-- 0 = CLI shell: interactive Claude Code, browser-auth on first launch
+--   (subscription billing), no Anthropic env injected, bypasses the broker's
+--   /anthropic route. This is the existing behaviour — every pre-014 shell
+--   was effectively api_auth=0, so DEFAULT 0 is a no-op for them.
+-- 1 = API shell: the launcher injects ANTHROPIC_BASE_URL pointed at the
+--   broker's /anthropic route; the broker holds and injects the real key.
+--   Any shell exposing a web-app interface must be api_auth=1 (Anthropic ToS
+--   bars subscription auth from backing a web app).
+ALTER TABLE shells ADD COLUMN api_auth INTEGER NOT NULL DEFAULT 0;
