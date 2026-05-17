@@ -20,6 +20,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from shared_dirs import ensure_shared_dirs
+
 ROOT        = Path(__file__).resolve().parents[2]
 ASSETS      = ROOT / "shell_core" / "assets"
 SKILLS_DIR  = ASSETS / "skills"
@@ -113,6 +115,7 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
     )
     forge_id = cur.lastrowid
     _attach_skills(con, forge_id, meta.get("skills", ""))
+    ensure_shared_dirs(forge_id, meta["shortname"])
     return forge_id, True
 
 
@@ -155,4 +158,5 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     )
     sa_id = cur.lastrowid
     _attach_skills(con, sa_id, meta.get("skills", ""))
+    ensure_shared_dirs(sa_id, shortname)
     return sa_id, True
