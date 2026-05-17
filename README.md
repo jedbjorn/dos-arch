@@ -203,11 +203,13 @@ container built from the `dos-shell` image, the `dos-broker` container
 holds credentials so the shell containers don't have to, and the `dos-api`
 container serves the substrate memory API.
 
-**2. The substrate** — the DB, the `dos-api` container, and the host-level UI:
+**2. The substrate** — the DB, the `dos-api` container, and the host-level UI.
+You already cloned the repo in Layer 1 (Quickstart step 0) — this continues
+from that same clone, so there's no second clone, just a refresh:
 
 ```bash
-git clone https://github.com/jedbjorn/dos-arch.git ~/dos-arch
 cd ~/dos-arch
+git pull                  # refresh the Layer-1 clone to the latest commit
 make install              # python venv + pip + npm
 make bootstrap            # one-shot: schema + skills + Forge + first user + Sys-Admin
 ./install/api-up.sh       # start the dos-api container — needs shell_db.db, so run it after bootstrap
