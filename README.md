@@ -46,9 +46,10 @@ need adapting.
 
 ## Quickstart
 
-The system has two layers, documented in two files, plus a bridge step
-(`api-up.sh`) that sits at the seam between them. The real end-to-end
-sequence — repo link → working shell:
+The system has two layers, documented in two files. The real end-to-end
+sequence — fresh host → working shell — runs top to bottom: copy each
+command in turn, one at a time. The links go to deeper explanation; you
+do not need to follow them to get through the install.
 
 ### Step 0 — dependencies & clone (operator)
 
@@ -85,31 +86,193 @@ git clone https://github.com/jedbjorn/dos-arch.git ~/dos-arch
 
 Detailed in **[install/README.md](install/README.md)**.
 
-| # | Command | User | What it does |
-|---|---------|------|--------------|
-| 1 | cd ~/dos-arch `sudo ./install/host-setup.sh` | operator | [creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`](install/README.md#1--host-bootstrap-operator-sudo) |
-| 2 | `machinectl shell dos-arch@` → `rootless-setup.sh` | dos-arch | [fetches version-matched rootless-extras, runs the setuptool, persists `PATH`+`DOCKER_HOST` in `.bashrc`, `docker run hello-world`](install/README.md#2--rootless-docker-as-dos-arch) |
-| 3 | `cp .env.example .env` + fill + `setfacl` grants | operator | [broker secrets; grants `dos-arch` access to the clone](install/README.md#3--create-env-operator) |
-| 4 | `./install/build-image.sh` | dos-arch | [builds 3 images: `dos-shell`, `dos-broker`, `dos-api`](install/README.md#4--build-images--start-the-broker-as-dos-arch) |
-| 5 | `./install/broker-up.sh` | dos-arch | [creates `dos-net`, runs the `dos-broker` container, health-checks](install/README.md#4--build-images--start-the-broker-as-dos-arch) |
+#### 1 — host bootstrap (operator)
+
+Run from your clone, as the operator:
+
+```bash
+cd ~/dos-arch
+```
+
+```bash
+sudo ./install/host-setup.sh
+```
+
+[Creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`.](install/README.md#1--host-bootstrap-operator-sudo)
+
+#### 2 — rootless Docker (dos-arch)
+
+Enter a `dos-arch` session (run as the operator):
+
+```bash
+sudo machinectl shell dos-arch@
+```
+
+Inside that session the staged setup lives in `~/setup`:
+
+```bash
+cd ~/setup
+```
+
+```bash
+./install/rootless-setup.sh
+```
+
+Then return to your operator login:
+
+```bash
+exit
+```
+
+[Fetches version-matched rootless-extras, runs the setuptool, persists `PATH`+`DOCKER_HOST` in `.bashrc`, verifies with `docker run hello-world`.](install/README.md#2--rootless-docker-as-dos-arch)
+
+#### 3 — create `.env` + grant access (operator)
+
+Back as the operator, in your clone:
+
+```bash
+cd ~/dos-arch
+```
+
+```bash
+cp .env.example .env
+```
+
+Fill in the two broker secrets — `ANTHROPIC_API_KEY` and `GITHUB_TOKEN`:
+
+```bash
+nano .env
+```
+
+Then grant the `dos-arch` user access to the clone:
+
+```bash
+setfacl -m u:dos-arch:x ~
+```
+
+```bash
+setfacl -R -m u:dos-arch:rwX ~/dos-arch
+```
+
+```bash
+setfacl -R -d -m u:dos-arch:rwX ~/dos-arch
+```
+
+[Broker secrets; grants `dos-arch` access to the clone.](install/README.md#3--create-env-operator) The linked section walks through obtaining each token.
+
+#### 4 — build images (dos-arch)
+
+`build-image.sh` and `broker-up.sh` need the full clone, so enter a `dos-arch` session that lands in it (run as the operator):
+
+```bash
+sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
+```
+
+Then build all three images:
+
+```bash
+./install/build-image.sh
+```
+
+[Builds 3 images: `dos-shell`, `dos-broker`, `dos-api`.](install/README.md#4--build-images--start-the-broker-as-dos-arch)
+
+#### 5 — start the broker (dos-arch)
+
+In the same `dos-arch` session:
+
+```bash
+./install/broker-up.sh
+```
+
+[Creates `dos-net`, runs the `dos-broker` container, health-checks it.](install/README.md#4--build-images--start-the-broker-as-dos-arch)
+
+Then return to your operator login:
+
+```bash
+exit
+```
 
 ### Layer 2 — substrate
 
 Detailed in **[Cold bootstrap](#cold-bootstrap)** below.
 
-| # | Command | User | What it does |
-|---|---------|------|--------------|
-| — | `cd ~/dos-arch && git pull` | operator | [refresh the Layer-1 clone before building the substrate](#cold-bootstrap) |
-| 6 | `make install` | dos-arch | [`.venv` + pip (fastapi/uvicorn/pydantic) + `npm install` in `ui/`](#cold-bootstrap) |
-| 7 | `make bootstrap` | dos-arch | [`bootstrap.py`: applies `schema.sql`, seeds skills from `assets/skills/`, seeds Forge, prompts for the first user, seeds Sys-Admin → writes `shell_db.db`](#cold-bootstrap) |
-| 6.5 | `./install/api-up.sh` | dos-arch | [runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000` — needs `shell_db.db`, so it runs *after* `make bootstrap`](#cold-bootstrap) |
-| 8 | `make up` | dos-arch | [pm2 starts the UI (`127.0.0.1:5173`)](#cold-bootstrap) |
-| 9 | `make launch` | dos-arch | [`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`](#cold-bootstrap) |
-| 10 | `./install/cron-install.sh` | dos-arch | [installs the daily dr_* catalogue sync cron — the only *automatic* full sync; logs each run to `dr_sync_runs`. Run once.](#cold-bootstrap) |
+#### Refresh the clone (operator)
 
-Steps 6–9 run in **one `dos-arch` session**; the `git pull` refresh is the
-operator's job (you own the clone). Cold bootstrap below has the one-liner
-that opens that session already sitting in your clone.
+You own the clone, so the `git pull` is yours to run:
+
+```bash
+cd ~/dos-arch
+```
+
+```bash
+git pull
+```
+
+[Refreshes the Layer-1 clone before building the substrate.](#cold-bootstrap)
+
+#### 6 — install dependencies (dos-arch)
+
+Steps 6–11 run in **one `dos-arch` session** — once you are in, copy them
+straight down the list. Enter it from your operator login:
+
+```bash
+sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
+```
+
+Then:
+
+```bash
+make install
+```
+
+[`.venv` + pip (fastapi/uvicorn/pydantic) + `npm install` in `ui/`.](#cold-bootstrap)
+
+#### 7 — bootstrap the database (dos-arch)
+
+In the same session:
+
+```bash
+make bootstrap
+```
+
+[`bootstrap.py`: applies `schema.sql`, seeds skills from `assets/skills/`, seeds Forge, prompts for the first user, seeds Sys-Admin → writes `shell_db.db`.](#cold-bootstrap) This step is interactive — it prompts for the first user's username and password.
+
+#### 8 — start the API (dos-arch)
+
+`api-up.sh` needs `shell_db.db`, so it runs *after* `make bootstrap`. Same session:
+
+```bash
+./install/api-up.sh
+```
+
+[Runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000`.](#cold-bootstrap)
+
+#### 9 — start the UI (dos-arch)
+
+```bash
+make up
+```
+
+[pm2 starts the UI (`127.0.0.1:5173`).](#cold-bootstrap)
+
+#### 10 — launch a shell (dos-arch)
+
+```bash
+make launch
+```
+
+[`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`.](#cold-bootstrap)
+
+#### 11 — install the catalogue cron (dos-arch)
+
+```bash
+./install/cron-install.sh
+```
+
+[Installs the daily dr_* catalogue sync cron — the only *automatic* full sync; logs each run to `dr_sync_runs`. Run once.](#cold-bootstrap)
+
+That is the full install. From here, `make launch` (step 10) is the daily
+entry point — see **[Daily commands](#daily-commands)** below.
 
 ### Troubleshooting
 
@@ -119,6 +282,154 @@ that opens that session already sitting in your clone.
 | `failed retrieving file …` (during `host-setup.sh`) | Stale package database on a rolling distro — `sudo pacman -Syu` (reboot if the kernel updates), then re-run the step. |
 | `docker: command not found` (`build-image.sh` / `api-up.sh` / `make launch`) | Not in a `dos-arch` session, or its `PATH` isn't loaded — use the `sudo machinectl shell dos-arch@ /bin/bash -lc "…"` one-liner forms; the `-l` login shell loads `~/.bashrc`. |
 | `sudo` asks for a `dos-arch` password | You ran `sudo` *inside* a `dos-arch` session — `dos-arch` is passwordless and not a sudoer. `exit` to the operator first; `sudo` is the operator's. |
+
+### Updating procedure
+
+Routine updates need no rebuild — the API and UI run from bind-mounted
+source, so a `git pull` plus a restart picks up code changes.
+
+#### U1 — refresh the clone (operator)
+
+```bash
+cd ~/dos-arch
+```
+
+```bash
+git pull
+```
+
+#### U2 — restart services (dos-arch)
+
+Enter a `dos-arch` session in the clone (run as the operator):
+
+```bash
+sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
+```
+
+Recreate the API container against the updated source:
+
+```bash
+./install/api-up.sh
+```
+
+Bounce the UI:
+
+```bash
+make restart
+```
+
+Then return to your operator login:
+
+```bash
+exit
+```
+
+Before an update that includes a schema change, snapshot the DB first —
+`make db-backup`, run in the same `dos-arch` session.
+
+#### Rebuilding images (when Dockerfiles change)
+
+The images only need rebuilding when something under `docker/` changes — or
+to pin a new Claude Code version into `dos-shell`. In the same `dos-arch`
+session as U2:
+
+```bash
+./install/build-image.sh
+```
+
+```bash
+./install/broker-up.sh
+```
+
+Existing shell containers keep running their old `dos-shell` image until
+they are recreated.
+
+### Teardown procedure
+
+`teardown.sh` is the inverse of the install — it runs in three phases. Full
+detail in **[install/README.md](install/README.md#teardown--rebuild-or-complete-removal)**.
+
+#### T1 — dos-arch-side teardown (dos-arch)
+
+Enter a `dos-arch` session (run as the operator):
+
+```bash
+sudo machinectl shell dos-arch@
+```
+
+The staged scripts live in `~/setup`:
+
+```bash
+~/setup/install/teardown.sh
+```
+
+Then return to your operator login:
+
+```bash
+exit
+```
+
+Prunes all containers / images / networks / volumes and uninstalls rootless
+Docker.
+
+#### T2 — host-level removal (operator, sudo)
+
+As the operator, remove the `dos-arch` service user and its host footprint:
+
+```bash
+sudo loginctl disable-linger dos-arch
+```
+
+```bash
+sudo loginctl terminate-user dos-arch
+```
+
+```bash
+sudo userdel -r dos-arch
+```
+
+```bash
+sudo sed -i '/^dos-arch:/d' /etc/subuid /etc/subgid
+```
+
+Optional — remove the Docker packages, only if nothing else on the host
+uses them (`pacman` refuses if a package still has dependents):
+
+```bash
+sudo pacman -Rns docker docker-buildx slirp4netns fuse-overlayfs
+```
+
+To rebuild from here, stop — the host is clean — and start again at
+**[step 1](#1--host-bootstrap-operator)**.
+
+#### T3 — complete removal (operator)
+
+Phases T1–T2 leave your clone and shell config untouched. For a complete
+rip-out, also remove these — as the operator:
+
+```bash
+setfacl -b ~
+```
+
+```bash
+rm -rf ~/dos-arch
+```
+
+```bash
+sudo rm -f /etc/sudoers.d/launch-dos-arch
+```
+
+```bash
+rm -rf ~/db_backups/dos-arch
+```
+
+Then remove the `launch-dos-arch` shortcut from your shell — see
+**[install/README.md](install/README.md#teardown--rebuild-or-complete-removal)**
+for the fish/bash specifics.
+
+`~/dos-arch/.env` held real credentials (`ANTHROPIC_API_KEY`,
+`GITHUB_TOKEN`) — rotate them if the host is shared or untrusted. Deleting
+the file clears it from disk, not from anywhere it was already used.
 
 ---
 
