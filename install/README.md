@@ -66,6 +66,9 @@ rootless Docker's `systemctl --user` needs a user systemd manager and
 
 ```bash
 sudo machinectl shell dos-arch@
+```
+Then:
+```bash
 cd ~/setup
 ./install/rootless-setup.sh
 ```
@@ -167,7 +170,7 @@ yet at this point, so without it the files `dos-arch` creates later would
 not be covered. The operator still owns the clone and runs `git pull`;
 `dos-arch` never needs GitHub credentials and never clones anything.
 
-### 4 — Build images + start the broker (as dos-arch)
+### 4 — Build images + start the broker (runs as dos-arch, run the command from user /Home in Terminal)
 
 `build-image.sh` and `broker-up.sh` need the **full repo** — `build-image.sh`
 builds the broker image from `shell_core/broker/`, and `broker-up.sh` reads
