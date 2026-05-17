@@ -619,7 +619,7 @@ shell_core/
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
   templates/              boot.md (preamble) + shell_system_prompt.md (new-shell template)
-  migrations/             Versioned *.sql migrations — applied in order by migrate.py (auto-run in api-up.sh; on demand via make migrate). schema.sql builds a fresh DB; migrations carry an existing one forward.
+  migrations/             Versioned *.sql migrations — applied in order by migrate.py (auto-run in api-up.sh; on demand via make migrate). schema.sql builds a fresh DB; migrations carry an existing one forward. _legacy/ holds pre-runner .py migrations, not applied.
 docker/
   shell/                  Dockerfile for the dos-shell image — one container per shell instance
   broker/                 Dockerfile for the dos-broker image — the credential broker
