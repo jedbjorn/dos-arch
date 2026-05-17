@@ -39,8 +39,10 @@ the scripted procedure in **[install/README.md](install/README.md)**. Those
 scripts are Arch-specific (`pacman`); on Ubuntu the rootless-Docker steps
 need adapting.
 
-> **Next:** **[install/README.md](install/README.md)** for the Docker host,
-> then **Cold bootstrap** below for the substrate.
+> **Next:** the **[Quickstart](#quickstart)** below runs the install
+> end-to-end; **[install/README.md](install/README.md)** has the Layer-1
+> (Docker host) detail and **[Cold bootstrap](#cold-bootstrap)** explains
+> what the substrate build does.
 
 ---
 
@@ -450,6 +452,7 @@ make logs                                     # pm2 logs (Ctrl-C to detach)
 make health                                   # GET /health
 make db-backup                                # snapshot shell_db.db -> ~/db_backups/dos-arch/<ts>.db
 make bootstrap                                # one-shot fresh-substrate setup; refuses if DB exists
+make migrate                                  # apply pending DB migrations (ARGS=--status to preview)
 make db-sync                                  # refresh the catalogue (dr_*) from current substrate state
 make catalogue                                # print the catalogue (filter via ARGS=, e.g. ARGS='flag')
 ```
@@ -525,52 +528,14 @@ sudo chmod 440 /etc/sudoers.d/launch-dos-arch
 
 ## Cold bootstrap
 
-Fresh host to working substrate. Two layers:
+The Quickstart (steps 6–11) is the command sequence; this is the
+explanation behind it — what `make bootstrap` does, and why the substrate
+ends up self-healing.
 
-**1. Rootless-Docker host** — covered by `install/README.md`: a `dos-arch`
-service user, rootless Docker, and the `dos-shell`, `dos-broker`, and
-`dos-api` images. This is the sandbox layer — every shell runs in a
-container built from the `dos-shell` image, the `dos-broker` container
-holds credentials so the shell containers don't have to, and the `dos-api`
-container serves the substrate memory API.
-
-**2. The substrate** — the DB, the `dos-api` container, and the host-level
-UI. You already cloned the repo in Layer 1 (Quickstart step 0); this
-continues from that clone — no second clone.
-
-First, **as the operator**, refresh it:
-
-```bash
-cd ~/dos-arch && git pull
-```
-
-Now open a `dos-arch` session for the build. **Run this from your operator
-login** — your normal shell, prompt showing your own username. If the prompt
-shows `dos-arch@…` you are still in a `dos-arch` session from Layer 1: type
-`exit` first, or `sudo` asks for a `dos-arch` password that does not exist
-(`dos-arch` is passwordless and not a sudoer). The one-liner drops you into a
-fresh session already sitting in your clone — `$HOME` expands in *your* shell
-first, so it lands in the right directory:
-
-```bash
-sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
-```
-
-It prompts once for **your** password. Inside that `dos-arch` session, build
-the substrate:
-
-```bash
-make install              # python venv + pip + npm
-make bootstrap            # schema + skills + Forge + first user + Sys-Admin (interactive)
-./install/api-up.sh       # start the dos-api container (needs shell_db.db)
-make up                   # pm2 starts the UI (127.0.0.1:5173)
-make launch               # auth, then picker
-```
-
-`api-up.sh` runs as the `dos-arch` service user (it drives rootless
-Docker). It (re)starts the `dos-api` container on `dos-net`, bind-mounts
-`shell_core/`, and publishes the API on `127.0.0.1:8000` — so a `git pull`
-plus a re-run updates the API with no rebuild.
+The substrate is the second install layer: the DB, the `dos-api`
+container, and the host-level UI, built on the rootless-Docker host from
+**[install/README.md](install/README.md)**. It continues from the clone
+made in Quickstart Step 0 — no second clone.
 
 `make bootstrap` runs `shell_core/scripts/bootstrap.py`, which:
 1. Errors out if `shell_db.db` already exists (use `make db-backup` first if recreating).
@@ -584,15 +549,16 @@ So a freshly-bootstrapped substrate already has a working admin shell. On
 `make launch` the first user enters their username, clears the password
 challenge, and picks Sys-Admin — or Forge, to spawn more shells.
 
+`api-up.sh` (Quickstart step 8) bind-mounts `shell_core/` into the
+`dos-api` container and publishes the API on `127.0.0.1:8000`, so a later
+`git pull` plus a re-run picks up code changes with no image rebuild — see
+**[Updating procedure](#updating-procedure)**.
+
 **The launcher self-heals.** On every `make launch`, `run.py` calls
 `ensure_forge(conn)`. If the Forge row is missing — accidentally deleted,
 clone restored from backup, partial DB — it's re-seeded transparently
 before auth runs. So Forge is always present at boot. Only a missing DB
 file requires `make bootstrap`.
-
-Subsequent users are added with `make create-user`. A user with zero
-owned shells skips the password challenge and boots straight into Forge,
-where `create_shell` interviews them and spawns their first shell.
 
 ---
 
@@ -641,7 +607,7 @@ shell_core/
   api/                    FastAPI substrate (routers: shells, users, skills, flags, admin)
   ui/                     SvelteKit substrate UI (routes: /shells, /flags, /plans)
   broker/                 Credential broker — egress proxy; injects auth so shell containers run credential-free
-  schema.sql              Canonical SQLite schema (~25 tables + triggers + 2 catalogue views)
+  schema.sql              Canonical SQLite schema (~34 tables + triggers + 2 catalogue views)
   shell_db.db             Local SQLite store — gitignored, built via `make bootstrap`
   shell_db.py             Connection helper used by api/common/db.py
   scripts/run.py          Launcher: auth → picker → render CLAUDE.md → docker exec claude
