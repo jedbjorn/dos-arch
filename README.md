@@ -92,13 +92,18 @@ Detailed in **[install/README.md](install/README.md)**.
 
 Detailed in **[Cold bootstrap](#cold-bootstrap)** below.
 
-| # | Command | What it does |
-|---|---------|--------------|
-| 6 | `make install` | [`.venv` + pip (fastapi/uvicorn/pydantic) + `npm install` in `ui/`](#cold-bootstrap) |
-| 7 | `make bootstrap` | [`bootstrap.py`: applies `schema.sql`, seeds skills from `assets/skills/`, seeds Forge, prompts for the first user, seeds Sys-Admin → writes `shell_db.db`](#cold-bootstrap) |
-| 6.5 | `./install/api-up.sh` | [runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000` — needs `shell_db.db`, so it runs *after* `make bootstrap`](#cold-bootstrap) |
-| 8 | `make up` | [pm2 starts the UI (`127.0.0.1:5173`)](#cold-bootstrap) |
-| 9 | `make launch` | [`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`](#cold-bootstrap) |
+| # | Command | User | What it does |
+|---|---------|------|--------------|
+| — | `cd ~/dos-arch && git pull` | operator | [refresh the Layer-1 clone before building the substrate](#cold-bootstrap) |
+| 6 | `make install` | dos-arch | [`.venv` + pip (fastapi/uvicorn/pydantic) + `npm install` in `ui/`](#cold-bootstrap) |
+| 7 | `make bootstrap` | dos-arch | [`bootstrap.py`: applies `schema.sql`, seeds skills from `assets/skills/`, seeds Forge, prompts for the first user, seeds Sys-Admin → writes `shell_db.db`](#cold-bootstrap) |
+| 6.5 | `./install/api-up.sh` | dos-arch | [runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000` — needs `shell_db.db`, so it runs *after* `make bootstrap`](#cold-bootstrap) |
+| 8 | `make up` | dos-arch | [pm2 starts the UI (`127.0.0.1:5173`)](#cold-bootstrap) |
+| 9 | `make launch` | dos-arch | [`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`](#cold-bootstrap) |
+
+Steps 6–9 run in **one `dos-arch` session**; the `git pull` refresh is the
+operator's job (you own the clone). Cold bootstrap below has the one-liner
+that opens that session already sitting in your clone.
 
 ---
 
@@ -203,16 +208,30 @@ container built from the `dos-shell` image, the `dos-broker` container
 holds credentials so the shell containers don't have to, and the `dos-api`
 container serves the substrate memory API.
 
-**2. The substrate** — the DB, the `dos-api` container, and the host-level UI.
-You already cloned the repo in Layer 1 (Quickstart step 0) — this continues
-from that same clone, so there's no second clone, just a refresh:
+**2. The substrate** — the DB, the `dos-api` container, and the host-level
+UI. You already cloned the repo in Layer 1 (Quickstart step 0); this
+continues from that clone — no second clone.
+
+First, **as the operator**, refresh it:
 
 ```bash
-cd ~/dos-arch
-git pull                  # refresh the Layer-1 clone to the latest commit
+cd ~/dos-arch && git pull
+```
+
+Then open a `dos-arch` session — this one-liner drops you into one already
+sitting in your clone (`$HOME` expands in *your* shell first, so the session
+lands in the right directory):
+
+```bash
+sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
+```
+
+Inside that `dos-arch` session, build the substrate:
+
+```bash
 make install              # python venv + pip + npm
-make bootstrap            # one-shot: schema + skills + Forge + first user + Sys-Admin
-./install/api-up.sh       # start the dos-api container — needs shell_db.db, so run it after bootstrap
+make bootstrap            # schema + skills + Forge + first user + Sys-Admin (interactive)
+./install/api-up.sh       # start the dos-api container (needs shell_db.db)
 make up                   # pm2 starts the UI (127.0.0.1:5173)
 make launch               # auth, then picker
 ```
