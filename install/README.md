@@ -89,19 +89,60 @@ cd /path/to/dos-arch          # your clone
 cp .env.example .env
 ```
 
-Fill the two values in `.env`:
+**Edit `.env`.** If you don't have a preferred terminal editor, use `nano` —
+it's beginner-friendly and ships on most systems (`sudo pacman -S nano` if
+it's missing):
 
-- **`ANTHROPIC_API_KEY`** — from the Anthropic Console.
-- **`GITHUB_TOKEN`** — for git-over-HTTPS through the broker. Two ways:
-  - *Recommended:* a **fine-grained PAT** scoped to just the repos shells
-    need. The broker holds this token, so a narrow scope bounds the blast
-    radius if it is ever compromised.
-  - *Quick (dev/test):* if `gh` is authenticated on the host, `gh auth token`
-    prints a usable token — but it is account-wide. Wire it in without
-    retyping:
-    `sed -i "s|^GITHUB_TOKEN=.*|GITHUB_TOKEN=$(gh auth token)|" .env`
+```bash
+nano .env
+```
 
-`.env` is gitignored — confirm with `git check-ignore .env`.
+In `nano`: the arrow keys move the cursor; type each value right after the
+`=` sign (no spaces, no quotes); then press **`Ctrl+O`** then **`Enter`** to
+save, and **`Ctrl+X`** to exit. The two lines to fill:
+
+**`ANTHROPIC_API_KEY`** — create a key in the Anthropic Console:
+[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+It looks like `sk-ant-...`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+```
+
+**`GITHUB_TOKEN`** — a GitHub token the broker uses for git over HTTPS
+(clone / pull / push) on behalf of the shell containers. Two ways to get one:
+
+- *Recommended — a fine-grained PAT.* Create one at
+  [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
+  (GitHub → Settings → Developer settings → Personal access tokens →
+  Fine-grained tokens → Generate new token). GitHub's walkthrough:
+  [creating a fine-grained PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token).
+  When creating it, set:
+  - **Repository access** → *Only select repositories* → pick just the
+    repos your shells will work in. A narrow scope bounds the blast radius
+    if the token is ever leaked.
+  - **Repository permissions** → **Contents: Read and write** — this is the
+    one that matters (*read* = clone/pull, *write* = push). **Metadata:
+    Read-only** is selected automatically and is required. Leave everything
+    else off: the broker only proxies git over HTTPS today, so the token
+    needs no Pull-request or Workflow permissions.
+
+  The generated token looks like `github_pat_...`:
+
+  ```
+  GITHUB_TOKEN=github_pat_xxxxxxxx
+  ```
+
+- *Quick — dev/test only.* If `gh` is already authenticated on the host,
+  `gh auth token` prints a usable token — but it is **account-wide**, not
+  scoped to specific repos. Skip the manual edit and wire it in directly:
+
+  ```bash
+  sed -i "s|^GITHUB_TOKEN=.*|GITHUB_TOKEN=$(gh auth token)|" .env
+  ```
+
+`.env` is gitignored — confirm with `git check-ignore .env` (it prints
+`.env` when the ignore is working).
 
 Then grant the `dos-arch` user access to your clone. It must traverse your
 home directory and **read *and write*** the whole clone — `make launch`,
