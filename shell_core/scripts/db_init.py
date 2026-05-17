@@ -51,16 +51,17 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 
 def _attach_skills(con: sqlite3.Connection, shell_id: int, spec: str) -> None:
-    """Attach skills to a shell. `spec` is `common` (all common=1 skills),
-    or a comma-separated list of skill names."""
-    spec = spec.strip()
-    if spec == "common":
-        ids = [r[0] for r in con.execute(
-            "SELECT skill_id FROM skills WHERE common=1 AND is_deleted=0")]
-    else:
-        ids = []
-        for name in (s.strip() for s in spec.split(",") if s.strip()):
-            row = con.execute("SELECT skill_id FROM skills WHERE name=?", (name,)).fetchone()
+    """Attach skills to a shell. `spec` is a comma-separated list of skill
+    names; the token `common` expands to every `common=1` skill. Mixing is
+    allowed — e.g. `common, database-migrations` gives the baseline set plus
+    that named extra (INSERT OR IGNORE dedups any overlap)."""
+    ids: list[int] = []
+    for token in (s.strip() for s in spec.split(",") if s.strip()):
+        if token == "common":
+            ids += [r[0] for r in con.execute(
+                "SELECT skill_id FROM skills WHERE common=1 AND is_deleted=0")]
+        else:
+            row = con.execute("SELECT skill_id FROM skills WHERE name=?", (token,)).fetchone()
             if row:
                 ids.append(row[0])
     con.executemany(

@@ -3,7 +3,7 @@ shortname: sysadmin
 display_name: Sys-Admin
 role: substrate administration and development
 mandate: Administer and build the shell-system substrate — schema, skills, migrations, and the shells that run on it.
-skills: common
+skills: common, database-migrations
 ---
 ## DOMAIN & SCOPE
 
