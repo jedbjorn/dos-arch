@@ -96,12 +96,12 @@ def list_shells(con: sqlite3.Connection, user_id: int | None = None) -> list[sql
     """All shells (user_id=None) or a user's own + all shared shells."""
     if user_id is None:
         return con.execute("""
-            SELECT shell_id, display_name, shortname, mandate, is_shared
+            SELECT shell_id, display_name, shortname, mandate, is_shared, is_admin
             FROM shells
             ORDER BY shell_id
         """).fetchall()
     return con.execute("""
-        SELECT shell_id, display_name, shortname, mandate, is_shared
+        SELECT shell_id, display_name, shortname, mandate, is_shared, is_admin
         FROM shells
         WHERE user_id=? OR is_shared=1
         ORDER BY is_shared, shell_id
@@ -118,7 +118,7 @@ def count_owned_shells(con: sqlite3.Connection, user_id: int) -> int:
 def get_shared_shell(con: sqlite3.Connection) -> sqlite3.Row:
     """Return the canonical shared bootstrap shell (Forge). Errors if missing."""
     row = con.execute("""
-        SELECT shell_id, display_name, shortname, mandate, is_shared
+        SELECT shell_id, display_name, shortname, mandate, is_shared, is_admin
         FROM shells WHERE is_shared=1
         ORDER BY shell_id LIMIT 1
     """).fetchone()
@@ -258,7 +258,7 @@ def _docker(*args: str) -> subprocess.CompletedProcess:
                  "the dos-arch user, with rootless Docker set up.")
 
 
-def ensure_container(shortname: str, workdir: Path) -> str:
+def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> str:
     """Ensure the shell's persistent container exists and is running.
 
     run-if-missing / start-if-stopped / no-op-if-running. The container is
@@ -275,18 +275,24 @@ def ensure_container(shortname: str, workdir: Path) -> str:
     state = _docker("inspect", "-f", "{{.State.Running}}", name)
 
     if state.returncode != 0:                       # container does not exist
-        created = _docker(
+        run_args = [
             "run", "-d",
             "--name", name,
             "--network", DOCKER_NETWORK,
             "-v", f"{workdir}:/workspace",
-            "--restart", "unless-stopped",
-            SHELL_IMAGE,
-        )
+        ]
+        if is_admin:
+            # Admin shells (Sys-Admin) get the substrate repo mounted RW, so
+            # they can author migrations and edit substrate source in place.
+            # The privileged *execution* (recompose) still happens host-side.
+            run_args += ["-v", f"{SUBSTRATE_ROOT}:/substrate"]
+        run_args += ["--restart", "unless-stopped", SHELL_IMAGE]
+        created = _docker(*run_args)
         if created.returncode != 0:
             sys.exit(f"FATAL: could not create container {name}:\n"
                      f"  {created.stderr.strip()}")
-        print(f"→ created container {name}")
+        print(f"→ created container {name}"
+              + ("  ·  +/substrate (admin)" if is_admin else ""))
     elif state.stdout.strip() != "true":            # exists but stopped
         started = _docker("start", name)
         if started.returncode != 0:
@@ -574,7 +580,7 @@ def main() -> None:
 
     # Ensure the shell's container is up BEFORE opening a session — a failed
     # container launch must not burn a session number.
-    container = ensure_container(chosen["shortname"], workdir)
+    container = ensure_container(chosen["shortname"], workdir, is_admin=bool(chosen["is_admin"]))
 
     session_id, archive_id = open_session(con, chosen["shell_id"])
 

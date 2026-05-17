@@ -1,101 +1,64 @@
 ---
 name: catalogue_sync
-description: How the dr_* catalogue stays in sync with substrate state — typed tables, populator targets, triggers, where to extend.
+description: How the dr_* catalogue is populated and kept in sync — the 9 typed surfaces, the populator, and how to extend it. Substrate-maintenance, admin shell.
 category: workflow
 common: 0
 ---
 # catalogue_sync
 
-- **category:** workflow
-- **description:** How the dr_* catalogue stays in sync with substrate state — typed tables, populator targets, triggers, where to extend.
+The catalogue (`dr_*` tables → `v_dr_catalogue`) is a live index of the
+substrate's components — routes, routers, deps, libs, services, repos,
+files, automations, env vars. Source of truth is always the underlying
+state (code/config); the catalogue is a projection of it.
 
-The catalogue is a per-shell quick-reference index over the substrate's
-real components (routes, services, deps, repos, libs, env vars, etc.).
-Source of truth is always the underlying state (code/config); the catalogue
-is a projection that auto-syncs via `shell_core/scripts/dr_sync.py`.
+*Reading* the catalogue is the `surface_catalogue` skill (`GET /catalogue`).
+This skill is *maintaining* it — admin work, with the repo at `/substrate`.
 
-## Architecture
+## Populator
 
-```
-typed registries (one row per thing, all carry name + description_short)
-  dr_repo, dr_filepath, dr_router, dr_api, dr_lib,
-  dr_dependencies, dr_services, dr_automations, dr_env
-        │
-        │  FK by (ref_table, ref_id)
-        ▼
-shell_dr_link  (per-shell binding, optional `role` column)
-        │
-        ▼
-v_dr_catalogue       — substrate-wide projection (name + description_short)
-v_shell_catalogue    — per-shell, includes role annotation
-```
+`/substrate/shell_core/scripts/dr_sync.py` populates all 9 surfaces via
+`sync_all`. It runs:
 
-Every typed row carries `name` + `description_short` (cap 100). That's the
-"index card" projection. Type-specific fields stay on the typed rows for
-deeper queries.
+- **on every API restart** — the primary trigger; a recompose re-syncs;
+- **`make db-sync`** — explicit, host-side;
+- **`python3 dr_sync.py <target>`** — one surface, for debugging.
 
-## Triggers
+## The 9 surfaces
 
-| Trigger | What runs |
+Six auto-derive from real state; three are curated lists inside `dr_sync.py`:
+
+| Auto-derived | Source |
 |---|---|
-| **API startup event** (every pm2/uvicorn restart) | `sync_all` — runs every wired sync target |
-| **`make db-sync`** | Same — explicit on-demand refresh |
-| **`python3 shell_core/scripts/dr_sync.py <target>`** | Run one or more specific targets |
+| `dr_router`, `dr_api` | FastAPI routes + router-module docstrings |
+| `dr_dependencies` | `package.json` + installed pip metadata |
+| `dr_lib` | backend module docstrings / UI lib first-comment |
+| `dr_services` | `ecosystem.config.cjs` `summary` fields |
+| `dr_repo` | `git remote` + `gh repo view` |
 
-The startup event is the primary trigger because most populator sources
-(routers, code modules) require an API restart to take effect anyway.
-
-## Wired sync targets
-
-All 9 typed surfaces have populators. Six are auto-derived from real state;
-three are curated lists in `dr_sync.py` (the script itself is the source-of-truth).
-
-| Target | Source | Populates |
-|---|---|---|
-| `apis` | FastAPI `app.openapi()` + router files' module docstrings | `dr_router`, `dr_api` |
-| `deps` | `shell_core/ui/package.json` + `node_modules/*/package.json#description` (npm); `importlib.metadata` in running venv (pip) | `dr_dependencies` |
-| `services` | `ecosystem.config.cjs` — convention: each app has `summary` field (pm2 ignores extra keys) | `dr_services` |
-| `libs` | `shell_core/api/common/*.py` module docstrings (backend); `shell_core/ui/src/lib/*.js` first `//` comment (frontend) | `dr_lib` |
-| `repos` | `git remote get-url origin` + `gh repo view --json description,name` | `dr_repo` |
-| `filepaths` | Curated `_FILEPATH_ENTRIES` list in `dr_sync.py` | `dr_filepath` |
-| `automations` | Curated `_AUTOMATION_ENTRIES` list in `dr_sync.py` | `dr_automations` |
-| `env` | Curated `_ENV_ENTRIES` list in `dr_sync.py` (no values stored, registry only) | `dr_env` |
-
-## When you modify something
-
-| You modified... | What to do |
+| Curated in `dr_sync.py` | List |
 |---|---|
-| A route handler | `api-design` — keep `summary=` ≤100 chars in sync with behavior. Restart API or `make db-sync` to refresh. |
-| A router file | `api-design` — keep module docstring + `tags=` fresh. |
-| `package.json` (UI) | Auto — pulled from `description` field. |
-| `pip install <X>` (substrate) | Auto — pulled from package metadata. |
-| `ecosystem.config.cjs` | Update the `summary` field on the affected app. |
-| `api/common/*.py` | Keep module docstring fresh — first line is the lib summary. |
-| `ui/src/lib/*.js` | Keep first `//` comment fresh. |
-| Adding a notable file/dir | Add to `_FILEPATH_ENTRIES` in `dr_sync.py`. |
-| Adding cron/pm2/startup automation | Add to `_AUTOMATION_ENTRIES` in `dr_sync.py`. |
-| New env var the substrate uses | Add to `_ENV_ENTRIES` in `dr_sync.py`. |
+| `dr_filepath` | `_FILEPATH_ENTRIES` |
+| `dr_automations` | `_AUTOMATION_ENTRIES` |
+| `dr_env` | `_ENV_ENTRIES` |
 
-## Adding a new sync target
+## When you change something catalogued
 
-1. Pick a stable identity column for the typed table (e.g. `(project, name)` for `dr_dependencies`).
-2. Write `sync_<target>(conn, app=None)` in `shell_core/scripts/dr_sync.py`. Idempotent UPSERT keyed on the identity column. Return `{"<surface>": {"insert": N, "update": N}}`.
-3. Register in `SYNCS` dict.
-4. The startup hook and `make db-sync` pick it up automatically via `sync_all`.
+| Changed | Keep in sync |
+|---|---|
+| a route / router | the `summary=` and the router-module docstring |
+| `ecosystem.config.cjs` | the app's `summary` field |
+| a backend / UI lib | the module docstring / first `//` comment |
+| a notable file, automation, or env var | the matching `_*_ENTRIES` list in `/substrate/shell_core/scripts/dr_sync.py` |
 
-## Pre-modification check
+It re-syncs at the next recompose (`./install/api-up.sh`), or run
+`make db-sync` host-side. Never hand-write a `dr_*` row — the next sync
+overwrites it from source.
 
-Before changing anything that's catalogued, query the catalogue first:
+## Adding a sync target
 
-```sql
--- substrate-wide
-SELECT * FROM v_dr_catalogue WHERE ref_table = 'dr_<surface>' AND name LIKE '%<target>%';
-
--- this shell's bindings
-SELECT * FROM v_shell_catalogue WHERE shell_id = <self> AND ref_table = 'dr_<surface>';
-```
-
-If a row exists, update its source. If not, after the modification trigger
-sync (`make db-sync`) or wait for the next restart-driven sync. Never
-manually INSERT into a typed table — it'll diverge from source-of-truth
-on the next sync.
+1. Pick a stable identity column for the typed table.
+2. Write `sync_<target>(conn, app=None)` in `dr_sync.py` — an idempotent
+   UPSERT keyed on that column; return
+   `{"<surface>": {"insert": N, "update": N}}`.
+3. Register it in the `SYNCS` dict — `sync_all` and `make db-sync` pick it
+   up automatically.

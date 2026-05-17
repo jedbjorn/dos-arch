@@ -196,7 +196,7 @@ Some are pure procedure.
 
 | Skill kind | Examples | Usable by a cold agent? |
 |---|---|---|
-| Shell skill | `decision`, `memory_audit`, `laws_management` | No — assumes a `shells` row |
+| Shell skill | `decision`, `surface_flags`, `laws_management` | No — assumes a `shells` row |
 | Task skill | `git-workflow`, `db_patch`, `redline_review` | Yes — pure procedure |
 
 The harness adds one column:
