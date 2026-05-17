@@ -54,6 +54,7 @@ Six auto-derive from real state; three are curated lists inside `dr_sync.py`:
 | Changed | Keep in sync |
 |---|---|
 | a route / router | the `summary=` and the router-module docstring |
+| a **core** memory endpoint (shell state, flags, seed/L&S, decisions) | also the `MEMORY ARCHITECTURE` table in `shell_core/templates/shell_system_prompt.md`, in the same PR |
 | `ecosystem.config.cjs` | the app's `summary` field |
 | a backend / UI lib | the module docstring / first `//` comment |
 | a notable file, automation, or env var | the matching `_*_ENTRIES` list in `/substrate/shell_core/scripts/dr_sync.py` |
@@ -61,6 +62,13 @@ Six auto-derive from real state; three are curated lists inside `dr_sync.py`:
 It re-syncs at the next recompose (`./install/api-up.sh`), or run
 `make db-sync` host-side. Never hand-write a `dr_*` row — the next sync
 overwrites it from source.
+
+The core memory-endpoint map in the boot system prompt is **hand-maintained
+prose**, not auto-synced from `dr_api` — it carries when/why semantics the
+catalogue's `description_short` can't. That surface is stable contract, but
+still maturing (e.g. the projects write surface is a known gap). Whoever adds
+or moves a core endpoint owns the template edit; nothing catches that drift
+automatically.
 
 ## Run log + monitoring
 
