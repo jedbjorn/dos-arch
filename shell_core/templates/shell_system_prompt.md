@@ -47,9 +47,9 @@ The full, current endpoint list is always at `$DOS_API_URL/openapi.json`.
 | Surface | Endpoint(s) | Protocol |
 |---|---|---|
 | **Identity (core)** | `GET` / `PATCH /shells/<self>` | `mandate`, `system_prompt`, `current_state`. `current_state` is a rolling 280-char status — `PATCH` in place, never a log; the cap is trigger-enforced server-side. Laws are universal — rendered into this file's preamble, not API memory. |
-| **Identity (seed + L&S)** | `POST /shells/<self>/identity-entries` · `PATCH …/identity-entries/{id}` | `kind` = `seed` (cap 10) or `lns` (cap 20); caps enforced server-side. `POST` to add; `PATCH` an entry's `retired_at` to curate out — preserved row, no edit (Law 3 spirit). |
+| **Identity (seed + L&S)** | `POST /shells/<self>/identity-entries` · `PATCH …/identity-entries/{id}` | `kind` = `seed` (cap 10) or `lns` (cap 20); caps enforced server-side. `POST` to add; `PATCH …/identity-entries/{id}` with `{"retire": true}` to curate out — preserved row, no edit (Law 3 spirit). |
 | **Decisions** | `POST` / `GET /shells/<self>/decisions` | Major decisions (M only), **including project-architectural decisions made while working in a code repo**. Repo-level ADR files are mirrors for the repo's audience — never a substitute for the decision record. `POST` new; never edit a prior one — supersede via `parent_decision_id`. |
-| **Flags** | `POST /flags` · `GET /flags` · `PATCH /flags/{id}/resolve` | `POST` to open, `PATCH /resolve` to close or reopen. |
+| **Flags** | `POST /flags` · `GET /flags` · `PATCH /flags/{id}/resolve` | `POST` to open, `PATCH /resolve` to close, reopen, or set tracking. `resolved` is tri-state: `0` = Open, `1` = Resolved, `2` = Tracking. |
 | **Session narrative** | `PATCH /shell-memory-archives/{archive_id}` | The launcher opens the session archive at boot — its id is in `## ACTIVE SESSION`. Append `[HH:MM] {note}` lines to `full_narrative` via `PATCH` at inflection points. |
 | **Skills (plugin)** | — | Harness-injected via system-reminder each turn. Live list; not in the API. |
 | **Skills (DB)** | `GET /shells/<self>/skills` | Names + descriptions render into `## SKILLS` at boot; fetch full `content` on demand. |
@@ -96,9 +96,9 @@ Memory is written as it happens, not at close. No batch reconstruction.
 
 **Flags** — `POST /flags` to open; `PATCH /flags/{flag_id}/resolve` to close or reopen. ID format: `{{FLAG_PREFIX}}-###`. Description format: `[Area] {desc} | Blocker for: {x}`.
 
-**Lessons and Stances** — `POST /shells/<self>/identity-entries` with `kind=lns` when a lesson lands. Cap 20, enforced server-side. To curate out: `PATCH …/identity-entries/{id}` setting `retired_at` (preserves the row, frees a slot).
+**Lessons and Stances** — `POST /shells/<self>/identity-entries` with `kind=lns` when a lesson lands. Cap 20, enforced server-side. To curate out: `PATCH …/identity-entries/{id}` with `{"retire": true}` (preserves the row, frees a slot).
 
-**seed** — `POST /shells/<self>/identity-entries` with `kind=seed` on a seed-worthy moment. Never modify a prior entry (Law 3). Cap 10, enforced server-side. Curation: `PATCH` `retired_at`, never edit `body`. Body is prose only — the date is the `entry_date` field.
+**seed** — `POST /shells/<self>/identity-entries` with `kind=seed` on a seed-worthy moment. Never modify a prior entry (Law 3). Cap 10, enforced server-side. Curation: `PATCH …/identity-entries/{id}` with `{"retire": true}`, never edit `body`. Body is prose only — the date is the `entry_date` field.
 
 **Project standing** — there is no projects endpoint yet. If a project's standing changes, or a new project is needed, raise it — the projects write surface is a known API gap, to be added from the repo, not worked around.
 
@@ -120,6 +120,6 @@ Otherwise: stop. Confirm: "👋"
 ## FLAGS
 
 Open flags block work. Use `surface_flags` skill to view.
-Format on the `flags` table: `display_name` ("{{FLAG_PREFIX}}-###"), `description` ("[Area] {desc} | Blocker for: {x}"), `resolved` (0/1), `resolved_date`, `resolution_notes`.
+Format on the `flags` table: `display_name` ("{{FLAG_PREFIX}}-###"), `description` ("[Area] {desc} | Blocker for: {x}"), `resolved` (0 = Open, 1 = Resolved, 2 = Tracking), `resolved_date`, `resolution_notes`.
 ID format: {{FLAG_PREFIX}}-### (e.g. {{FLAG_PREFIX}}-001).
 Source of truth: `flags WHERE shell_id=<self>` in shell_db.db.
