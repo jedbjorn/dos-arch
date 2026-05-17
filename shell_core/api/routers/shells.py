@@ -144,11 +144,20 @@ def get_shell(shell_id: int, con = Depends(get_db)):
     return dict(row)
 
 
+# current_state cap — mirrors trg_current_state_cap_* in schema.sql.
+# Pre-validated in the handler so an over-cap write returns a clean 422
+# instead of the unhandled trigger ABORT surfacing as a 500.
+CURRENT_STATE_CAP = 280
+
+
 class UpdateShellBody(BaseModel):
+    display_name:      str | None = None
+    shortname:         str | None = None
     owner:             str | None = None
     role:              str | None = None
     mandate:           str | None = None
     current_state:     str | None = None
+    connections:       str | None = None
     api_endpoints:     str | None = None
     active_archive_id: int | None = None
 
@@ -158,6 +167,20 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
     fields, args = [], []
+    if body.display_name is not None:
+        name = body.display_name.strip()
+        if not name:
+            raise HTTPException(422, "display_name cannot be empty")
+        fields.append("display_name = ?"); args.append(name)
+    if body.shortname is not None:
+        short = body.shortname.strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9]{0,7}", short):
+            raise HTTPException(422, "shortname must be 1-8 chars, lowercase, starting with a letter")
+        if short == "forge":
+            raise HTTPException(422, "shortname 'forge' is reserved")
+        if con.execute("SELECT 1 FROM shells WHERE shortname=? AND shell_id<>?", (short, shell_id)).fetchone():
+            raise HTTPException(409, f"shortname '{short}' already exists")
+        fields.append("shortname = ?"); args.append(short)
     if body.owner is not None:
         fields.append("owner = ?"); args.append(body.owner.strip() or None)
     if body.role is not None:
@@ -165,7 +188,16 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     if body.mandate is not None:
         fields.append("mandate = ?"); args.append(body.mandate.strip() or None)
     if body.current_state is not None:
-        fields.append("current_state = ?"); args.append(body.current_state.strip() or None)
+        state = body.current_state.strip() or None
+        if state is not None and len(state) > CURRENT_STATE_CAP:
+            raise HTTPException(
+                422,
+                f"current_state exceeds {CURRENT_STATE_CAP} chars ({len(state)}) "
+                f'— rolling status, not a log; trim to "now / next"',
+            )
+        fields.append("current_state = ?"); args.append(state)
+    if body.connections is not None:
+        fields.append("connections = ?"); args.append(body.connections.strip() or None)
     if body.api_endpoints is not None:
         fields.append("api_endpoints = ?"); args.append(body.api_endpoints.strip() or None)
     if body.active_archive_id is not None:
@@ -174,8 +206,10 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
         args.append(shell_id)
         con.execute(f"UPDATE shells SET {', '.join(fields)} WHERE shell_id = ?", args)
         con.commit()
+    # Same column set as GET /shells/{id} — a PATCH round-trip is symmetric.
     row = con.execute("""
-        SELECT shell_id, display_name, owner, role, mandate, current_state, api_endpoints,
+        SELECT shell_id, display_name, shortname, owner, role, mandate,
+               current_state, connections, api_endpoints,
                active_archive_id
         FROM shells WHERE shell_id = ?
     """, (shell_id,)).fetchone()
@@ -250,6 +284,29 @@ def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntr
         (entry_id,)
     ).fetchone()
     return dict(row)
+
+
+@router.get("/shells/{shell_id}/identity-entries", summary="List a shell's seed + L&S entries")
+def list_identity_entries(shell_id: int, kind: str = "", include_retired: bool = False,
+                          con = Depends(get_db)):
+    """Inspect own seed/L&S mid-session — needed to find entry_ids before a
+    retire PATCH. Active entries only by default; pass include_retired=true
+    for the full curated history."""
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    if kind and kind not in ("seed", "lns"):
+        raise HTTPException(422, "kind must be 'seed' or 'lns'")
+    sql = ("SELECT entry_id, shell_id, kind, entry_date, source_tag, body, "
+           "created_at, retired_at FROM shell_identity_entries "
+           "WHERE shell_id = ? AND is_deleted = 0")
+    args: list = [shell_id]
+    if kind:
+        sql += " AND kind = ?"; args.append(kind)
+    if not include_retired:
+        sql += " AND retired_at IS NULL"
+    sql += " ORDER BY kind, entry_date, entry_id"
+    rows = con.execute(sql, args).fetchall()
+    return {"shell_id": shell_id, "count": len(rows), "entries": [dict(r) for r in rows]}
 
 
 # ── Shell decisions (per-shell decision log) ─────────────────────────────────
@@ -522,6 +579,16 @@ def create_shell_memory_archive(body: CreateArchiveBody, con = Depends(get_db)):
         con.rollback()
         print(f"[ERROR] create_shell_memory_archive: {e}", flush=True)
         raise HTTPException(500, "Internal server error")
+
+
+@router.get("/shell-memory-archives/{archive_id}", summary="Get one session archive by archive_id")
+def get_shell_memory_archive(archive_id: int, con = Depends(get_db)):
+    """Direct read by archive_id — the clean mid-session path to the current
+    archive, whose id is in the shell's `## ACTIVE SESSION` block."""
+    row = con.execute("SELECT * FROM shell_memory_archives WHERE archive_id = ?", (archive_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Archive not found")
+    return dict(row)
 
 
 class UpdateArchiveBody(BaseModel):
