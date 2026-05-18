@@ -94,9 +94,6 @@ Run from your clone, as the operator:
 
 ```bash
 cd ~/dos-arch
-```
-
-```bash
 sudo ./install/host-setup.sh
 ```
 
@@ -114,9 +111,6 @@ Inside that session the staged setup lives in `~/setup`:
 
 ```bash
 cd ~/setup
-```
-
-```bash
 ./install/rootless-setup.sh
 ```
 
