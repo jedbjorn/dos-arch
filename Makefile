@@ -3,7 +3,7 @@ DB   := $(CORE)/shell_db.db
 SCHEMA := $(CORE)/schema.sql
 BACKUP_DIR := $(HOME)/db_backups/dos-arch
 
-.PHONY: help install bootstrap migrate db-backup db-sync catalogue up down restart status logs health launch set-password create-user gen-api-key
+.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models up down restart status logs health launch set-password create-user gen-api-key
 
 help:
 	@echo "shell-infra — host-level substrate"
@@ -19,6 +19,8 @@ help:
 	@echo "  make db-backup           snapshot $(DB) to $(BACKUP_DIR)/<ts>.db"
 	@echo "  make db-sync             refresh dr_router + dr_api from live routes"
 	@echo "  make catalogue           print the substrate catalogue (filter via ARGS=, e.g. ARGS='api')"
+	@echo "  make collect-hardware    probe this host into user_hardware (ARGS='--user-id N')"
+	@echo "  make sync-models         sync the models table from Ollama's installed set"
 	@echo "  make up                  pm2 start the UI (127.0.0.1:5173); API + broker run as containers"
 	@echo "  make down                pm2 delete the UI"
 	@echo "  make restart             pm2 restart the UI"
@@ -69,6 +71,12 @@ db-sync:
 
 catalogue:
 	@python3 $(CORE)/scripts/catalogue.py $(ARGS)
+
+collect-hardware:
+	@python3 $(CORE)/scripts/collect_hardware.py $(ARGS)
+
+sync-models:
+	@python3 $(CORE)/scripts/model_sync.py $(ARGS)
 
 up:
 	@pm2 start ecosystem.config.cjs

@@ -78,6 +78,21 @@ sudo apt install -y git build-essential python3 python3-venv nodejs npm docker.i
 sudo npm install -g pm2
 ```
 
+**Ollama** — the local-model runtime dos-arch shells run against. Install
+the build that matches your GPU:
+
+```bash
+# Arch / CachyOS — NVIDIA GPU (AMD: ollama-rocm  ·  CPU-only: ollama)
+sudo pacman -S --needed ollama-cuda
+sudo systemctl enable --now ollama
+
+# Ubuntu / other Linux — the installer auto-detects the GPU
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+GPU variants and the reasoning behind the choice are in
+**[install/README.md → Local models](install/README.md#local-models)**.
+
 Then clone the repo into your home directory:
 
 ```bash
@@ -260,6 +275,23 @@ make launch
 
 That is the full install. From here, `make launch` (step 10) is the daily
 entry point — see **[Daily commands](#daily-commands)** below.
+
+### Local models (after install)
+
+dos-arch shells run against a local LLM via Ollama (installed in Step 0).
+Once the substrate is up, pull a model set sized to your hardware, then
+record what is installed as live DB state:
+
+```bash
+ollama pull qwen2.5-coder:7b      # browse the library: https://ollama.com/library
+make collect-hardware             # probe this host       -> user_hardware
+make sync-models                  # read Ollama's set      -> models
+```
+
+Which models to pull depends on VRAM. **[install/README.md → Local
+models](install/README.md#local-models)** has the full walkthrough;
+**[docs/model-tiers.md](docs/model-tiers.md)** breaks down hardware and
+model picks per VRAM tier (8 / 12 / 24 / 32 / 48 / 128 GB).
 
 ### Troubleshooting
 

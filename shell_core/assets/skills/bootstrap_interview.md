@@ -100,7 +100,29 @@ query the catalogue first, before grepping the codebase. See the
 
 ---
 
-## 5. Confirm to operator
+## 5. Record host hardware
+
+The substrate tracks the machines it runs on in `user_hardware`, and any
+local LLM models in `models`. Record this machine on first boot so the
+environment is live in the DB from the start:
+
+```
+make collect-hardware
+```
+
+If Ollama is installed on this machine, also sync the model set:
+
+```
+make sync-models
+```
+
+Both are safe to re-run whenever hardware or the installed model set
+changes. See `docs/model-tiers.md` for hardware/model guidance, and the
+install README for the full picture.
+
+---
+
+## 6. Confirm to operator
 
 > "Bootstrapped. current_state set. First seed entry planted. Ready for:
 > `<first task>`."

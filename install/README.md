@@ -234,6 +234,83 @@ docker run --rm --network dos-net --entrypoint python dos-broker:latest \
 
 All idempotent — safe to re-run.
 
+## Local models
+
+dos-arch shells run against a local LLM served by **[Ollama](https://ollama.com)**
+on the host. Ollama runs as a host service — outside the rootless-Docker
+sandbox — and the substrate reaches it over the host loopback. The substrate
+records two things about the setup as live DB state, never hand-maintained:
+
+| Table | Holds | Synced by |
+|---|---|---|
+| `user_hardware` | One row per machine — CPU, RAM, GPU, VRAM, `vram_tier`. | `collect_hardware.py` |
+| `models` | One row per installed model — provider, params, size, quant. | `model_sync.py` (reads Ollama) |
+
+### 1 — Install Ollama (operator)
+
+Quickstart Step 0 installs it; this is the detail. Pick the build that
+matches the host GPU:
+
+```bash
+# Arch / CachyOS
+sudo pacman -S --needed ollama-cuda     # NVIDIA — offloads to the GPU
+sudo pacman -S --needed ollama-rocm     # AMD
+sudo pacman -S --needed ollama          # CPU-only
+sudo systemctl enable --now ollama
+```
+
+```bash
+# Ubuntu / other Linux — the installer auto-detects the GPU
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+The CUDA/ROCm builds are what make a GPU useful here: a model that fits in
+VRAM runs at full speed; one that spills to system RAM runs many times
+slower. Verify with `ollama --version`, and `nvidia-smi` if a GPU is
+expected.
+
+### 2 — Pull a model set (operator)
+
+Browse the full catalogue at **[ollama.com/library](https://ollama.com/library)**.
+The hard constraint is VRAM — see **[docs/model-tiers.md](../docs/model-tiers.md)**
+for hardware and model picks per tier (8 / 12 / 24 / 32 / 48 / 128 GB).
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Smoke-test that the GPU is actually doing the work:
+
+```bash
+ollama run qwen2.5-coder:7b "write a one-line shell function" --verbose
+ollama ps
+```
+
+`--verbose` prints `eval rate` (tokens/s) — tens of tok/s for a GPU-resident
+7B, single digits if it fell back to CPU. `ollama ps` shows a `PROCESSOR`
+column: `100% GPU` is the goal; `CPU` or a split means the model spilled
+out of VRAM.
+
+### 3 — Record it in the DB (as dos-arch)
+
+From a `dos-arch` session in the clone, after `make bootstrap`:
+
+```bash
+make collect-hardware     # probe this host        -> user_hardware
+make sync-models          # read Ollama's set       -> models
+```
+
+`collect-hardware` accepts `ARGS='--user-id N'` (default `1`).
+`sync-models` requires a `user_hardware` row for the host first, reads
+Ollama over its HTTP API (`OLLAMA_HOST`, default `127.0.0.1:11434`), and
+marks any model no longer installed as `status='removed'`. Both are safe
+to re-run whenever hardware or the installed set changes.
+
+```sql
+SELECT hostname, gpu, vram_gb, vram_tier FROM user_hardware;
+SELECT name, provider, params, size_gb, min_vram_gb, status FROM models;
+```
+
 ## Teardown — rebuild or complete removal
 
 `teardown.sh` is the inverse of the install. It runs in three phases.

@@ -651,6 +651,57 @@ SELECT
     END AS status
 FROM walk;
 
+-- ── Local environment — hardware + models ────────────────────────────────────
+-- A live, programmatically-synced picture of the machines the substrate runs
+-- on and the local LLM models installed on them. Same philosophy as the dr_*
+-- catalogue: ground truth, refreshed from real state, never hand-maintained.
+--   user_hardware  <- collect_hardware.py  (host probe)
+--   models         <- model_sync.py        (`ollama list` / `ollama show`)
+
+CREATE TABLE IF NOT EXISTS user_hardware (
+    hardware_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(user_id),
+    hostname      TEXT    NOT NULL,
+    os            TEXT,                       -- distro / OS pretty name
+    kernel        TEXT,
+    cpu           TEXT,
+    cpu_threads   INTEGER,
+    ram_gb        REAL,
+    gpu           TEXT,                       -- discrete GPU (the one that matters)
+    vram_gb       REAL,
+    vram_tier     INTEGER,                    -- bucketed 8/12/24/32/48/128 — for model matching
+    disk_free_gb  REAL,
+    raw_dump      TEXT,                       -- full probe output, reference
+    collected_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    notes         TEXT,
+    UNIQUE (user_id, hostname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_hardware_user ON user_hardware (user_id);
+
+CREATE TABLE IF NOT EXISTS models (
+    model_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    hardware_id       INTEGER REFERENCES user_hardware(hardware_id),
+    name              TEXT    NOT NULL,       -- runner tag, e.g. qwen2.5-coder:7b
+    runner            TEXT    NOT NULL DEFAULT 'ollama',
+    provider          TEXT,                   -- Mistral, Alibaba, Google, Meta, ...
+    family            TEXT,                   -- coder / general / reasoning / multimodal / embedding
+    params            TEXT,                   -- '7.6B'
+    size_gb           REAL,                   -- on-disk size
+    quantization      TEXT,                   -- Q4_K_M
+    context_length    INTEGER,
+    min_vram_gb       INTEGER,                -- smallest VRAM tier to run comfortably on GPU
+    digest            TEXT,                   -- runner model ID / digest
+    status            TEXT    NOT NULL DEFAULT 'installed'
+                      CHECK (status IN ('installed','removed')),
+    description_short TEXT    CHECK (description_short IS NULL OR LENGTH(description_short) <= 100),
+    last_synced       TEXT    NOT NULL DEFAULT (datetime('now')),
+    notes             TEXT,
+    UNIQUE (hardware_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_models_hardware ON models (hardware_id);
+
 -- ── migration tracking ───────────────────────────────────────────────────────
 -- One row per applied migration file (see shell_core/migrations/*.sql).
 -- migrate.py computes the pending set as migrations/*.sql minus this table;
