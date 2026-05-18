@@ -15,7 +15,8 @@ CREATE TABLE users (
     is_active     INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     theme_bg      TEXT    DEFAULT '#0f1117',
-    theme_accent  TEXT    DEFAULT '#0072FF'
+    theme_accent  TEXT    DEFAULT '#0072FF',
+    chat_history_window INTEGER
 );
 
 -- ── Shells ────────────────────────────────────────────────────────────────────
@@ -27,7 +28,8 @@ CREATE TABLE IF NOT EXISTS "shells" (
     partner               TEXT,
     role                  TEXT,
     mandate               TEXT,
-    system_prompt         TEXT    NOT NULL,
+    additional_prompt     TEXT    NOT NULL,
+    boot_document         TEXT,
     current_state         TEXT,
     connections           TEXT,
     api_endpoints         TEXT,
@@ -127,7 +129,9 @@ CREATE TABLE chat_sessions (
     last_active        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active          INTEGER NOT NULL DEFAULT 1,
     total_tokens       INTEGER NOT NULL DEFAULT 0,
-    token_warning_sent INTEGER NOT NULL DEFAULT 0
+    token_warning_sent INTEGER NOT NULL DEFAULT 0,
+    turn_in_flight_at         TIMESTAMP,
+    turn_in_flight_message_id INTEGER REFERENCES chat_messages(message_id)
 );
 
 CREATE TABLE chat_messages (

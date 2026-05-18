@@ -474,9 +474,9 @@ def compose_claude_md(
 ) -> str:
     template = TEMPLATE_PATH.read_text()
     current_state = (shell_row["current_state"] or "(none)").strip()
-    system_prompt = (shell_row["system_prompt"] or "").strip()
+    additional_prompt = (shell_row["additional_prompt"] or "").strip()
     # <self> sentinel → this shell's id (lets templates be cloned across shells safely)
-    system_prompt = system_prompt.replace("<self>", str(shell_row["shell_id"]))
+    additional_prompt = additional_prompt.replace("<self>", str(shell_row["shell_id"]))
     identity = render_identity(shell_row)
     operator = render_operator(user_row)
     shared_dirs = render_shared_dirs(shell_row)
@@ -514,7 +514,7 @@ def compose_claude_md(
         "",
         "## SYSTEM PROMPT",
         "",
-        system_prompt,
+        additional_prompt,
         "",
         "---",
         "",
@@ -637,7 +637,7 @@ def main() -> None:
 
     # Re-fetch after opening session so the row has updated active_archive_id
     full = con.execute(
-        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, system_prompt, api_auth FROM shells WHERE shell_id=?",
+        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, additional_prompt, api_auth FROM shells WHERE shell_id=?",
         (chosen["shell_id"],),
     ).fetchone()
 
