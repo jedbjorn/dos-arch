@@ -48,7 +48,7 @@ Two prior systems are consolidated by this spec:
 | System | Contributes | Verdict |
 |---|---|---|
 | **ExpLive** (`designs_os`) | The dispatcher: an agent loop calling the Anthropic SDK directly, with DB-owned history, a rolling window, and `api_*` tools. The own-runtime — already working. | **Host.** Generalize it. |
-| **KinLive** (`kcsos`) | Two-surface auth, atomic shell activation, per-shell containers, security hardening. Its re-enter mechanism delegated context to Claude Code session files. | Auth + container model reused; re-enter mechanism **retired** (replaced by DB-owned replay). |
+| **KLV** (`Alpha`) | Two-surface auth, atomic shell activation, per-shell containers, security hardening. Its re-enter mechanism delegated context to Claude Code session files. | Auth + container model reused; re-enter mechanism **retired** (replaced by DB-owned replay). |
 
 ---
 
