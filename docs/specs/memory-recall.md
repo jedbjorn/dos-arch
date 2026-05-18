@@ -59,6 +59,7 @@ here, and the redefinition is the spine of this spec.
 | **Provider session** | A model provider's own server-side session/cache feature. Optional, cloud-only, an optimisation — never something the system's correctness depends on. Distinct from a Session above. |
 | **Summarizer** | A cold agent (per agnostic-runtime §3.2) that writes session summaries. Pinned to a small model. |
 | **Decision-expander** | A cold agent that turns a decision marker into a full `shell_decisions` record. Pinned to a small model. |
+| **Recall agent** | A cold agent dispatched by `remember` to search memory and report distilled findings. Read-only; runs the search in its own context so the working shell's stays clean. |
 
 A Session is the **summarization unit**. Everything downstream — recall,
 the rolling `current_state`, the narrative — is built from sessions.
@@ -263,25 +264,54 @@ Caps (seed 10, L&S 20) stay trigger-enforced server-side.
 
 # 7. The remember skill #
 
-One lightweight skill, total recall. It is a thin procedure over existing
-read paths — no model of its own, runs in the active shell's context.
+Recall is itself context-hungry — scanning summaries, drilling into raw
+windows, weighing candidates all generate intermediate state. Run inline in
+the working shell and that search debris lands in the very window the whole
+architecture works to keep clean. So `remember` does **not** run inline.
 
-Two-level search:
+`remember` **dispatches a recall cold agent.** The working shell issues one
+call — the query — and gets back one thing: a distilled report. The search
+runs in the agent's own ephemeral context and is discarded with it.
 
-1. **Index** — search `sessions.summary` and `shell_decisions` (text match;
-   filter by date, FnB, project, conversation). These are short, dense, and
-   already the distilled signal.
-2. **Archive** — every index row carries a message-id span. Drill from a
-   matched summary or decision down to the verbatim `chat_messages`.
+## 7.1 The recall agent ##
 
-"Lightweight to invoke, remember anything that ever happened": the skill
-searches the small index; the full raw conversation is always one span-lookup
-away because `chat_messages` is never hard-deleted.
+A cold agent (agnostic-runtime §3.2) with **read-scoped** grants to the
+memory tables — `sessions`, `chat_messages`, `shell_decisions` — and no write
+path. It:
 
-> [!NOTE] FTS is deferred
-> v1 `remember` runs on `LIKE` / existing content-search endpoints. A SQLite
-> FTS5 index over `sessions.summary` + `shell_decisions` is a clean later
-> optimisation — the schema does not need it to ship.
+1. **Searches the index** — `sessions.summary` + `shell_decisions` (text
+   match; filterable by date, FnB, project, conversation). Short, dense,
+   already-distilled signal.
+2. **Drills** into the raw `chat_messages` span behind each candidate.
+3. **Judges relevance** — reads the candidate windows and decides which
+   actually answer the query. This is the step an inline `LIKE` cannot do.
+4. **Reports** in a fixed shape: found / not-found, the session + message
+   refs, and the distilled relevant content — never a raw dump.
+
+The working shell's context receives only step 4. Steps 1–3 — the debris —
+live and die inside the agent.
+
+## 7.2 Fan-out ##
+
+A wide query ("when did we first discuss X," across months) splits across the
+session range: N recall agents, each a slice, each reporting its hits; a
+reducer merges. Fan-out is **bounded** — concurrency capped by the
+agnostic-runtime tool-concurrency semaphore (§5.2). Parallel search, not
+unbounded spawn.
+
+## 7.3 Why this is the retrieval answer ##
+
+Retrieval quality is the system's ceiling — unbounded recall is won or lost
+on whether the right thing comes back. An inline `LIKE` returns matches but
+cannot tell a real hit from a coincidental keyword. The recall agent reads
+and judges: **search narrows, the model decides.** Coarse filter by text
+search — `LIKE`, or a SQLite FTS5 index over `sessions.summary` +
+`shell_decisions` as a later optimisation; fine filter by the agent's own
+relevance pass.
+
+`remember` stays dual-triggered (§6.4) — model- or FnB-initiated — and
+lightweight *to invoke*: one call from the working shell. The weight is all
+in the agent, off the working context.
 
 ---
 
@@ -295,7 +325,7 @@ not a reason to use them everywhere — small task, small model.
 | Active warm shell — conversation, judgement, the decision marker | strong (Claude / GPT / Gemini, or a large local model) | `shells.model_id`; per-conversation override |
 | Summarizer cold agent | small | gemma or mistral — **test and pin** |
 | Decision-expander cold agent | small | clerical/structured output — small; mistral may edge gemma here — test and pin |
-| `remember` skill | none — runs in the active shell | — |
+| Recall agent — `remember`'s search + relevance pass | small–mid | relevance judgement is more than keyword work, less than the active shell's job — test and pin |
 
 The **mechanism already exists**: `shells.model_id` and the cold-agent tuple
 `(task_brief, model_id, …)` (agnostic-runtime §4.6) both carry a model. The
@@ -323,6 +353,7 @@ so gemma-vs-mistral output can be compared on real data before pinning.
 | Decision-marker syntax — `‹decision›` literal, or a structured tag the dispatcher parses more strictly? | Harvest reliability |
 | Does a long cloud session ever need *multiple* summaries, or is one-per-session always enough? | If yes, `sessions` summary becomes 1-to-many |
 | `remember` ranking — recency, match score, or both? | Recall quality |
+| Recall fan-out (§7.2) — fixed slice count, or adaptive to history length? | Bounds parallel recall-agent spawn |
 | Combined identity skill vs. separate `seed` / `lns` skills | Skill ergonomics |
 
 ---
@@ -338,7 +369,7 @@ executor the summarizer and decision-expander run on.
 | **M1 — sessions table + capture** | `sessions` table; programmatic session open/close at checkpoints; `current_state` becomes the mirror; cap → 400. | A conversation accrues `sessions` rows; `current_state` tracks the latest. |
 | **M2 — summarizer** | The summarizer cold agent; pin-test gemma vs mistral. | Closed sessions get summaries automatically. |
 | **M3 — decision flow** | The `‹decision›` marker, the harvest service, the decision-expander; `shell_decisions` cross-keys. | A marked decision becomes a fully-keyed record with no active-model API call. |
-| **M4 — remember + identity skills** | The `remember` skill; dual-triggered `seed` / `lns` skills; revised `decision` skill. | Total recall from one skill; identity entries dual-triggered. |
+| **M4 — remember + identity skills** | The `remember` skill + the recall agent (§7); dual-triggered `seed` / `lns` skills; revised `decision` skill. | Recall runs off the working context and returns distilled findings; identity entries dual-triggered. |
 
 **M1–M2** is the minimum that retires `current_state`-as-a-burden. M3–M4
 complete the offload and the recall surface.
