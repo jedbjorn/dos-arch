@@ -429,7 +429,7 @@ _FILEPATH_ENTRIES = [
     ("ecosystem",     ROOT / "ecosystem.config.cjs",                     "file", "pm2 process map — api on 8000, ui on 5173"),
     ("makefile",      ROOT / "Makefile",                                 "file", "Entry points: install, bootstrap, db-sync, db-backup, launch, up/down"),
     ("backups",       Path.home() / "db_backups" / "dos-arch",           "dir",  "Manual + boot DB snapshots (rolling-5 retention on boot snapshots)"),
-    ("shared",        Path.home() / "shared",                            "dir",  "Host↔container shared folder (redlines/options/backups) — mounted into shell containers"),
+    ("shared",        Path.home() / "shared",                            "dir",  "Host↔container shared root — per-shell scratch dirs, bind-mounted into shell containers"),
     ("global_claude", Path.home() / ".claude" / "CLAUDE.md",             "file", "Harness-injected universal preamble — laws, system override, shell selection"),
 ]
 

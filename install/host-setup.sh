@@ -48,7 +48,8 @@ fi
 
 echo "==> [3/7] Docker packages (pacman)"
 # fuse-overlayfs is the storage fallback for kernels < 5.13; harmless on newer.
-pacman -S --needed --noconfirm docker docker-buildx slirp4netns fuse-overlayfs
+# acl provides setfacl — used in step 6 to bridge the operator into ~/shared.
+pacman -S --needed --noconfirm docker docker-buildx slirp4netns fuse-overlayfs acl
 
 echo "==> [4/7] disable the rootful daemon (substrate runs rootless only)"
 systemctl disable --now docker.service docker.socket 2>/dev/null || true
@@ -58,13 +59,27 @@ echo "==> [5/7] enable linger for ${SERVICE_USER}"
 loginctl enable-linger "${SERVICE_USER}"
 
 echo "==> [6/7] shared runtime directory"
-# Host-side shared folder, mounted into every shell container (Phase 3).
-# Runtime state — not in the repo. redlines/options/backups subdirs.
-install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" \
-  "${SERVICE_HOME}/shared/redlines" \
-  "${SERVICE_HOME}/shared/options" \
-  "${SERVICE_HOME}/shared/backups"
-echo "    ${SERVICE_HOME}/shared/{redlines,options,backups}"
+# Host-side shared root, owned by the service user and bind-mounted into every
+# shell container. Runtime state — never in the repo. Only the ROOT is created
+# here; the per-shell subdirs (<NN-shortname>/{redlines,review,repos,backups})
+# are laid down later by `make bootstrap` / run.py, keyed by shell_id.
+install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${SERVICE_HOME}/shared"
+echo "    ${SERVICE_HOME}/shared"
+
+# FnB bridge: let the operator (the human who invoked sudo) read AND write the
+# shared tree, so redlines and handoffs flow both ways while ownership stays
+# cleanly with the service user. The default ACL (-d) makes files the
+# substrate creates under it later inherit the grant. Mirror of the clone-ACL
+# grant in install/README.md step 3, in the opposite direction.
+if [[ -n "${SUDO_USER:-}" ]] && id "${SUDO_USER}" &>/dev/null; then
+  setfacl -m       "u:${SUDO_USER}:x"   "${SERVICE_HOME}"
+  setfacl -R -m    "u:${SUDO_USER}:rwX" "${SERVICE_HOME}/shared"
+  setfacl -R -d -m "u:${SUDO_USER}:rwX" "${SERVICE_HOME}/shared"
+  echo "    operator '${SUDO_USER}' granted rw on ${SERVICE_HOME}/shared"
+else
+  echo "    WARNING: \$SUDO_USER unset — skipped operator ACL grant."
+  echo "             Grant manually: setfacl -R -m u:<operator>:rwX ${SERVICE_HOME}/shared"
+fi
 
 echo "==> [7/7] stage setup files into ${SERVICE_HOME}/setup"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${SERVICE_HOME}/setup"

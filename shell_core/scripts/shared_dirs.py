@@ -18,9 +18,17 @@ shell sees it from inside its container.
 """
 from __future__ import annotations
 
+import os
+import pwd
 from pathlib import Path
 
-SHARED_ROOT = Path.home() / "shared"
+# Anchor the shared root to the running user's real home from the passwd
+# database — NOT $HOME. `make bootstrap` / `make launch` run as the dos-arch
+# service user; a stale $HOME (e.g. inherited from the operator's session)
+# would otherwise send the tree to a directory the user cannot create, and
+# mkdir(parents=True) would climb all the way to /home and fail there. The
+# passwd entry is the OS truth and is immune to a misconfigured environment.
+SHARED_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "shared"
 SUBDIRS = ("redlines", "review", "repos", "backups")
 CONTAINER_SHARED = "~/shared"  # host ~/shared is mounted here inside shell containers
 
@@ -32,7 +40,17 @@ def shared_dir_name(shell_id: int, shortname: str) -> str:
 
 def ensure_shared_dirs(shell_id: int, shortname: str) -> Path:
     """Idempotently create the shell's scratch tree under the host shared
-    folder. Returns the host path of the shell's root dir."""
+    folder. Returns the host path of the shell's root dir.
+
+    The shared root itself (`SHARED_ROOT`) is laid down by
+    `install/host-setup.sh`. If it is missing, fail loudly with a clear
+    pointer rather than letting mkdir(parents=True) climb toward /home and
+    surface a confusing permission error."""
+    if not SHARED_ROOT.exists():
+        raise FileNotFoundError(
+            f"shared root {SHARED_ROOT} does not exist. Run "
+            f"install/host-setup.sh (operator, sudo) before bootstrap/launch."
+        )
     root = SHARED_ROOT / shared_dir_name(shell_id, shortname)
     for sub in SUBDIRS:
         (root / sub).mkdir(parents=True, exist_ok=True)
