@@ -150,13 +150,7 @@ Then grant the `dos-arch` user access to the clone:
 
 ```bash
 setfacl -m u:dos-arch:x ~
-```
-
-```bash
 setfacl -R -m u:dos-arch:rwX ~/dos-arch
-```
-
-```bash
 setfacl -R -d -m u:dos-arch:rwX ~/dos-arch
 ```
 
@@ -204,9 +198,6 @@ You own the clone, so the `git pull` is yours to run:
 
 ```bash
 cd ~/dos-arch
-```
-
-```bash
 git pull
 ```
 
