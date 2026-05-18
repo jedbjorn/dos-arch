@@ -3,7 +3,7 @@ DB   := $(CORE)/shell_db.db
 SCHEMA := $(CORE)/schema.sql
 BACKUP_DIR := $(HOME)/db_backups/dos-arch
 
-.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models up down restart status logs health launch set-password create-user gen-api-key
+.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models up down restart status logs health launch set-password create-user gen-api-key dispatch
 
 help:
 	@echo "shell-infra — host-level substrate"
@@ -27,6 +27,7 @@ help:
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
 	@echo "  make health              curl http://127.0.0.1:8000/health"
+	@echo "  make dispatch            run the browser-chat dispatcher (needs ANTHROPIC_API_KEY)"
 
 launch:
 	@python3 $(CORE)/scripts/run.py
@@ -51,7 +52,7 @@ install:
 	@python3 -m venv .venv
 	@echo "Installing python deps into .venv..."
 	@./.venv/bin/pip install --quiet --upgrade pip
-	@./.venv/bin/pip install --quiet fastapi uvicorn pydantic
+	@./.venv/bin/pip install --quiet fastapi uvicorn pydantic anthropic
 	@echo "Installing UI deps..."
 	@cd $(CORE)/ui && npm install --silent
 	@echo "Done. Next: make bootstrap && make up"
@@ -95,3 +96,6 @@ logs:
 
 health:
 	@curl -fsS http://127.0.0.1:8000/health && echo
+
+dispatch:
+	@PY=./.venv/bin/python3; [ -x "$$PY" ] || { echo "ERROR: .venv missing — run make install"; exit 1; }; "$$PY" $(CORE)/services/dispatch_live.py
