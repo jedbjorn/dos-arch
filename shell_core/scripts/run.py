@@ -26,7 +26,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from db_init import ensure_forge
-from shared_dirs import ensure_shared_dirs, shared_dir_container_path
+from shared_dirs import SHARED_ROOT, ensure_shared_dirs, shared_dir_container_path
 
 SUBSTRATE_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH        = SUBSTRATE_ROOT / "shell_core" / "shell_db.db"
@@ -284,7 +284,8 @@ def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> s
         # Host↔container shared folder. Mounted at /root/shared so the
         # container's `~/shared` (HOME=/root) resolves to it — the path the
         # system prompt's `shared` definition names. (Sys-Admin E2E gap 13.)
-        shared_dir = Path.home() / "shared"
+        # SHARED_ROOT is passwd-anchored — see shared_dirs.py.
+        shared_dir = SHARED_ROOT
         shared_dir.mkdir(exist_ok=True)
         run_args = [
             "run", "-d",

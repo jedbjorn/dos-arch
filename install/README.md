@@ -54,9 +54,16 @@ sudo ./install/host-setup.sh
 ```
 
 Creates the `dos-arch` user, ensures subuid/subgid ranges, installs
-`docker docker-buildx slirp4netns fuse-overlayfs`, leaves the rootful
+`docker docker-buildx slirp4netns fuse-overlayfs acl`, leaves the rootful
 `docker.service` disabled, enables linger, and stages `install/` + `docker/`
 into `/home/dos-arch/setup/`.
+
+It also lays down `/home/dos-arch/shared` — the runtime folder bind-mounted
+into every shell container — owned by `dos-arch`, and grants you (the
+operator who ran `sudo`) read/write on it via a default ACL. That bridge
+lets redlines and handoffs flow both ways while ownership stays cleanly with
+the service user. Per-shell subdirs under it are created later by
+`make bootstrap` and `run.py`, keyed by `shell_id`.
 
 ### 2 — Rootless Docker (as dos-arch)
 
