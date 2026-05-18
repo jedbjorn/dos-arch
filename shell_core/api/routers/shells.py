@@ -9,6 +9,7 @@ from pathlib import Path
 from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
+from api.services.boot_document import rerender_boot_document, session_start_payload
 
 router = APIRouter(tags=["shells"])
 
@@ -87,6 +88,7 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
         "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
         [(new_id, sid) for sid in skill_ids],
     )
+    rerender_boot_document(con, new_id)
     con.commit()
     return {"shell_id": new_id, "shortname": short, "skills_attached": len(skill_ids)}
 
@@ -144,6 +146,15 @@ def get_shell(shell_id: int, con = Depends(get_db)):
     if not row:
         raise HTTPException(404, "Shell not found")
     return dict(row)
+
+
+@router.get("/shells/{shell_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")
+def get_shell_session_start(shell_id: int, con = Depends(get_db)):
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    payload = session_start_payload(con, shell_id)
+    con.commit()  # persists a lazy first-time materialization, if one happened
+    return payload
 
 
 # current_state cap — mirrors trg_current_state_cap_* in schema.sql.
@@ -213,6 +224,10 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     if fields:
         args.append(shell_id)
         con.execute(f"UPDATE shells SET {', '.join(fields)} WHERE shell_id = ?", args)
+        # Re-materialize the boot document when an identity surface changed.
+        if any(getattr(body, f) is not None for f in
+               ("display_name", "shortname", "partner", "role", "mandate", "current_state")):
+            rerender_boot_document(con, shell_id)
         con.commit()
     # Same column set as GET /shells/{id} — a PATCH round-trip is symmetric.
     row = con.execute("""
@@ -252,6 +267,7 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
             (body.source_tag or "").strip() or None,
             body.body.strip(),
         ))
+        rerender_boot_document(con, shell_id)
         con.commit()
     except Exception as e:
         con.rollback()
@@ -286,6 +302,7 @@ def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntr
         "UPDATE shell_identity_entries SET retired_at = datetime('now') WHERE entry_id = ?",
         (entry_id,)
     )
+    rerender_boot_document(con, shell_id)
     con.commit()
     row = con.execute(
         "SELECT entry_id, shell_id, kind, entry_date, source_tag, body, created_at, retired_at FROM shell_identity_entries WHERE entry_id = ?",
