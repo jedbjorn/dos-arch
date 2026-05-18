@@ -162,6 +162,10 @@ def get_shell_session_start(shell_id: int, con = Depends(get_db)):
 # instead of the unhandled trigger ABORT surfacing as a 500.
 CURRENT_STATE_CAP = 280
 
+# Per-entry body caps for identity entries — mirror trg_sie_body_cap_* in
+# schema.sql. seed is reflective (800); L&S is a terse principle (400).
+IDENTITY_BODY_CAP = {"seed": 800, "lns": 400}
+
 
 class UpdateShellBody(BaseModel):
     display_name:      str | None = None
@@ -254,8 +258,19 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
         raise HTTPException(404, "Shell not found")
     if body.kind not in ("seed", "lns"):
         raise HTTPException(422, "kind must be 'seed' or 'lns'")
-    if not body.body.strip():
+    entry_body = body.body.strip()
+    if not entry_body:
         raise HTTPException(422, "body is required")
+    # Body cap — mirrors trg_sie_body_cap_* in schema.sql. Pre-validated here
+    # so an over-cap write returns a clean 422 instead of the trigger ABORT
+    # surfacing as a 500 (same pattern as the current_state cap).
+    cap = IDENTITY_BODY_CAP[body.kind]
+    if len(entry_body) > cap:
+        raise HTTPException(
+            422,
+            f"{body.kind} entry body exceeds {cap} chars ({len(entry_body)}) "
+            "— identity entries are distilled, not logs; trim it",
+        )
     try:
         cur = con.execute("""
             INSERT INTO shell_identity_entries (shell_id, kind, entry_date, source_tag, body)
@@ -265,7 +280,7 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
             body.kind,
             (body.entry_date or "").strip() or str(date.today()),
             (body.source_tag or "").strip() or None,
-            body.body.strip(),
+            entry_body,
         ))
         rerender_boot_document(con, shell_id)
         con.commit()

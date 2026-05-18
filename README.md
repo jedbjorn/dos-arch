@@ -698,6 +698,7 @@ carries `name` + `description_short` (≤100 chars) for fast lookup. See the
 Triggers worth knowing about:
 - `trg_sie_cap_seed` — seed cap = 10
 - `trg_sie_cap_lns` — L&S cap = 20
+- `trg_sie_body_cap_seed` / `trg_sie_body_cap_lns` — per-entry body caps: seed 800, L&S 400
 - `trg_current_state_cap_insert` / `trg_current_state_cap_update` — 280-char cap on `shells.current_state`
 
 ---
