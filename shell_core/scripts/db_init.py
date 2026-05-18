@@ -108,7 +108,7 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
 
     meta, prompt = parse_frontmatter((SHELLS_DIR / "forge.md").read_text())
     cur = con.execute(
-        "INSERT INTO shells (display_name, shortname, mandate, system_prompt, "
+        "INSERT INTO shells (display_name, shortname, mandate, additional_prompt, "
         "has_identity, is_shared) VALUES (?, ?, ?, ?, 1, ?)",
         (meta["display_name"], meta["shortname"], meta.get("mandate"),
          prompt, int(meta.get("is_shared", "0"))),
@@ -121,7 +121,7 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
 
 def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     """Seed the resident admin/dev shell, owned by `user_id`. Returns
-    (shell_id, created). The system_prompt is rendered from the canonical
+    (shell_id, created). The additional_prompt is rendered from the canonical
     template, with the two domain sections supplied by sys-admin.md."""
     meta, body = parse_frontmatter((SHELLS_DIR / "sys-admin.md").read_text())
     shortname = meta["shortname"]
@@ -136,13 +136,13 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     domain = domain.replace("## DOMAIN & SCOPE", "").strip()
     operating = operating.strip()
 
-    system_prompt = (TEMPLATE.read_text()
+    additional_prompt = (TEMPLATE.read_text()
         .replace("{{DISPLAY_NAME}}", meta["display_name"])
         .replace("{{SHORTNAME}}", shortname)
         .replace("{{FLAG_PREFIX}}", shortname.upper())
         .replace("{{DOMAIN_AND_SCOPE}}", domain)
         .replace("{{OPERATING_CONTEXT}}", operating))
-    if "{{" in system_prompt:
+    if "{{" in additional_prompt:
         raise ValueError("unfilled template slot in sys-admin render")
 
     username = con.execute(
@@ -152,9 +152,9 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     # carries the admin scope. Worker shells created later default to 0.
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "system_prompt, user_id, is_shared, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1)",
+        "additional_prompt, user_id, is_shared, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1)",
         (meta["display_name"], shortname, username, meta.get("role"),
-         meta.get("mandate"), system_prompt, user_id),
+         meta.get("mandate"), additional_prompt, user_id),
     )
     sa_id = cur.lastrowid
     _attach_skills(con, sa_id, meta.get("skills", ""))

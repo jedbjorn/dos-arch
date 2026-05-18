@@ -51,21 +51,21 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
     # Render the canonical template. The domain sections come from the body;
     # the operational blocks are template-verbatim. <self> stays literal —
     # run.py substitutes it for the booting shell's id at render time.
-    system_prompt = (_SYSTEM_PROMPT_TEMPLATE.read_text()
+    additional_prompt = (_SYSTEM_PROMPT_TEMPLATE.read_text()
         .replace("{{DISPLAY_NAME}}", body.display_name)
         .replace("{{SHORTNAME}}", short)
         .replace("{{FLAG_PREFIX}}", short.upper())
         .replace("{{DOMAIN_AND_SCOPE}}", body.domain_and_scope)
         .replace("{{OPERATING_CONTEXT}}", body.operating_context))
-    if "{{" in system_prompt:
+    if "{{" in additional_prompt:
         raise HTTPException(500, "system-prompt template left an unfilled slot")
 
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "system_prompt, connections, user_id, is_shared, is_admin, api_auth) "
+        "additional_prompt, connections, user_id, is_shared, is_admin, api_auth) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
         (body.display_name, short, body.partner, body.role, body.mandate,
-         system_prompt, body.connections, body.user_id,
+         additional_prompt, body.connections, body.user_id,
          1 if body.api_auth else 0),
     )
     new_id = cur.lastrowid
