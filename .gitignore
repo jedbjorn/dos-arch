@@ -34,6 +34,9 @@ shell_core/shell_db.db
 **/*.log
 **/.pm2/
 
+# Dispatcher process lockfile (runtime artifact)
+**/.dispatch_live.lock
+
 # Secrets
 **/.env
 **/.env.local
