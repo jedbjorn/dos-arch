@@ -296,16 +296,40 @@ it is an open decision (§12).
 
 ## 5.1 System-prompt assembly and delivery ##
 
-The boot document is assembled **DB-side** from per-shell columns
-(`additional_prompt`, seed, laws, L&S, skill stubs, partner, flags, inbox) by a
-pure `compose_boot_document(shell_id)` function, exposed at
-`GET /shells/{id}/session-start`. There is no single `system_prompt` column —
-the prompt is assembled from parts, each its own source of truth.
+The boot document is assembled **DB-side** and stored **materialized** in a
+column on `shells` — the rendered stable payload (Blocks 1–2 below), held as
+derived state, not recomputed per request.
 
-The dispatcher fetches and delivers it — the model never pulls its own prompt,
-so there is no "instance forgot to call" failure mode.
+A pure `compose_boot_document(shell_id)` function holds the render logic in
+code — testable, the single source of render truth. It is **not** called per
+turn. The API identity-write paths re-render the column whenever a write
+touches an identity surface (`additional_prompt`, seed, laws, L&S, skill
+grants, partner): re-render on write, not on read. No DB triggers — every
+identity write goes through the API in this architecture, so the API layer is
+the complete set of writers, and SQL-side render logic is avoided.
 
-It is delivered as **three blocks**, carried from ExpLive:
+`GET /shells/{id}/session-start` returns the materialized column in a single
+read, plus Block 3 assembled live. The dispatcher fetches and delivers it — the
+model never pulls its own prompt, so there is no "instance forgot to call"
+failure mode.
+
+There is no single `system_prompt` column carrying a hand-authored prompt — the
+boot document is assembled from parts, each its own source of truth; the
+materialized column is their rendered projection.
+
+> [!NOTE] Why materialized, not a per-turn pure function
+> An earlier draft of this section specced `compose_boot_document()` as a pure
+> function run on every request. But the dispatcher re-composes the boot
+> document on **every inbound message** — many reads between rare identity
+> writes, the case materialization is for. superCC's substrate built the
+> trigger-materialized version (`shells.session_payload`) and dropped it
+> (PR #17) — but only because its CLI launch path reads the document once per
+> boot, where materialization buys nothing. The browser-chat dispatcher is the
+> opposite reader. Re-render on write, at the API layer (no triggers), keeps
+> the render logic in testable code. See dos-arch decision log #107.
+
+It is delivered as **three blocks**, carried from ExpLive — Blocks 1–2 are the
+materialized column, Block 3 is appended live at request time:
 
 | Block | Cached | Contents |
 |---|---|---|
