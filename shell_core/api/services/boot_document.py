@@ -83,6 +83,12 @@ def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
     if shell is None:
         raise ValueError(f"shell {shell_id} not found")
 
+    # <self> sentinel → this shell's id, so an operating-protocol template
+    # cloned across shells still resolves api_* paths (e.g. /shells/<self>)
+    # to the right shell. Mirrors run.py's CLI render.
+    operating_protocol = (shell["additional_prompt"] or "").strip().replace(
+        "<self>", str(shell_id))
+
     parts = [
         _BOOT_PREAMBLE_PATH.read_text().rstrip(),
         "",
@@ -94,7 +100,7 @@ def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
         "",
         "## OPERATING PROTOCOL",
         "",
-        (shell["additional_prompt"] or "").strip(),
+        operating_protocol,
         "",
         "---",
         "",
