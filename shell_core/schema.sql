@@ -201,6 +201,23 @@ BEGIN
   SELECT RAISE(ABORT, 'L&S cap (20) reached for this shell — retire an entry first');
 END;
 
+-- Per-entry body caps, by kind: seed 800 (a reflective moment), L&S 400 (a
+-- terse principle). Distilled, not logs. BEFORE INSERT only — bodies are
+-- immutable (Law 3).
+CREATE TRIGGER trg_sie_body_cap_seed
+BEFORE INSERT ON shell_identity_entries
+WHEN NEW.kind = 'seed' AND length(NEW.body) > 800
+BEGIN
+  SELECT RAISE(ABORT, 'seed entry body exceeds 800 chars — a distilled moment, not a log; trim it');
+END;
+
+CREATE TRIGGER trg_sie_body_cap_lns
+BEFORE INSERT ON shell_identity_entries
+WHEN NEW.kind = 'lns' AND length(NEW.body) > 400
+BEGIN
+  SELECT RAISE(ABORT, 'L&S entry body exceeds 400 chars — a distilled principle, not a log; trim it');
+END;
+
 -- ── current_state length cap (rolling status, not a log) ────────────────────
 -- Hard cap at 280 chars (~2 lines, ~70 tokens). current_state describes what
 -- the shell is working on now and what comes next — NOT a session log. It is
