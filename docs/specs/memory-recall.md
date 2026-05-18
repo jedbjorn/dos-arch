@@ -57,9 +57,9 @@ here, and the redefinition is the spine of this spec.
 | **Session** | **The span of one conversation between two summary checkpoints.** A conversation is an ordered sequence of sessions. Each session, when it closes, is summarized; the summary seeds the next session. One `sessions` row. |
 | **Summary checkpoint** | The event that closes a session: a model load/unload swap (local models — forced) or a token-cadence mark (cloud models — chosen). Same event, two triggers. |
 | **Provider session** | A model provider's own server-side session/cache feature. Optional, cloud-only, an optimisation — never something the system's correctness depends on. Distinct from a Session above. |
-| **Summarizer** | A cold agent (per agnostic-runtime §3.2) that writes session summaries. Pinned to a small model. |
-| **Decision-expander** | A cold agent that turns a decision marker into a full `shell_decisions` record. Pinned to a small model. |
-| **Recall agent** | A cold agent dispatched by `remember` to search memory and report distilled findings. Read-only; runs the search in its own context so the working shell's stays clean. |
+| **summarizer-agent** | A cold agent (agnostic-runtime §3.2) that summarizes a closed session into `sessions.summary`. Dispatcher-triggered; the warm shell is unaware of it. Pinned to a small model. |
+| **decision-expander-agent** | A cold agent that expands a `‹decision›` marker into a full `shell_decisions` record. Dispatcher-triggered; background. Pinned to a small model. |
+| **recall-agent** | A cold agent the warm shell spawns (via `remember`) to search memory and report distilled findings — read-only, possibly fanned out. Runs the search in its own context so the working shell's stays clean. Pinned small–mid. |
 
 A Session is the **summarization unit**. Everything downstream — recall,
 the rolling `current_state`, the narrative — is built from sessions.
@@ -70,6 +70,8 @@ the rolling `current_state`, the narrative — is built from sessions.
 
 Every memory write sorts into exactly one of three tiers. The design goal is
 to push as much as possible up the table, away from the active model.
+
+## 3.1 The three tiers ##
 
 | Tier | Who writes | What | Cost to the active model |
 |---|---|---|---|
@@ -88,6 +90,49 @@ The active model's deliberate memory surface drops from seven write targets
 > agent may author them. **Decision judgement** — *what counts as major* and
 > *why* — is the one thing a strong model does well and a small one does not.
 > Both stay. The trick is to make them cheap, not to remove them.
+
+## 3.2 The cold agents ##
+
+Three cold agents (agnostic-runtime §3.2) carry the offloaded work. They
+divide on **who triggers them** — and that divide decides what the warm
+shell must know about.
+
+| Agent | Triggered by | Warm shell aware? | Job |
+|---|---|---|---|
+| **summarizer-agent** | the dispatcher, at a summary checkpoint | **no** — fully background | summarize a closed session → `sessions.summary` |
+| **decision-expander-agent** | the dispatcher, harvesting a `‹decision›` marker | **no** — fully background | marker → full `shell_decisions` record |
+| **recall-agent** | the warm shell, via the `remember` skill | **yes** — the shell spawns it, possibly several (§7.2) | search memory → distilled report |
+
+Two trigger paths, deliberately:
+
+- **Service-triggered** — summarizer-agent and decision-expander-agent hook
+  to the **dispatcher**, the component that owns the message flow and
+  therefore knows when a session closes and when a marked reply lands. They
+  run unseen; the warm shell never spawns them and never waits on them.
+  Offload is total.
+- **Shell-spawned** — the recall-agent is the one memory act the warm shell
+  *initiates*. The shell must know it exists and be able to spawn it — once,
+  or as a bounded fan-out (§7.2). It is a tool the shell reaches for, not a
+  background process.
+
+This refines the agnostic-runtime cold-agent model: a cold agent is spawned
+by a warm shell **or** by the dispatcher. Both are ephemeral, identity-less,
+single-task workers — only the trigger differs.
+
+**Tooling.** A cold agent is not toolless; each needs a scoped grant —
+
+| Agent | Tools |
+|---|---|
+| summarizer-agent | read a `chat_messages` span; write `sessions.summary` |
+| decision-expander-agent | read a marked span; write one `shell_decisions` row |
+| recall-agent | read `sessions`, `chat_messages`, `shell_decisions`; no writes |
+
+Grants are **data, not hardcode**: rows in the agnostic-runtime `tools`
+registry, assigned the way `shell_tools` assigns tools to shells
+(agnostic-runtime §4.2). The cold-agent tuple already carries a `[tool_id]`
+list (agnostic-runtime §4.6); these agents' lists are registry rows,
+MCP-capable (`tools.kind='mcp'`). The `tools` registry is therefore a
+dependency of this spec — see §9.
 
 ---
 
@@ -341,6 +386,7 @@ so gemma-vs-mistral output can be compared on real data before pinning.
 |---|---|---|
 | **`models`-table reconciliation** | Pinning references `models.model_id`. PR #19 (merged) created `models` as a *local-install inventory*; agnostic-runtime §4.1 defines `models` as the *runtime registry*. Same name, different purpose — they collide. | **Blocking.** Resolve first: rename PR #19's table to an install-inventory, keep `models` as the registry. |
 | Cold-agent executor | The summarizer and decision-expander are cold agents. | Delivered by agnostic-runtime Phase 3 (compaction). |
+| `tools` / `shell_tools` registry | The cold agents need scoped, data-driven tool grants (§3.2), MCP-capable. Without the registry the grants are hardcoded. | Delivered by agnostic-runtime §4.2 (Phase 1). |
 | `chat_messages` capture | The raw floor everything indexes into. | Delivered by the dispatcher (agnostic-runtime). |
 
 ---
