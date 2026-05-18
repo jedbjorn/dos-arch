@@ -37,7 +37,9 @@ browser-chat surface (conversation model, compaction, controls), the data-model
 extensions, auth, and the build sequence.
 
 Out of scope, treated as existing and canonical: the substrate's identity,
-memory, and render design (see `README.md`). The legacy `make launch` →
+memory, and render design (see `README.md`). The memory layer's redesign —
+capture, summarization, and recall — is its own peer spec,
+`docs/specs/memory-recall.md`. The legacy `make launch` →
 `CLAUDE.md` → Claude Code CLI boot path coexists during migration; unifying or
 retiring it is not specified here.
 
