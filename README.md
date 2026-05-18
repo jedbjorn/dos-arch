@@ -469,6 +469,7 @@ make restart                                  # bounce the UI
 make status                                   # pm2 ls
 make logs                                     # pm2 logs (Ctrl-C to detach)
 make health                                   # GET /health
+make dispatch                                  # run the browser-chat dispatcher (needs ANTHROPIC_API_KEY)
 make db-backup                                # snapshot shell_db.db -> ~/db_backups/dos-arch/<ts>.db
 make bootstrap                                # one-shot fresh-substrate setup; refuses if DB exists
 make migrate                                  # apply pending DB migrations (ARGS=--status to preview)
@@ -622,7 +623,7 @@ Both are thin wrappers around scripts in `shell_core/scripts/`.
 
 ```
 shell_core/
-  api/                    FastAPI substrate (routers: shells, users, skills, flags, admin)
+  api/                    FastAPI substrate — routers (shells, users, skills, flags, catalogue, admin) + services (boot_document, …)
   ui/                     SvelteKit substrate UI (routes: /shells, /flags, /plans)
   broker/                 Credential broker — egress proxy; injects auth so shell containers run credential-free
   schema.sql              Canonical SQLite schema (~34 tables + triggers + 2 catalogue views)
@@ -631,7 +632,8 @@ shell_core/
   scripts/run.py          Launcher: auth → picker → render CLAUDE.md → docker exec claude
   scripts/bootstrap.py    One-shot bootstrapper — `make bootstrap`
   scripts/db_init.py      Seeding library — seed_skills / ensure_forge / seed_sys_admin
-  scripts/dr_sync.py      Catalogue populator — wired sync targets + dispatcher
+  scripts/dr_sync.py      Catalogue populator — wired sync targets + dispatch
+  services/dispatch_live.py  Browser-chat dispatcher — the own-runtime agent loop (`make dispatch`)
   scripts/catalogue.py    `make catalogue` — print the catalogue grouped by ref_table
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
@@ -642,11 +644,11 @@ docker/
   broker/                 Dockerfile for the dos-broker image — the credential broker
   api/                    Dockerfile for the dos-api image — the substrate memory API
 install/                  Rootless-Docker host bootstrap — host-setup / rootless-setup / build-image / broker-up / api-up / cron-install / teardown (see install/README.md)
-docs/                     harness-spec.md — the harness specification
+docs/                     specs/ (agnostic-runtime, memory-recall) + model-tiers.md; archive/ holds the superseded harness-spec
 shells/<shortname>/       Per-shell working dirs (managed by run.py; CLAUDE.md regenerated each session; bind-mounted into the shell's container as /workspace)
 .env.example              Template for .env — broker secrets (ANTHROPIC_API_KEY, GITHUB_TOKEN); .env is gitignored
 ecosystem.config.cjs      pm2 process map (UI on 5173; API + broker run as containers)
-Makefile                  Entry points: install, bootstrap, db-sync, db-backup, catalogue, launch, up/down/health
+Makefile                  Entry points: install, bootstrap, db-sync, db-backup, catalogue, launch, dispatch, up/down/health
 ```
 
 ---
@@ -658,13 +660,13 @@ is the canonical schema. Tables, grouped by purpose:
 
 **Identity**
 - `users` — username, scrypt password hash + salt, theme prefs.
-- `shells` — one row per shell. Identity columns + `system_prompt` + `current_state` + `connections` + `is_shared` + `user_id` (owner).
+- `shells` — one row per shell. Identity columns + `additional_prompt` (operating protocol) + `boot_document` (materialized boot doc) + `current_state` + `connections` + `is_shared` + `user_id` (owner) + `browser_chat` (1 = served by the dispatcher).
 - `shell_identity_entries` — seed and L&S entries, one row each. Caps enforced by triggers.
 - `shell_decisions` — major decisions log. Append-only; supersede via `parent_decision_id`.
 
 **Sessions & narrative**
 - `shell_memory_archives` — one row per session. `full_narrative` accumulates throughout.
-- `chat_sessions` / `chat_messages` — UI-side chat history (separate from the per-shell session log).
+- `chat_sessions` / `chat_messages` — browser-chat conversations and their messages — the dispatcher's conversation store (separate from the per-shell `make launch` session log).
 
 **Skills**
 - `skills` — skill definitions: `name`, `description`, `category`, `content`. The content is the full procedure body, lazy-loaded.
@@ -704,7 +706,7 @@ Triggers worth knowing about:
 
 **A shell** is one row in the `shells` table plus rows it accumulates in
 sibling tables (identity entries, decisions, archives, flags, projects,
-skills). Its `system_prompt` carries the operating protocol; its identity
+skills). Its `additional_prompt` carries the operating protocol; its identity
 columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) are
 stable; its `current_state` is a 280-char rolling status; and its
 `shell_memory_archives` rows are the per-session narrative log.
@@ -724,6 +726,19 @@ The composed `CLAUDE.md` *is* the session's memory budget at boot. Nothing
 else is fetched. Subsequent reads (decision log, full skill content,
 connections) happen on demand via SQL during the session.
 
+**The dispatcher** (`make dispatch` → `shell_core/services/dispatch_live.py`)
+is a second runtime. Where the launcher `docker exec`s the Claude Code CLI
+into a container, the dispatcher *is* the harness: it polls `chat_messages`
+for inbound browser-chat messages, runs the model loop itself against the
+Anthropic API with `api_*` tools, and writes the reply back. A shell opts in
+with `browser_chat = 1`. Its context is the materialized **boot document**
+(`shells.boot_document`), fetched via `GET /shells/{id}/session-start` — the
+dispatcher's equivalent of the launcher's rendered `CLAUDE.md`. Alpha
+constraints: Anthropic-only (the model-agnostic provider layer is a later
+phase), and it calls the substrate API unauthenticated over localhost — so
+it needs `ANTHROPIC_API_KEY` in its environment and must not be reached from
+off the host. The `make launch` CLI path and the dispatcher coexist.
+
 **Forge** is a special shell — `shortname=forge`, `is_shared=1` — that
 exists in every substrate from cold-boot. Its only purpose is to spawn new
 shells. A user with zero owned shells lands in Forge automatically.
@@ -742,7 +757,7 @@ When `run.py` boots a shell, it queries the DB and writes a flat
 | Render fields (session_id, archive_id) | `## ACTIVE SESSION` |
 | Authenticated user (`user_id`, `username`) | `## OPERATOR` — who is driving this session; Forge keys off this when assigning newly-created shells |
 | `shells` identity columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) | `## IDENTITY` |
-| `shells.system_prompt` | `## SYSTEM PROMPT` (operating protocol — definitions, memory architecture, write protocol) |
+| `shells.additional_prompt` | `## SYSTEM PROMPT` (operating protocol — definitions, memory architecture, write protocol) |
 | `shells.current_state` | `## CURRENT STATE` (rolling 280-char status) |
 | `shell_identity_entries WHERE kind='seed'` | `## SEED` (row-per-entry, cap 10) |
 | `shell_identity_entries WHERE kind='lns'` | `## LESSONS & STANCES` (row-per-entry, cap 20) |
@@ -759,12 +774,21 @@ table names, where things live), fetch the **territory** on demand
 (skill content, decision rationale, connections markdown). Keeps the
 session-start budget flat and predictable.
 
+The browser-chat dispatcher composes the same identity by a different
+route. Instead of rendering a file, `compose_boot_document()` assembles the
+stable payload — operating protocol, identity, `current_state`, seed, L&S,
+skills — into `shells.boot_document`, a **materialized** column kept fresh
+by the API's identity-write paths (re-render on write, no DB triggers).
+`GET /shells/{id}/session-start` returns that column plus a small live tail
+(datetime, open-flag count, unread inbox); the dispatcher delivers the
+column as a cached system block and the tail as a fresh one each turn.
+
 ---
 
 ## How memory writes work
 
 Memory is written *as work happens*, not at session close. The shell's
-`system_prompt` documents the per-table protocol; the short version:
+`additional_prompt` documents the per-table protocol; the short version:
 
 | Surface | Write pattern |
 |---|---|
@@ -821,7 +845,7 @@ From inside Forge:
 1. The operator runs the `create_shell` skill.
 2. Forge interviews: display_name, shortname, mandate, role, owner.
 3. Forge INSERTs into `shells` (with `user_id` = the operator, `is_shared`
-   = 0, `system_prompt` from a chosen template) and INSERTs links into
+   = 0, `additional_prompt` from a chosen template) and INSERTs links into
    `shell_skills` for any baseline skills.
 4. Operator restarts (`make launch`) and picks the new shell.
 5. The new shell runs `bootstrap_interview` on first boot — interviews the
