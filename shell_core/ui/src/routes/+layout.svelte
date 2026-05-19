@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { theme, applyTheme, loadThemeFromApi } from '$lib/theme.js'
   import TopBar from '$lib/components/TopBar.svelte'
-  import ChatPanel from '$lib/components/ChatPanel.svelte'
+  import ChatSidebar from '$lib/components/ChatSidebar.svelte'
 
   onMount(() => {
     const t = $theme
@@ -14,12 +14,16 @@
   let { children } = $props()
 </script>
 
-<div class="min-h-screen bg-surface-1 text-text font-mono">
-  <div class="max-w-[1250px] mx-auto w-full">
-    <TopBar />
-    <main class="flex flex-col min-h-[calc(100vh-52px)]">
-      {@render children()}
-    </main>
+<!-- Split shell: page content on the left, the chat sidebar docked right.
+     dos-arch is a chat-first interface — the sidebar is always present. -->
+<div class="flex h-screen overflow-hidden bg-surface-1 text-text font-mono">
+  <div class="flex-1 overflow-y-auto">
+    <div class="max-w-[1250px] mx-auto w-full">
+      <TopBar />
+      <main class="flex flex-col min-h-[calc(100vh-52px)]">
+        {@render children()}
+      </main>
+    </div>
   </div>
-  <ChatPanel />
+  <ChatSidebar />
 </div>
