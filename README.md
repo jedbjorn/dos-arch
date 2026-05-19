@@ -634,7 +634,7 @@ shell_core/
   scripts/db_init.py      Seeding library — seed_skills / ensure_forge / seed_sys_admin
   scripts/dr_sync.py      Catalogue populator — wired sync targets + dispatch
   services/dispatch_live.py  Browser-chat dispatcher — the own-runtime agent loop (`make dispatch`)
-  services/providers/     ProviderAdapter seam — the model-agnostic boundary (Anthropic adapter shipped)
+  services/providers/     ProviderAdapter seam — the model-agnostic boundary (Anthropic + OpenAI adapters)
   scripts/catalogue.py    `make catalogue` — print the catalogue grouped by ref_table
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
@@ -741,10 +741,11 @@ call through a `ProviderAdapter` (`shell_core/services/providers/`) — with
 `api_*` tools, and writes the reply back. A shell opts in with
 `browser_chat = 1`. Its context is the materialized **boot document**
 (`shells.boot_document`), fetched via `GET /shells/{id}/session-start` — the
-dispatcher's equivalent of the launcher's rendered `CLAUDE.md`. Alpha
-constraints: one provider adapter shipped (Anthropic) — more land as the
-agnostic runtime widens — and it calls the substrate API unauthenticated
-over localhost — so
+dispatcher's equivalent of the launcher's rendered `CLAUDE.md`. The model is
+resolved per turn from the `models` registry — a conversation's
+`chat_sessions.model_id` selects it; the Anthropic and OpenAI adapters ship
+today, the Ollama (local) adapter is next. Alpha constraints: it calls the
+substrate API unauthenticated over localhost — so
 it needs `ANTHROPIC_API_KEY` in its environment and must not be reached from
 off the host. The `make launch` CLI path and the dispatcher coexist.
 
