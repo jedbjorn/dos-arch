@@ -2,14 +2,21 @@
 
 `get_adapter(provider)` is the single entry point: the dispatcher names a
 provider, gets an adapter, and speaks the normalized contract from there on.
+`assistant_message` / `tool_result_message` build the normalized next-turn
+messages — provider-blind, so they live with the contract, not the adapter.
 
-A0 ships one adapter (Anthropic). A1 onward registers more; provider
-resolution then flows from the `models` registry (`models.provider`) rather
-than a hard-coded string.
+A1 ships one adapter (Anthropic). A1's later PRs register more; provider
+resolution flows from the `models` registry (`models.provider`).
 """
 
 from .anthropic_adapter import AnthropicAdapter
-from .base import ParsedResponse, ProviderAdapter, ProviderError
+from .base import (
+    ParsedResponse,
+    ProviderAdapter,
+    ProviderError,
+    assistant_message,
+    tool_result_message,
+)
 
 _ADAPTERS: dict[str, type[ProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
@@ -33,4 +40,6 @@ __all__ = [
     "ProviderError",
     "AnthropicAdapter",
     "get_adapter",
+    "assistant_message",
+    "tool_result_message",
 ]
