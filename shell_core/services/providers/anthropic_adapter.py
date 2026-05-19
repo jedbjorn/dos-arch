@@ -25,9 +25,11 @@ class AnthropicAdapter(ProviderAdapter):
 
     provider = "anthropic"
 
-    def __init__(self) -> None:
+    def __init__(self, endpoint: str | None = None) -> None:
         # max_retries=5 — the SDK retries 429/5xx/overloaded internally;
-        # ProviderError is raised only once that budget is spent.
+        # ProviderError is raised only once that budget is spent. `endpoint`
+        # is accepted for interface uniformity (see get_adapter) and ignored;
+        # this adapter uses the Anthropic SDK default base URL.
         self._client = anthropic.Anthropic(max_retries=5)
 
     def format_request(

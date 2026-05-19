@@ -77,18 +77,20 @@ TOOL_SEMAPHORE = threading.Semaphore(TOOL_CONCURRENCY)
 # which is dispatcher-side, not part of a tool's stored definition.
 METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_delete": "DELETE"}
 
-# One cached adapter per provider — adapters are thread-safe and reused across
-# shell threads. Built lazily on first use of a provider.
-_ADAPTERS: dict[str, ProviderAdapter] = {}
+# One cached adapter per (provider, endpoint) — adapters are thread-safe and
+# reused across shell threads. Built lazily. Endpoint matters for `local`
+# (Ollama can be served from many hosts); for cloud providers it is None.
+_ADAPTERS: dict[tuple[str, str | None], ProviderAdapter] = {}
 _ADAPTERS_LOCK = threading.Lock()
 
 
-def adapter_for(provider: str) -> ProviderAdapter:
+def adapter_for(provider: str, endpoint: str | None = None) -> ProviderAdapter:
+    key = (provider, endpoint)
     with _ADAPTERS_LOCK:
-        a = _ADAPTERS.get(provider)
+        a = _ADAPTERS.get(key)
         if a is None:
-            a = get_adapter(provider)
-            _ADAPTERS[provider] = a
+            a = get_adapter(provider, endpoint=endpoint)
+            _ADAPTERS[key] = a
         return a
 
 
@@ -115,26 +117,27 @@ def load_shell(con: sqlite3.Connection, shell_id: int):
     ).fetchone()
 
 
-def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str]:
-    """(model_name, provider) for this turn. A session-pinned model
+def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str, str | None]:
+    """(model_name, provider, endpoint) for this turn. A session-pinned model
     (chat_sessions.model_id) wins; otherwise the DISPATCH_MODEL default,
-    resolved through the registry. If the default is not registered, the
-    provider is assumed to be Anthropic."""
+    resolved through the registry. `endpoint` is the per-model host (NULL
+    for cloud providers using the SDK default; set for local Ollama). If
+    the default is not registered, the provider is assumed to be Anthropic."""
     if chat_session_id:
         row = con.execute(
-            "SELECT m.name AS name, m.provider AS provider "
+            "SELECT m.name AS name, m.provider AS provider, m.endpoint AS endpoint "
             "FROM chat_sessions cs JOIN models m ON m.model_id = cs.model_id "
             "WHERE cs.chat_session_id=?",
             (chat_session_id,),
         ).fetchone()
         if row:
-            return row["name"], row["provider"]
+            return row["name"], row["provider"], row["endpoint"]
     row = con.execute(
-        "SELECT name, provider FROM models WHERE name=?", (MODEL,)
+        "SELECT name, provider, endpoint FROM models WHERE name=?", (MODEL,)
     ).fetchone()
     if row:
-        return row["name"], row["provider"]
-    return MODEL, "anthropic"
+        return row["name"], row["provider"], row["endpoint"]
+    return MODEL, "anthropic", None
 
 
 def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
@@ -308,11 +311,12 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
 
     # Resolve the model + provider for this conversation, then the adapter and
     # the shell's tool set. Anything provider-specific is now behind `adapter`.
-    model_name, provider = resolve_model(con, msg["chat_session_id"])
-    adapter = adapter_for(provider)
+    model_name, provider, endpoint = resolve_model(con, msg["chat_session_id"])
+    adapter = adapter_for(provider, endpoint)
     tools   = load_tools(con, shell["shell_id"])
+    ep = f" endpoint={endpoint}" if endpoint else ""
     print(f"[{shell['display_name']}] msg={msg['message_id']} model={model_name} "
-          f"provider={provider} tools={len(tools)}", flush=True)
+          f"provider={provider}{ep} tools={len(tools)}", flush=True)
 
     ss = fetch_session_start(shell["shell_id"])
     if "error" in ss:

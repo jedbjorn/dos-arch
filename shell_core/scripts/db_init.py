@@ -98,16 +98,21 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
 # CC-51. context_window / max_output / cost_* stay NULL until their consumers
 # (compaction CC-52/53, cost accounting) need them — A1 reads only
 # name / provider / tool_dialect / auth_ref / status.
-#   (name, display_name, provider, auth_ref, tool_dialect)
+#   (name, display_name, provider, auth_ref, tool_dialect, locality, endpoint)
 # Model names verified live against each provider's models.list() — keep them
 # current; a stale name is a hard 404 at call time.
+# Local models: `endpoint` points at the Ollama OpenAI-compatible server; the
+# OllamaAdapter uses tool_dialect='openai' for tool-capable local models. The
+# `qwen2.5:3b` row is a starter placeholder — adjust the endpoint to wherever
+# Ollama actually runs (the dev box has no Ollama; verification points elsewhere).
 _MODELS = [
-    ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
-    ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
-    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
-    ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai"),
-    ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai"),
-    ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai"),
+    ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
+    ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
+    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
+    ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
+    ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
+    ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
+    ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434/v1"),
 ]
 
 # The api_* tool surface — get/post/patch/delete against the system's own API
@@ -148,14 +153,14 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
     """INSERT every registry model not already present (matched by name).
     Returns the names newly seeded. Caller commits."""
     seeded: list[str] = []
-    for name, display, provider, auth_ref, dialect in _MODELS:
+    for name, display, provider, auth_ref, dialect, locality, endpoint in _MODELS:
         if con.execute("SELECT 1 FROM models WHERE name=?", (name,)).fetchone():
             continue
         con.execute(
             "INSERT INTO models (name, display_name, provider, auth_ref, "
-            "tool_dialect, locality, status) "
-            "VALUES (?, ?, ?, ?, ?, 'remote', 'active')",
-            (name, display, provider, auth_ref, dialect),
+            "tool_dialect, locality, endpoint, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+            (name, display, provider, auth_ref, dialect, locality, endpoint),
         )
         seeded.append(name)
     return seeded

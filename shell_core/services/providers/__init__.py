@@ -1,13 +1,15 @@
 """providers — the `ProviderAdapter` seam (agnostic-runtime §3.4).
 
-`get_adapter(provider)` is the single entry point: the dispatcher names a
-provider, gets an adapter, and speaks the normalized contract from there on.
-`assistant_message` / `tool_result_message` build the normalized next-turn
-messages — provider-blind, so they live with the contract, not the adapter.
+`get_adapter(provider, **kwargs)` is the single entry point: the dispatcher
+names a provider, gets an adapter, and speaks the normalized contract from
+there on. `assistant_message` / `tool_result_message` build the normalized
+next-turn messages — provider-blind, so they live with the contract, not
+the adapter.
 
-A1 ships the Anthropic and OpenAI adapters; the Ollama (local) adapter lands
-with CC-51. Provider resolution flows from the `models` registry
-(`models.provider`).
+A1 ships Anthropic + OpenAI. CC-51 adds Ollama (the `local` provider) via
+the OpenAI-compatible endpoint, reusing the OpenAI dialect for tool-capable
+local models. Provider resolution flows from the `models` registry
+(`models.provider` + `models.endpoint`).
 """
 
 from .anthropic_adapter import AnthropicAdapter
@@ -18,23 +20,28 @@ from .base import (
     assistant_message,
     tool_result_message,
 )
+from .ollama_adapter import OllamaAdapter
 from .openai_adapter import OpenAIAdapter
 
 _ADAPTERS: dict[str, type[ProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
-    "openai": OpenAIAdapter,
+    "openai":    OpenAIAdapter,
+    "local":     OllamaAdapter,
 }
 
 
-def get_adapter(provider: str) -> ProviderAdapter:
-    """Return a fresh adapter for `provider`. Raises `ValueError` if unknown."""
+def get_adapter(provider: str, **kwargs) -> ProviderAdapter:
+    """Return a fresh adapter for `provider`. `endpoint=...` is honored by
+    adapters that vary by host (currently only `local`); the cloud adapters
+    accept it for interface uniformity and ignore it."""
     try:
-        return _ADAPTERS[provider]()
+        cls = _ADAPTERS[provider]
     except KeyError:
         known = ", ".join(sorted(_ADAPTERS)) or "(none)"
         raise ValueError(
             f"no ProviderAdapter for provider '{provider}' — known: {known}"
         ) from None
+    return cls(**kwargs)
 
 
 __all__ = [
@@ -43,6 +50,7 @@ __all__ = [
     "ProviderError",
     "AnthropicAdapter",
     "OpenAIAdapter",
+    "OllamaAdapter",
     "get_adapter",
     "assistant_message",
     "tool_result_message",

@@ -37,9 +37,11 @@ class OpenAIAdapter(ProviderAdapter):
 
     provider = "openai"
 
-    def __init__(self) -> None:
+    def __init__(self, endpoint: str | None = None) -> None:
         # max_retries=5 — the SDK retries 429/5xx internally; ProviderError is
-        # raised only once that budget is spent.
+        # raised only once that budget is spent. `endpoint` is accepted for
+        # interface uniformity (see get_adapter) and ignored here; the Ollama
+        # subclass uses it to point the same SDK at a local server.
         self._client = openai.OpenAI(max_retries=5)
 
     @staticmethod

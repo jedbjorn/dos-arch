@@ -293,6 +293,32 @@ models](install/README.md#local-models)** has the full walkthrough;
 **[docs/model-tiers.md](docs/model-tiers.md)** breaks down hardware and
 model picks per VRAM tier (8 / 12 / 24 / 32 / 48 / 128 GB).
 
+**For the browser-chat sidebar (CC-50 agnostic runtime).** The chat panel's
+"Available Models — Local" column reads from a different table: the
+`models` registry, which carries `provider` / `tool_dialect` / `endpoint`.
+A starter row for `qwen2.5:3b` ships with `endpoint=http://localhost:11434/v1`
+and `tool_dialect=openai` (Ollama's OpenAI-compatible `/v1`). If you pull a
+different tool-capable model, or run Ollama on a different host, update
+the registry directly — or override at runtime with the `OLLAMA_API_BASE`
+environment variable:
+
+```bash
+# Pull a tool-capable local model (browse: https://ollama.com/library)
+ollama pull qwen2.5:3b           # ~2 GB,  3B params (recommended starter)
+# ollama pull qwen2.5:1.5b       # ~1 GB,  comfortable on tight RAM
+# ollama pull qwen2.5-coder:7b   # ~5 GB,  SWE-tuned
+
+# Point dos-arch at a different model / host
+sqlite3 shell_core/shell_db.db \
+  "UPDATE models SET name='<your-ollama-tag>', endpoint='http://<host>:11434/v1' WHERE provider='local'"
+# or env-override the endpoint without touching the DB:
+export OLLAMA_API_BASE=http://your-ollama-host:11434/v1
+```
+
+Ollama itself and the specific model tags are **user-managed**
+dependencies — dos-arch does not pull them for you. Pick a model that
+supports tool calls (the Ollama library tags these "Tools").
+
 ### Troubleshooting
 
 | Symptom | Cause → fix |
