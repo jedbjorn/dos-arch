@@ -292,6 +292,20 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
         history = [{"role": "user", "content": msg["body"]}]
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
 
+    # Stacked inbound: if this message's session history already ends with an
+    # assistant turn, a reply landed after it — it was answered together with
+    # an earlier message in the same session (the model sees the whole window).
+    # Mark it read and skip; re-answering would hand the model a conversation
+    # ending on its own turn, which providers reject (e.g. Anthropic 400,
+    # "conversation must end with a user message").
+    if messages and messages[-1]["role"] == "assistant":
+        con.execute("UPDATE chat_messages SET read_by_shell=1 WHERE message_id=?",
+                    (msg["message_id"],))
+        con.commit()
+        print(f"[{shell['display_name']}] msg={msg['message_id']} already covered "
+              f"by a later reply — skipping", flush=True)
+        return
+
     # Resolve the model + provider for this conversation, then the adapter and
     # the shell's tool set. Anything provider-specific is now behind `adapter`.
     model_name, provider = resolve_model(con, msg["chat_session_id"])
