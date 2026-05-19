@@ -2,13 +2,17 @@
 """dispatch_live.py — the browser-chat dispatcher.
 
 Ported from ExpLive (designs_os). Polls `chat_messages` for unread inbound
-rows, runs a multi-turn Anthropic Messages loop with `api_*` tools, and posts
-the final assistant text via `POST /shells/{id}/chat/reply`.
+rows, runs a multi-turn tool loop against the model, and posts the final
+assistant text via `POST /shells/{id}/chat/reply`.
 
-dos-arch (CC-47 port, CC-49 adapter seam; decision #108):
+dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
   - Provider-agnostic loop — every model call goes through a `ProviderAdapter`
     (agnostic-runtime §3.4, see `providers/`); this module names no provider.
-    A0 ships the Anthropic adapter; A1 onward adds the rest.
+  - Model is resolved per turn from the `models` registry: a conversation's
+    `chat_sessions.model_id` selects the model and provider; an unset session
+    falls back to the `DISPATCH_MODEL` default. The provider's adapter follows.
+  - Tools are loaded per shell from `tools` / `shell_tools` (the join is the
+    shell's tool set), not a hard-coded list.
   - No auth — dos-arch's API is open on localhost in alpha; the `X-API-Key`
     machinery is not ported. Required before any off-localhost exposure (CC-55).
   - Tokens only, no cost — `chat_messages.tokens` carries the per-turn total;
@@ -40,14 +44,20 @@ from pathlib import Path
 
 # `providers/` is a sibling package; the script's own directory is on
 # sys.path[0], so the bare import resolves when run as `python3 dispatch_live.py`.
-from providers import ProviderAdapter, ProviderError, get_adapter
+from providers import (
+    ProviderAdapter,
+    ProviderError,
+    assistant_message,
+    get_adapter,
+    tool_result_message,
+)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 _REPO = Path(__file__).resolve().parents[2]
 DB_PATH       = os.environ.get("DISPATCH_DB_PATH", str(_REPO / "shell_core" / "shell_db.db"))
 API_BASE      = os.environ.get("DISPATCH_API_BASE", "http://127.0.0.1:8000").rstrip("/")
-MODEL         = os.environ.get("DISPATCH_MODEL", "claude-sonnet-4-6")
+MODEL         = os.environ.get("DISPATCH_MODEL", "claude-sonnet-4-6")  # fallback default
 LOCKFILE_PATH = str(Path(__file__).resolve().parent / ".dispatch_live.lock")
 
 POLL_MS                = 250
@@ -62,57 +72,24 @@ STUCK_SESSION_SEC      = 300         # warn if a session is in-flight this long
 # tool iterations could otherwise saturate our own API.
 TOOL_SEMAPHORE = threading.Semaphore(TOOL_CONCURRENCY)
 
-TOOLS = [
-    {
-        "name": "api_get",
-        "description": f"GET request to the dos-arch API at {API_BASE}. Path may include a query string. Returns the response body as text.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": 'API path including query, must start with /. e.g. "/shells/2/decisions"'},
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "api_post",
-        "description": "POST request to the dos-arch API. Body sent as JSON.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "body": {"type": "object", "description": "JSON body."},
-            },
-            "required": ["path", "body"],
-        },
-    },
-    {
-        "name": "api_patch",
-        "description": "PATCH request to the dos-arch API. Body sent as JSON.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "body": {"type": "object"},
-            },
-            "required": ["path", "body"],
-        },
-    },
-    {
-        "name": "api_delete",
-        "description": "DELETE request to the dos-arch API. Optional JSON body.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "body": {"type": "object", "description": "Optional JSON body."},
-            },
-            "required": ["path"],
-        },
-    },
-]
-
+# The api_* tools are data now — loaded per shell from `tools` / `shell_tools`
+# (see load_tools). METHOD_MAP stays: it is the executor's name->verb mapping,
+# which is dispatcher-side, not part of a tool's stored definition.
 METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_delete": "DELETE"}
+
+# One cached adapter per provider — adapters are thread-safe and reused across
+# shell threads. Built lazily on first use of a provider.
+_ADAPTERS: dict[str, ProviderAdapter] = {}
+_ADAPTERS_LOCK = threading.Lock()
+
+
+def adapter_for(provider: str) -> ProviderAdapter:
+    with _ADAPTERS_LOCK:
+        a = _ADAPTERS.get(provider)
+        if a is None:
+            a = get_adapter(provider)
+            _ADAPTERS[provider] = a
+        return a
 
 
 # ── DB ──────────────────────────────────────────────────────────────────────--
@@ -136,6 +113,48 @@ def load_shell(con: sqlite3.Connection, shell_id: int):
     return con.execute(
         "SELECT shell_id, display_name FROM shells WHERE shell_id=?", (shell_id,)
     ).fetchone()
+
+
+def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str]:
+    """(model_name, provider) for this turn. A session-pinned model
+    (chat_sessions.model_id) wins; otherwise the DISPATCH_MODEL default,
+    resolved through the registry. If the default is not registered, the
+    provider is assumed to be Anthropic."""
+    if chat_session_id:
+        row = con.execute(
+            "SELECT m.name AS name, m.provider AS provider "
+            "FROM chat_sessions cs JOIN models m ON m.model_id = cs.model_id "
+            "WHERE cs.chat_session_id=?",
+            (chat_session_id,),
+        ).fetchone()
+        if row:
+            return row["name"], row["provider"]
+    row = con.execute(
+        "SELECT name, provider FROM models WHERE name=?", (MODEL,)
+    ).fetchone()
+    if row:
+        return row["name"], row["provider"]
+    return MODEL, "anthropic"
+
+
+def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
+    """The shell's tool set — the `tools` x `shell_tools` join, active only —
+    as normalized tool dicts {name, description, spec}. `spec` is the parsed
+    JSON-Schema parameter object; each adapter projects it onto its dialect."""
+    rows = con.execute(
+        "SELECT t.name AS name, t.description AS description, t.spec AS spec "
+        "FROM tools t JOIN shell_tools st ON st.tool_id = t.tool_id "
+        "WHERE st.shell_id=? AND t.status='active' ORDER BY t.tool_id",
+        (shell_id,),
+    ).fetchall()
+    return [
+        {
+            "name": r["name"],
+            "description": r["description"],
+            "spec": json.loads(r["spec"]) if r["spec"] else {},
+        }
+        for r in rows
+    ]
 
 
 def load_user_history_window(con: sqlite3.Connection, user_id) -> int:
@@ -266,12 +285,20 @@ def render_dynamic(dyn: dict) -> str:
 
 # ── The agent loop ────────────────────────────────────────────────────────────
 
-def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, msg) -> None:
+def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     window  = load_user_history_window(con, msg["user_id"])
     history = load_history(con, msg["chat_session_id"], window)
     if not history:
         history = [{"role": "user", "content": msg["body"]}]
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
+
+    # Resolve the model + provider for this conversation, then the adapter and
+    # the shell's tool set. Anything provider-specific is now behind `adapter`.
+    model_name, provider = resolve_model(con, msg["chat_session_id"])
+    adapter = adapter_for(provider)
+    tools   = load_tools(con, shell["shell_id"])
+    print(f"[{shell['display_name']}] msg={msg['message_id']} model={model_name} "
+          f"provider={provider} tools={len(tools)}", flush=True)
 
     ss = fetch_session_start(shell["shell_id"])
     if "error" in ss:
@@ -281,10 +308,11 @@ def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, ms
                    msg["message_id"], msg["chat_session_id"], msg["user_id"], 0)
         return
 
-    # Block 1-2 (materialized boot document) caches; Block 3 (live tail) does not.
+    # Normalized system blocks: Block 1-2 (materialized boot document) is
+    # cacheable; Block 3 (the live tail) is not. The adapter projects `cache`.
     system_blocks = [
-        {"type": "text", "text": ss["boot_document"], "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": render_dynamic(ss.get("dynamic", {}))},
+        {"text": ss["boot_document"], "cache": True},
+        {"text": render_dynamic(ss.get("dynamic", {})), "cache": False},
     ]
 
     total_tokens = 0
@@ -292,7 +320,7 @@ def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, ms
 
     try:
         for iteration in range(MAX_TOOL_ITER):
-            request  = adapter.format_request(system_blocks, TOOLS, messages, MODEL, MAX_TOKENS)
+            request  = adapter.format_request(system_blocks, tools, messages, model_name, MAX_TOKENS)
             response = adapter.call(request)
             parsed   = adapter.parse_response(response)
             u = parsed.usage
@@ -301,7 +329,7 @@ def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, ms
                   f"in={u.get('input_tokens')} out={u.get('output_tokens')}", flush=True)
 
             if parsed.stop_reason == "tool_use":
-                messages.append(adapter.serialize_assistant(response))
+                messages.append(assistant_message(parsed))
                 tool_results = []
                 for tc in parsed.tool_calls:
                     result, is_error = execute_tool(tc["name"], tc["input"])
@@ -309,7 +337,7 @@ def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, ms
                     short_out = result[:140].replace("\n", " ")
                     print(f"  tool={tc['name']} in={short_in} err={is_error} out={short_out}", flush=True)
                     tool_results.append({"id": tc["id"], "content": result, "is_error": is_error})
-                messages.append(adapter.serialize_tool_results(tool_results))
+                messages.append(tool_result_message(tool_results))
                 continue
 
             # end_turn / stop_sequence / max_tokens — capture final text.
@@ -340,7 +368,7 @@ def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, ms
 
 # ── Concurrency: thread per shell, pool per shell, lock per session ───────────-
 
-def _run_turn(adapter, shell, msg, in_flight, in_flight_started, in_flight_warned, lock):
+def _run_turn(shell, msg, in_flight, in_flight_started, in_flight_warned, lock):
     """Pool worker: process one message for one session. Opens its own DB
     connection. Releases the session from in_flight only AFTER the source is
     marked read — otherwise the parent thread could re-pick the same row."""
@@ -356,7 +384,7 @@ def _run_turn(adapter, shell, msg, in_flight, in_flight_started, in_flight_warne
             )
             con.commit()
             try:
-                process_inbound(adapter, con, shell, msg)
+                process_inbound(con, shell, msg)
             except Exception as e:
                 print(f"ERROR shell={shell_id} msg={msg['message_id']}: {e}",
                       file=sys.stderr, flush=True)
@@ -390,9 +418,8 @@ def shell_loop(shell_id: int):
     A sessionless inbound message (chat_session_id IS NULL) keys on None;
     such messages serialize against each other but that is acceptable —
     sessionless chat is the test/edge path, not the product path."""
-    # A0: provider is hard-coded. A1 resolves it per-shell/per-model from the
-    # `models` registry (`models.provider`).
-    adapter = get_adapter("anthropic")
+    # The adapter is resolved per turn inside process_inbound (model -> provider
+    # -> adapter_for), so the shell thread holds no provider state.
     pool = concurrent.futures.ThreadPoolExecutor(
         max_workers=POOL_WORKERS, thread_name_prefix=f"shell-{shell_id}-w",
     )
@@ -436,7 +463,7 @@ def shell_loop(shell_id: int):
                         continue
                     in_flight.add(sid)
                     in_flight_started[sid] = time.time()
-                    pool.submit(_run_turn, adapter, shell, msg,
+                    pool.submit(_run_turn, shell, msg,
                                 in_flight, in_flight_started, in_flight_warned, lock)
         except Exception as e:
             print(f"shell-{shell_id} loop error: {e}", file=sys.stderr, flush=True)

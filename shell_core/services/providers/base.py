@@ -1,12 +1,12 @@
 """base.py — the `ProviderAdapter` seam (agnostic-runtime §3.4).
 
-The dispatcher thinks in one normalized vocabulary — "system blocks, a tool
-list, a message list, a tool-use loop until end_turn." Each adapter projects
+The dispatcher thinks in one normalized vocabulary; each adapter projects
 that vocabulary onto its provider's wire format. Every provider-specific
-import, type, and exception lives behind this interface; the dispatcher loop
-never names a provider.
+import, type, and exception lives behind this interface — the dispatcher
+loop never names a provider.
 
-The normalized contract:
+The normalized contract — `format_request` projects it onto a native
+request, `parse_response` lifts a native response back into it:
 
     format_request(system_blocks, tools, messages, model, max_tokens)
         -> native request          (whatever `call` consumes)
@@ -17,16 +17,34 @@ The normalized contract:
     cost(usage, model)
         -> float (USD)
 
-Plus two message-shaping helpers — the assistant turn and the tool-result
-turn must be echoed back in the provider's own wire format, so the adapter
-owns their construction too:
+That is the whole interface. Building the *next* turn's messages from a
+`ParsedResponse` is provider-blind — `assistant_message` and
+`tool_result_message` below do it generically — so it is not the adapter's
+job.
 
-    serialize_assistant(response)   -> a message dict to append to `messages`
-    serialize_tool_results(results) -> a message dict to append to `messages`
+── The normalized format ──────────────────────────────────────────────────
 
-`messages` stays in the provider's native shape between turns; `format_request`
-is where it is (re)projected. With one adapter (A0) that projection is an
-identity; A1 onward it does real translation.
+System block — one cacheable-or-not span of system text:
+    {"text": str, "cache": bool}
+
+Message — `messages` is a list of these:
+    {"role": "user" | "assistant", "content": str | [block, ...]}
+A plain string is shorthand for a single text block.
+
+Content block — one of:
+    {"type": "text",        "text": str}
+    {"type": "tool_use",    "id": str, "name": str, "input": dict}
+    {"type": "tool_result", "tool_use_id": str, "content": str,
+                            "is_error": bool}   # is_error omitted when false
+
+Tool — `tools` is a list of these (`spec` is a JSON-Schema object):
+    {"name": str, "description": str, "spec": dict}
+
+The block shape is Anthropic's content-block model — a deliberate choice of
+reference dialect, expressive enough to carry every provider. The Anthropic
+adapter's message translation is therefore an identity; non-reference
+adapters (OpenAI, Gemini, local) do real restructuring in `format_request`
+and `parse_response`.
 
 Normalized `stop_reason` vocabulary — every adapter maps its provider's
 terminal reasons onto this set:
@@ -100,13 +118,39 @@ class ProviderAdapter(ABC):
     def cost(self, usage: dict, model: str) -> float:
         """USD cost for one call's `usage` on `model`. 0.0 for local models."""
 
-    @abstractmethod
-    def serialize_assistant(self, response) -> dict:
-        """The assistant turn (text + tool_use), as a `messages` entry."""
 
-    @abstractmethod
-    def serialize_tool_results(self, results: list[dict]) -> dict:
-        """The tool-result turn, as a `messages` entry.
+# ── Normalized message construction (provider-blind) ──────────────────────────
 
-        `results` is [{"id": str, "content": str, "is_error": bool}].
-        """
+def assistant_message(parsed: ParsedResponse) -> dict:
+    """The assistant turn — text then tool_use blocks — as a `messages` entry.
+
+    Built from the normalized `ParsedResponse`, so it is provider-blind: the
+    same code serves every adapter. Only ever called on a `tool_use` turn, so
+    `parsed.tool_calls` is non-empty and `content` is never empty.
+    """
+    content: list[dict] = []
+    if parsed.text:
+        content.append({"type": "text", "text": parsed.text})
+    for tc in parsed.tool_calls:
+        content.append(
+            {"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["input"]}
+        )
+    return {"role": "assistant", "content": content}
+
+
+def tool_result_message(results: list[dict]) -> dict:
+    """The tool-result turn as a `messages` entry.
+
+    `results` is [{"id": str, "content": str, "is_error": bool}].
+    """
+    content: list[dict] = []
+    for r in results:
+        block = {
+            "type": "tool_result",
+            "tool_use_id": r["id"],
+            "content": r["content"],
+        }
+        if r.get("is_error"):
+            block["is_error"] = True
+        content.append(block)
+    return {"role": "user", "content": content}
