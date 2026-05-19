@@ -671,7 +671,7 @@ def get_shell_chat(shell_id: int, pending: bool = False, con = Depends(get_db)):
         ).fetchall()
     else:
         rows = con.execute(
-            """SELECT message_id, direction, user_id, body, sent_at, read_by_shell, tokens
+            """SELECT message_id, direction, user_id, body, sent_at, read_by_shell, tokens, chat_session_id
                  FROM chat_messages WHERE shell_id=? AND is_deleted=0
                 ORDER BY sent_at ASC""",
             (shell_id,)
