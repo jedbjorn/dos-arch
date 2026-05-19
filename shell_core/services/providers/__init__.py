@@ -5,8 +5,9 @@ provider, gets an adapter, and speaks the normalized contract from there on.
 `assistant_message` / `tool_result_message` build the normalized next-turn
 messages — provider-blind, so they live with the contract, not the adapter.
 
-A1 ships one adapter (Anthropic). A1's later PRs register more; provider
-resolution flows from the `models` registry (`models.provider`).
+A1 ships the Anthropic and OpenAI adapters; the Ollama (local) adapter lands
+with CC-51. Provider resolution flows from the `models` registry
+(`models.provider`).
 """
 
 from .anthropic_adapter import AnthropicAdapter
@@ -17,9 +18,11 @@ from .base import (
     assistant_message,
     tool_result_message,
 )
+from .openai_adapter import OpenAIAdapter
 
 _ADAPTERS: dict[str, type[ProviderAdapter]] = {
     "anthropic": AnthropicAdapter,
+    "openai": OpenAIAdapter,
 }
 
 
@@ -39,6 +42,7 @@ __all__ = [
     "ProviderAdapter",
     "ProviderError",
     "AnthropicAdapter",
+    "OpenAIAdapter",
     "get_adapter",
     "assistant_message",
     "tool_result_message",
