@@ -352,8 +352,8 @@
 
 <style>
   .chat-sidebar {
-    width: 33vw;
-    min-width: 460px;
+    width: 41.25vw;   /* 33vw + 25% */
+    min-width: 575px;
     flex-shrink: 0;
     height: 100vh;
     display: flex;
