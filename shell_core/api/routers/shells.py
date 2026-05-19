@@ -683,23 +683,37 @@ def get_shell_chat(shell_id: int, pending: bool = False, con = Depends(get_db)):
 def get_chat_session(shell_id: int, request: Request, con = Depends(get_db)):
     user_id = getattr(request.state, 'user_id', 1)
     row = con.execute(
-        "SELECT chat_session_id, started_at, last_active, is_active, total_tokens FROM chat_sessions WHERE shell_id=? AND user_id=? AND is_active=1 ORDER BY last_active DESC LIMIT 1",
+        "SELECT chat_session_id, started_at, last_active, is_active, total_tokens, model_id FROM chat_sessions WHERE shell_id=? AND user_id=? AND is_active=1 ORDER BY last_active DESC LIMIT 1",
         (shell_id, user_id)
     ).fetchone()
     return dict(row) if row else None
 
 
+def _check_model(con, model_id):
+    """Reject an unknown or inactive model_id. None passes — the dispatcher
+    falls back to its default for a session with no model pinned."""
+    if model_id is not None and not con.execute(
+        "SELECT 1 FROM models WHERE model_id=? AND status='active'", (model_id,)
+    ).fetchone():
+        raise HTTPException(422, "unknown or inactive model_id")
+
+
 @router.post("/shells/{shell_id}/chat/session", summary="Create a new chat session for this shell + user")
-def create_chat_session(shell_id: int, request: Request, con = Depends(get_db)):
+def create_chat_session(shell_id: int, request: Request, body: dict | None = None, con = Depends(get_db)):
     user_id = getattr(request.state, 'user_id', 1)
     session_id = str(uuid.uuid4())
     if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
+    model_id = (body or {}).get("model_id")
+    _check_model(con, model_id)
     con.execute("UPDATE chat_sessions SET is_active=0 WHERE shell_id=? AND user_id=?", (shell_id, user_id))
-    con.execute("INSERT INTO chat_sessions (chat_session_id, shell_id, user_id) VALUES (?,?,?)", (session_id, shell_id, user_id))
+    con.execute(
+        "INSERT INTO chat_sessions (chat_session_id, shell_id, user_id, model_id) VALUES (?,?,?,?)",
+        (session_id, shell_id, user_id, model_id),
+    )
     con.commit()
     row = dict(con.execute(
-        "SELECT chat_session_id, started_at, last_active, is_active FROM chat_sessions WHERE chat_session_id=?",
+        "SELECT chat_session_id, started_at, last_active, is_active, model_id FROM chat_sessions WHERE chat_session_id=?",
         (session_id,)
     ).fetchone())
     return row
@@ -727,11 +741,14 @@ def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get
         fields.append("total_tokens=?"); params.append(body["total_tokens"])
     if "token_warning_sent" in body:
         fields.append("token_warning_sent=?"); params.append(1 if body["token_warning_sent"] else 0)
+    if "model_id" in body:
+        _check_model(con, body["model_id"])
+        fields.append("model_id=?"); params.append(body["model_id"])
     if fields:
         params += [session_id, shell_id]
         con.execute(f"UPDATE chat_sessions SET last_active=CURRENT_TIMESTAMP,{','.join(fields)} WHERE chat_session_id=? AND shell_id=?", params)
         con.commit()
-    row = dict(con.execute("SELECT chat_session_id, total_tokens, token_warning_sent, is_active FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone())
+    row = dict(con.execute("SELECT chat_session_id, total_tokens, token_warning_sent, is_active, model_id FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone())
     return row
 
 
