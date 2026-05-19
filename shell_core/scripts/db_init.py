@@ -99,11 +99,15 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
 # (compaction CC-52/53, cost accounting) need them — A1 reads only
 # name / provider / tool_dialect / auth_ref / status.
 #   (name, display_name, provider, auth_ref, tool_dialect)
+# Model names verified live against each provider's models.list() — keep them
+# current; a stale name is a hard 404 at call time.
 _MODELS = [
     ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
     ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
     ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
-    ("gpt-5",                     "GPT-5",             "openai",    "OPENAI_API_KEY",    "openai"),
+    ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai"),
+    ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai"),
+    ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai"),
 ]
 
 # The api_* tool surface — get/post/patch/delete against the system's own API
