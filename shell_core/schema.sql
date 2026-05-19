@@ -676,8 +676,11 @@ FROM walk;
 -- A live, programmatically-synced picture of the machines the substrate runs
 -- on and the local LLM models installed on them. Same philosophy as the dr_*
 -- catalogue: ground truth, refreshed from real state, never hand-maintained.
---   user_hardware  <- collect_hardware.py  (host probe)
---   models         <- model_sync.py        (`ollama list` / `ollama show`)
+--   user_hardware     <- collect_hardware.py  (host probe)
+--   installed_models  <- model_sync.py        (`ollama list` / `ollama show`)
+--
+-- `installed_models` is the per-host install inventory — distinct from the
+-- agnostic-runtime `models` registry (every model the system *can* use).
 
 CREATE TABLE IF NOT EXISTS user_hardware (
     hardware_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -700,8 +703,8 @@ CREATE TABLE IF NOT EXISTS user_hardware (
 
 CREATE INDEX IF NOT EXISTS idx_user_hardware_user ON user_hardware (user_id);
 
-CREATE TABLE IF NOT EXISTS models (
-    model_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+CREATE TABLE IF NOT EXISTS installed_models (
+    install_id        INTEGER PRIMARY KEY AUTOINCREMENT,
     hardware_id       INTEGER REFERENCES user_hardware(hardware_id),
     name              TEXT    NOT NULL,       -- runner tag, e.g. qwen2.5-coder:7b
     runner            TEXT    NOT NULL DEFAULT 'ollama',
@@ -721,7 +724,7 @@ CREATE TABLE IF NOT EXISTS models (
     UNIQUE (hardware_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_models_hardware ON models (hardware_id);
+CREATE INDEX IF NOT EXISTS idx_installed_models_hardware ON installed_models (hardware_id);
 
 -- ── migration tracking ───────────────────────────────────────────────────────
 -- One row per applied migration file (see shell_core/migrations/*.sql).

@@ -285,7 +285,7 @@ record what is installed as live DB state:
 ```bash
 ollama pull qwen2.5-coder:7b      # browse the library: https://ollama.com/library
 make collect-hardware             # probe this host       -> user_hardware
-make sync-models                  # read Ollama's set      -> models
+make sync-models                  # read Ollama's set      -> installed_models
 ```
 
 Which models to pull depends on VRAM. **[install/README.md → Local

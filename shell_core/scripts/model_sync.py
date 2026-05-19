@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""model_sync — sync the models table from Ollama's actual installed set.
+"""model_sync — sync the installed_models table from Ollama's installed set.
 
 Ground truth, like the dr_* catalogue: reads what is really installed via
 the Ollama HTTP API (/api/tags + /api/show), resolves the host it is
-running on to a user_hardware row, and UPSERTs one models row per model.
+running on to a user_hardware row, and UPSERTs one installed_models row per
+model.
 Models previously recorded for this host but no longer present are flipped
 to status='removed' (the row is kept for history).
 
@@ -166,12 +167,12 @@ def sync(db_path: Path, user_id: int) -> None:
             }
 
             exists = con.execute(
-                "SELECT 1 FROM models WHERE hardware_id=? AND name=?",
+                "SELECT 1 FROM installed_models WHERE hardware_id=? AND name=?",
                 (hw_id, name),
             ).fetchone()
             con.execute(
                 """
-                INSERT INTO models
+                INSERT INTO installed_models
                     (hardware_id, name, runner, provider, family, params,
                      size_gb, quantization, context_length, min_vram_gb,
                      digest, status, description_short, last_synced)
@@ -198,7 +199,7 @@ def sync(db_path: Path, user_id: int) -> None:
         # Models recorded for this host but no longer installed -> removed.
         placeholders = ",".join("?" * len(seen)) or "''"
         cur = con.execute(
-            f"""UPDATE models SET status='removed', last_synced=datetime('now')
+            f"""UPDATE installed_models SET status='removed', last_synced=datetime('now')
                 WHERE hardware_id=? AND status='installed'
                   AND name NOT IN ({placeholders})""",
             (hw_id, *seen),
@@ -213,7 +214,7 @@ def sync(db_path: Path, user_id: int) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sync models table from Ollama.")
+    ap = argparse.ArgumentParser(description="Sync the installed_models table from Ollama.")
     ap.add_argument("--user-id", type=int, default=1, help="owning user_id (default 1)")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="path to shell_db.db")
     args = ap.parse_args()
