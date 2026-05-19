@@ -5,9 +5,10 @@ Ported from ExpLive (designs_os). Polls `chat_messages` for unread inbound
 rows, runs a multi-turn Anthropic Messages loop with `api_*` tools, and posts
 the final assistant text via `POST /shells/{id}/chat/reply`.
 
-dos-arch port (CC-47, decision #108):
-  - Anthropic-only — the ProviderAdapter seam (agnostic-runtime §3.4) is the
-    next phase (A0); this speaks the Anthropic SDK directly.
+dos-arch (CC-47 port, CC-49 adapter seam; decision #108):
+  - Provider-agnostic loop — every model call goes through a `ProviderAdapter`
+    (agnostic-runtime §3.4, see `providers/`); this module names no provider.
+    A0 ships the Anthropic adapter; A1 onward adds the rest.
   - No auth — dos-arch's API is open on localhost in alpha; the `X-API-Key`
     machinery is not ported. Required before any off-localhost exposure (CC-55).
   - Tokens only, no cost — `chat_messages.tokens` carries the per-turn total;
@@ -37,7 +38,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-import anthropic
+# `providers/` is a sibling package; the script's own directory is on
+# sys.path[0], so the bare import resolves when run as `python3 dispatch_live.py`.
+from providers import ProviderAdapter, ProviderError, get_adapter
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -261,19 +264,9 @@ def render_dynamic(dyn: dict) -> str:
     return "\n".join(lines)
 
 
-def serialize_assistant(content_blocks) -> list[dict]:
-    out = []
-    for b in content_blocks:
-        if b.type == "text":
-            out.append({"type": "text", "text": b.text})
-        elif b.type == "tool_use":
-            out.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
-    return out
-
-
 # ── The agent loop ────────────────────────────────────────────────────────────
 
-def process_inbound(client: anthropic.Anthropic, con: sqlite3.Connection, shell, msg) -> None:
+def process_inbound(adapter: ProviderAdapter, con: sqlite3.Connection, shell, msg) -> None:
     window  = load_user_history_window(con, msg["user_id"])
     history = load_history(con, msg["chat_session_id"], window)
     if not history:
@@ -299,45 +292,35 @@ def process_inbound(client: anthropic.Anthropic, con: sqlite3.Connection, shell,
 
     try:
         for iteration in range(MAX_TOOL_ITER):
-            response = client.messages.create(
-                model=MODEL,
-                max_tokens=MAX_TOKENS,
-                system=system_blocks,
-                tools=TOOLS,
-                messages=messages,
-            )
-            u = response.usage
-            total_tokens += (u.input_tokens or 0) + (u.output_tokens or 0)
-            print(f"[{shell['display_name']}] iter={iteration} stop={response.stop_reason} "
-                  f"in={u.input_tokens} out={u.output_tokens}", flush=True)
+            request  = adapter.format_request(system_blocks, TOOLS, messages, MODEL, MAX_TOKENS)
+            response = adapter.call(request)
+            parsed   = adapter.parse_response(response)
+            u = parsed.usage
+            total_tokens += (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+            print(f"[{shell['display_name']}] iter={iteration} stop={parsed.stop_reason} "
+                  f"in={u.get('input_tokens')} out={u.get('output_tokens')}", flush=True)
 
-            if response.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": serialize_assistant(response.content)})
+            if parsed.stop_reason == "tool_use":
+                messages.append(adapter.serialize_assistant(response))
                 tool_results = []
-                for b in response.content:
-                    if b.type != "tool_use":
-                        continue
-                    result, is_error = execute_tool(b.name, b.input)
-                    short_in  = json.dumps(b.input)[:140].replace("\n", " ")
+                for tc in parsed.tool_calls:
+                    result, is_error = execute_tool(tc["name"], tc["input"])
+                    short_in  = json.dumps(tc["input"])[:140].replace("\n", " ")
                     short_out = result[:140].replace("\n", " ")
-                    print(f"  tool={b.name} in={short_in} err={is_error} out={short_out}", flush=True)
-                    tr = {"type": "tool_result", "tool_use_id": b.id, "content": result}
-                    if is_error:
-                        tr["is_error"] = True
-                    tool_results.append(tr)
-                messages.append({"role": "user", "content": tool_results})
+                    print(f"  tool={tc['name']} in={short_in} err={is_error} out={short_out}", flush=True)
+                    tool_results.append({"id": tc["id"], "content": result, "is_error": is_error})
+                messages.append(adapter.serialize_tool_results(tool_results))
                 continue
 
             # end_turn / stop_sequence / max_tokens — capture final text.
-            final_text = "\n".join(b.text for b in response.content if b.type == "text").strip()
+            final_text = parsed.text
             break
         else:
             print(f"  hit MAX_TOOL_ITER={MAX_TOOL_ITER} without end_turn", flush=True)
             final_text = final_text or "(tool loop exceeded — no final reply)"
-    except anthropic.APIError as e:
-        # SDK retries (max_retries=5) already exhausted.
-        print(f"  Anthropic API error after retries: {type(e).__name__}: {e}",
-              file=sys.stderr, flush=True)
+    except ProviderError as e:
+        # Adapter retries already exhausted.
+        print(f"  provider API error after retries: {e}", file=sys.stderr, flush=True)
         final_text = "(I'm currently overloaded — please retry in a moment.)"
 
     if not final_text:
@@ -357,7 +340,7 @@ def process_inbound(client: anthropic.Anthropic, con: sqlite3.Connection, shell,
 
 # ── Concurrency: thread per shell, pool per shell, lock per session ───────────-
 
-def _run_turn(client, shell, msg, in_flight, in_flight_started, in_flight_warned, lock):
+def _run_turn(adapter, shell, msg, in_flight, in_flight_started, in_flight_warned, lock):
     """Pool worker: process one message for one session. Opens its own DB
     connection. Releases the session from in_flight only AFTER the source is
     marked read — otherwise the parent thread could re-pick the same row."""
@@ -373,7 +356,7 @@ def _run_turn(client, shell, msg, in_flight, in_flight_started, in_flight_warned
             )
             con.commit()
             try:
-                process_inbound(client, con, shell, msg)
+                process_inbound(adapter, con, shell, msg)
             except Exception as e:
                 print(f"ERROR shell={shell_id} msg={msg['message_id']}: {e}",
                       file=sys.stderr, flush=True)
@@ -407,7 +390,9 @@ def shell_loop(shell_id: int):
     A sessionless inbound message (chat_session_id IS NULL) keys on None;
     such messages serialize against each other but that is acceptable —
     sessionless chat is the test/edge path, not the product path."""
-    client = anthropic.Anthropic(max_retries=5)
+    # A0: provider is hard-coded. A1 resolves it per-shell/per-model from the
+    # `models` registry (`models.provider`).
+    adapter = get_adapter("anthropic")
     pool = concurrent.futures.ThreadPoolExecutor(
         max_workers=POOL_WORKERS, thread_name_prefix=f"shell-{shell_id}-w",
     )
@@ -451,7 +436,7 @@ def shell_loop(shell_id: int):
                         continue
                     in_flight.add(sid)
                     in_flight_started[sid] = time.time()
-                    pool.submit(_run_turn, client, shell, msg,
+                    pool.submit(_run_turn, adapter, shell, msg,
                                 in_flight, in_flight_started, in_flight_warned, lock)
         except Exception as e:
             print(f"shell-{shell_id} loop error: {e}", file=sys.stderr, flush=True)
