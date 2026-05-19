@@ -24,7 +24,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from db_init import ROOT, ensure_forge, seed_skills, seed_sys_admin
+from db_init import (
+    ROOT, ensure_forge, seed_models, seed_skills, seed_sys_admin, seed_tools,
+)
 from create_user import prompt_and_create
 
 DB_PATH     = ROOT / "shell_core" / "shell_db.db"
@@ -60,6 +62,10 @@ def main() -> int:
         con.commit()
         print(f"  seeded {len(seeded)} skills")
 
+        seeded_models = seed_models(con)
+        con.commit()
+        print(f"  seeded {len(seeded_models)} models")
+
         forge_id, _ = ensure_forge(con)
         con.commit()
         print(f"  seeded Forge (shell_id={forge_id}, is_shared=1)")
@@ -72,6 +78,12 @@ def main() -> int:
         sa_id, _ = seed_sys_admin(con, user_id)
         con.commit()
         print(f"  seeded Sys-Admin (shell_id={sa_id}, partner=user_id {user_id})")
+
+        # Tools last — the grant step joins against every shell, so Forge and
+        # Sys-Admin must already exist.
+        seeded_tools = seed_tools(con)
+        con.commit()
+        print(f"  seeded {len(seeded_tools)} tools (granted to all shells)")
     finally:
         con.close()
 
