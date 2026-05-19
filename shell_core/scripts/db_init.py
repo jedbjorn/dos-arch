@@ -17,6 +17,7 @@ rows, so local edits to the live DB survive a re-run. Propagating an
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -88,6 +89,94 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
              body, meta.get("command") or None, int(meta.get("common", "0"))),
         )
         seeded.append(name)
+    return seeded
+
+
+# ── Models registry + tools (agnostic-runtime §4.1-§4.2) ──────────────────────
+
+# The model registry. A1 ships Anthropic + OpenAI; Gemini / local land with
+# CC-51. context_window / max_output / cost_* stay NULL until their consumers
+# (compaction CC-52/53, cost accounting) need them — A1 reads only
+# name / provider / tool_dialect / auth_ref / status.
+#   (name, display_name, provider, auth_ref, tool_dialect)
+_MODELS = [
+    ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
+    ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
+    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic"),
+    ("gpt-5",                     "GPT-5",             "openai",    "OPENAI_API_KEY",    "openai"),
+]
+
+# The api_* tool surface — get/post/patch/delete against the system's own API
+# (agnostic-runtime §5.4). The dispatcher loads these from `tools` rather than
+# a hard-coded list. `spec` is the JSON-Schema parameter object; each
+# ProviderAdapter projects it onto its provider's tool dialect.
+_PATH_PROP = {
+    "type": "string",
+    "description": 'API path including query, must start with /. e.g. "/shells/2/decisions"',
+}
+#   (name, description, spec)
+_API_TOOLS = [
+    ("api_get",
+     "GET request to the dos-arch API. Path may include a query string. "
+     "Returns the response body as text.",
+     {"type": "object", "properties": {"path": _PATH_PROP}, "required": ["path"]}),
+    ("api_post",
+     "POST request to the dos-arch API. Body sent as JSON.",
+     {"type": "object",
+      "properties": {"path": {"type": "string"},
+                     "body": {"type": "object", "description": "JSON body."}},
+      "required": ["path", "body"]}),
+    ("api_patch",
+     "PATCH request to the dos-arch API. Body sent as JSON.",
+     {"type": "object",
+      "properties": {"path": {"type": "string"}, "body": {"type": "object"}},
+      "required": ["path", "body"]}),
+    ("api_delete",
+     "DELETE request to the dos-arch API. Optional JSON body.",
+     {"type": "object",
+      "properties": {"path": {"type": "string"},
+                     "body": {"type": "object", "description": "Optional JSON body."}},
+      "required": ["path"]}),
+]
+
+
+def seed_models(con: sqlite3.Connection) -> list[str]:
+    """INSERT every registry model not already present (matched by name).
+    Returns the names newly seeded. Caller commits."""
+    seeded: list[str] = []
+    for name, display, provider, auth_ref, dialect in _MODELS:
+        if con.execute("SELECT 1 FROM models WHERE name=?", (name,)).fetchone():
+            continue
+        con.execute(
+            "INSERT INTO models (name, display_name, provider, auth_ref, "
+            "tool_dialect, locality, status) "
+            "VALUES (?, ?, ?, ?, ?, 'remote', 'active')",
+            (name, display, provider, auth_ref, dialect),
+        )
+        seeded.append(name)
+    return seeded
+
+
+def seed_tools(con: sqlite3.Connection) -> list[str]:
+    """INSERT every api_* tool not already present, then grant every active
+    tool to every shell (a shell's tool set is the shell_tools join).
+    Returns the names newly seeded. Caller commits."""
+    seeded: list[str] = []
+    for name, description, spec in _API_TOOLS:
+        if con.execute("SELECT 1 FROM tools WHERE name=?", (name,)).fetchone():
+            continue
+        con.execute(
+            "INSERT INTO tools (name, description, kind, spec, handler, status) "
+            "VALUES (?, ?, 'builtin', ?, 'api', 'active')",
+            (name, description, json.dumps(spec)),
+        )
+        seeded.append(name)
+    # Grant every active tool to every shell — INSERT OR IGNORE dedups.
+    con.execute(
+        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+        "SELECT s.shell_id, t.tool_id FROM shells s CROSS JOIN tools t "
+        "WHERE t.status='active'"
+    )
     return seeded
 
 

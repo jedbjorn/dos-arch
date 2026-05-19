@@ -119,12 +119,73 @@ CREATE TABLE shell_skills (
     UNIQUE(shell_id, skill_id)
 );
 
+-- ── Tools (provider-agnostic tooling-as-data) ─────────────────────────────────
+-- The tool registry + per-shell grants, mirroring skills / shell_skills. A
+-- shell's tool set is the shell_tools join; the dispatcher loads tool
+-- definitions from here, not a hard-coded list (agnostic-runtime §4.2).
+
+CREATE TABLE tools (
+    tool_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL UNIQUE,
+    description TEXT,
+    kind        TEXT    NOT NULL DEFAULT 'builtin'
+                CHECK (kind IN ('builtin','script','mcp')),
+    spec        TEXT,                       -- JSON parameter schema
+    handler     TEXT,                       -- executor key (e.g. 'api')
+    status      TEXT    NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','inactive'))
+);
+
+CREATE TABLE shell_tools (
+    shell_tool_id INTEGER PRIMARY KEY,
+    shell_id      INTEGER NOT NULL REFERENCES shells(shell_id),
+    tool_id       INTEGER NOT NULL REFERENCES tools(tool_id),
+    UNIQUE (shell_id, tool_id)
+);
+
+-- ── Models (the agnostic-runtime registry) ────────────────────────────────────
+-- Every model the system *can* use — provider, tool dialect, cost, limits.
+-- Distinct from `installed_models` (the per-host Ollama install inventory).
+-- The browser model-switch dropdown is populated from status='active' rows;
+-- chat_sessions.model_id points one conversation at one row (agnostic-runtime
+-- §4.1).
+
+CREATE TABLE models (
+    model_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT    NOT NULL UNIQUE,   -- claude-sonnet-4-6, gpt-5, ...
+    display_name     TEXT,                      -- dropdown label
+    provider         TEXT    NOT NULL
+                     CHECK (provider IN ('anthropic','openai','google','local')),
+    endpoint         TEXT,                      -- API base / local server URL
+    auth_ref         TEXT,                      -- env-var NAME, never the secret
+    tool_dialect     TEXT    NOT NULL DEFAULT 'anthropic'
+                     CHECK (tool_dialect IN ('anthropic','openai','parsed')),
+    context_window   INTEGER,
+    max_output       INTEGER,
+    capability_tags  TEXT,                      -- 'reasoning,code,vision'
+    locality         TEXT    NOT NULL DEFAULT 'remote'
+                     CHECK (locality IN ('remote','local')),
+    vram_estimate_gb INTEGER,                   -- local models only
+    version          TEXT,
+    source_url       TEXT,
+    cost_input       REAL,                      -- per-1M tokens; null for local
+    cost_output      REAL,
+    cost_cache_read  REAL,
+    cost_cache_write REAL,
+    status           TEXT    NOT NULL DEFAULT 'active'
+                     CHECK (status IN ('active','inactive')),
+    last_verified    TEXT
+);
+
+CREATE INDEX idx_models_status ON models (status);
+
 -- ── Chat ──────────────────────────────────────────────────────────────────────
 
 CREATE TABLE chat_sessions (
     chat_session_id    TEXT    PRIMARY KEY,
     shell_id           INTEGER NOT NULL REFERENCES shells(shell_id),
     user_id            INTEGER NOT NULL REFERENCES users(user_id),
+    model_id           INTEGER REFERENCES models(model_id),
     started_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_active        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active          INTEGER NOT NULL DEFAULT 1,
