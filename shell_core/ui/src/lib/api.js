@@ -39,6 +39,21 @@ export const getAvailableSkills = ()                   => get('/admin/skills/ava
 export const addShellSkill      = (shell_id, skill_id) => post(`/admin/shells/${shell_id}/skills`, { skill_id })
 export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${shell_id}/skills/${skill_id}`)
 
+// ── Browser chat ─────────────────────────────────────────────────────────────
+
+export const getModels             = ()                => get('/models')
+export const getMyShells           = ()                => get('/shells/mine')
+export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)
+export const getShellChatSession   = (shell_id)        => get(`/shells/${shell_id}/chat/session`)
+export const createShellChatSession = (shell_id, model_id) =>
+  post(`/shells/${shell_id}/chat/session`, model_id != null ? { model_id } : {})
+export const postShellChat         = (shell_id, body, chat_session_id) =>
+  post(`/shells/${shell_id}/chat`, { body, chat_session_id })
+export const clearShellSession     = (shell_id, session_id) =>
+  post(`/shells/${shell_id}/sessions/${session_id}/clear`)
+export const setSessionModel       = (shell_id, session_id, model_id) =>
+  patch(`/shells/${shell_id}/sessions/${session_id}`, { model_id })
+
 export const getFlags           = ()         => get('/flags')
 export const searchFlags        = (q)        => get(`/flags/search?q=${encodeURIComponent(q)}`)
 export const createFlag         = (body)     => post('/flags', body)

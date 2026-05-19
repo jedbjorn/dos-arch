@@ -624,7 +624,7 @@ Both are thin wrappers around scripts in `shell_core/scripts/`.
 ```
 shell_core/
   api/                    FastAPI substrate — routers (shells, users, skills, flags, catalogue, admin) + services (boot_document, …)
-  ui/                     SvelteKit substrate UI (routes: /shells, /flags, /plans)
+  ui/                     SvelteKit substrate UI (routes: /shells, /flags, /plans; floating browser-chat panel with model-switch dropdown)
   broker/                 Credential broker — egress proxy; injects auth so shell containers run credential-free
   schema.sql              Canonical SQLite schema (~34 tables + triggers + 2 catalogue views)
   shell_db.db             Local SQLite store — gitignored, built via `make bootstrap`

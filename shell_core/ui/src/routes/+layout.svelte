@@ -3,6 +3,7 @@
   import { onMount } from 'svelte'
   import { theme, applyTheme, loadThemeFromApi } from '$lib/theme.js'
   import TopBar from '$lib/components/TopBar.svelte'
+  import ChatPanel from '$lib/components/ChatPanel.svelte'
 
   onMount(() => {
     const t = $theme
@@ -20,4 +21,5 @@
       {@render children()}
     </main>
   </div>
+  <ChatPanel />
 </div>
