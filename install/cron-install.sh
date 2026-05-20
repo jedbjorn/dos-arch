@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cron-install.sh — install the daily dr_* catalogue sync cron.
 #
-# Run AS the dos-arch user, once, after the substrate is bootstrapped.
+# Run as the operator, once, after the substrate is bootstrapped.
 #
 #   ./install/cron-install.sh
 #

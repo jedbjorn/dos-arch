@@ -1,9 +1,29 @@
-// pm2 process map for shell-infra — the host-level UI service.
-// Run from this directory:  pm2 start ecosystem.config.cjs
+// pm2 process map for the dos-arch substrate — host-level services.
+// Run from the repo root:  pm2 start ecosystem.config.cjs
 //
-// Neither the credential broker nor the substrate API runs here — both run
-// as their own containers on the dos-net network (dos-broker, dos-api); see
-// install/broker-up.sh and install/api-up.sh. pm2 hosts only the UI.
+// Two apps run here: the SvelteKit UI and the browser-chat dispatcher. The
+// credential broker and the substrate API run as their own containers on the
+// dos-net network (dos-broker, dos-api) — see install/broker-up.sh + api-up.sh.
+
+const fs   = require('fs');
+const os   = require('os');
+const path = require('path');
+
+// The dispatcher needs ANTHROPIC_API_KEY. Secrets live in the operator's
+// config dir, never in the repo — parse them here so pm2 hands them to the
+// dispatcher process. A missing file yields an empty env; the dispatcher then
+// exits at startup with a clear "ANTHROPIC_API_KEY not set" error.
+function loadEnv() {
+  const env = {};
+  const file = path.join(os.homedir(), '.config', 'dos-arch', '.env');
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (m) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+    }
+  } catch (e) { /* .env absent — surfaced by the dispatcher at startup */ }
+  return env;
+}
 
 module.exports = {
   apps: [
@@ -14,6 +34,18 @@ module.exports = {
       script: 'node_modules/.bin/vite',
       args:   'dev --host 127.0.0.1 --port 5174',
       interpreter: 'none',
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 2000,
+      kill_timeout: 5000,
+    },
+    {
+      name: 'dosarch-dispatch',
+      summary: 'Browser-chat dispatcher — own-runtime agent loop serving chat-enabled shells',
+      cwd: __dirname,
+      script: path.join(__dirname, 'shell_core/services/dispatch_live.py'),
+      interpreter: path.join(__dirname, '.venv/bin/python3'),
+      env: loadEnv(),
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,
