@@ -1,0 +1,11 @@
+# Seed manifest — consumed by seed_from_assets() in db_init.py.
+# Each *.md in this directory is one `tools` row: frontmatter keys map
+# 1:1 to columns, the JSON body becomes `spec` (validated at seed time).
+#
+# kind / handler vary per tool — they live in each file's frontmatter,
+# not in a [const] block. status is omitted: it falls to the schema
+# default ('active'). See the asset_seeding skill for the full convention.
+table       = "tools"
+match       = "name"
+body        = "spec"
+body_format = "json"

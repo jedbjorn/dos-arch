@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Substrate seeding library.
 
-Seeds a substrate DB from the tracked assets in `shell_core/assets/`:
+Seeds a substrate DB from the tracked assets in `shell_core/assets/`.
 
-    assets/skills/*.md      one file per skill  (frontmatter + body)
-    assets/shells/forge.md  the shared bootstrap shell
-    assets/shells/sys-admin.md  the resident admin/dev shell (template-rendered)
+Most domains follow the manifest convention (see the `asset_seeding`
+skill): a directory `assets/<domain>/` holds a `_seed.toml` contract plus
+one `*.md` per row, and `seed_from_assets` drives the INSERT — the schema
+is the type authority, the manifest names the destination, the files are
+rows. Skills and tools seed this way.
+
+    assets/skills/   _seed.toml + one *.md per skill
+    assets/tools/    _seed.toml + one *.md per tool (body = JSON spec)
+
+Shells are the documented exception — `ensure_forge` / `seed_sys_admin`
+stay bespoke because they need boot-time values (the first user's id, a
+rendered template, skill attachment) an asset file can't carry. Models
+stay an inline literal (`_MODELS`) — a small, stable set.
 
 This module is a library, not a script. The full one-shot entry point is
 `bootstrap.py` (`make bootstrap`). The launcher (`run.py`) imports
@@ -19,13 +29,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import tomllib
 from pathlib import Path
 
 from shared_dirs import ensure_shared_dirs
 
 ROOT        = Path(__file__).resolve().parents[2]
 ASSETS      = ROOT / "shell_core" / "assets"
-SKILLS_DIR  = ASSETS / "skills"
 SHELLS_DIR  = ASSETS / "shells"
 TEMPLATE    = ROOT / "shell_core" / "templates" / "shell_system_prompt.md"
 
@@ -53,6 +63,92 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, rest[end + 5:]
 
 
+def _coerce(value: str, decl_type: str):
+    """Coerce a frontmatter string to a column's declared SQLite type.
+    Frontmatter is always text; the schema's `PRAGMA table_info` type is
+    the authority. An empty value becomes NULL."""
+    if value == "":
+        return None
+    t = decl_type.upper()
+    if "INT" in t:
+        return int(value)
+    if any(k in t for k in ("REAL", "FLOA", "DOUB")):
+        return float(value)
+    return value
+
+
+def seed_from_assets(con: sqlite3.Connection, domain: str) -> list[str]:
+    """Seed one asset domain — `assets/<domain>/` — into its table.
+
+    The domain's `_seed.toml` is the contract:
+
+        table        target table
+        match        column used for INSERT-missing-only dedup
+        body         column the markdown / JSON body is written to
+        body_format  optional — 'text' (default) or 'json' (validated at seed)
+        [const]      optional — column = value pairs applied to every row
+
+    Each `*.md` file is one row: frontmatter keys map 1:1 to columns, the
+    body goes to the `body` column. Every key — manifest, const, and
+    frontmatter — is checked against the live schema (`PRAGMA table_info`);
+    an unknown column, a missing match key, or a body that fails
+    `body_format` validation is a hard error. INSERT-missing-only; returns
+    the match values newly seeded. Caller commits.
+    """
+    domain_dir = ASSETS / domain
+    manifest_path = domain_dir / "_seed.toml"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"{domain}: missing {manifest_path}")
+    manifest = tomllib.loads(manifest_path.read_text())
+
+    table       = manifest["table"]
+    match       = manifest["match"]
+    body_col    = manifest["body"]
+    body_format = manifest.get("body_format", "text")
+    const       = manifest.get("const", {})
+
+    if body_format not in ("text", "json"):
+        raise ValueError(f"{domain}: unknown body_format '{body_format}'")
+    cols = {row[1]: row[2] for row in con.execute(f"PRAGMA table_info({table})")}
+    if not cols:
+        raise ValueError(f"{domain}: table '{table}' not in schema")
+    for col in (match, body_col, *const):
+        if col not in cols:
+            raise ValueError(
+                f"{domain}: _seed.toml names column '{col}' not on table '{table}'")
+
+    seeded: list[str] = []
+    for path in sorted(domain_dir.glob("*.md")):
+        meta, body = parse_frontmatter(path.read_text())
+        for key in meta:
+            if key not in cols:
+                raise ValueError(
+                    f"{path.name}: frontmatter key '{key}' is not a column on '{table}'")
+        if match not in meta:
+            raise ValueError(f"{path.name}: missing match key '{match}' in frontmatter")
+        if body_format == "json":
+            try:
+                json.loads(body)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path.name}: body is not valid JSON — {e}") from e
+
+        if con.execute(
+            f"SELECT 1 FROM {table} WHERE {match}=?", (meta[match],)
+        ).fetchone():
+            continue
+
+        row = {**const,
+               **{k: _coerce(v, cols[k]) for k, v in meta.items()},
+               body_col: body}
+        con.execute(
+            f"INSERT INTO {table} ({', '.join(row)}) "
+            f"VALUES ({', '.join('?' for _ in row)})",
+            tuple(row.values()),
+        )
+        seeded.append(meta[match])
+    return seeded
+
+
 def _attach_skills(con: sqlite3.Connection, shell_id: int, spec: str) -> None:
     """Attach skills to a shell. `spec` is a comma-separated list of skill
     names; the token `common` expands to every `common=1` skill. Mixing is
@@ -74,25 +170,12 @@ def _attach_skills(con: sqlite3.Connection, shell_id: int, spec: str) -> None:
 
 
 def seed_skills(con: sqlite3.Connection) -> list[str]:
-    """INSERT every skill in assets/skills/ that isn't already present.
-    Returns the names of newly-seeded skills. Caller commits."""
-    seeded: list[str] = []
-    for path in sorted(SKILLS_DIR.glob("*.md")):
-        meta, body = parse_frontmatter(path.read_text())
-        name = meta["name"]
-        if con.execute("SELECT 1 FROM skills WHERE name=?", (name,)).fetchone():
-            continue
-        con.execute(
-            "INSERT INTO skills (name, description, category, content, command, common) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, meta.get("description", ""), meta.get("category", "workflow"),
-             body, meta.get("command") or None, int(meta.get("common", "0"))),
-        )
-        seeded.append(name)
-    return seeded
+    """INSERT every skill in `assets/skills/` not already present (matched
+    by name). Returns the names newly seeded. Caller commits."""
+    return seed_from_assets(con, "skills")
 
 
-# ── Models registry + tools (agnostic-runtime §4.1-§4.2) ──────────────────────
+# ── Models registry (agnostic-runtime §4.1) ──────────────────────────────────
 
 # The model registry. A1 ships Anthropic + OpenAI; Gemini / local land with
 # CC-51. context_window / max_output / cost_* stay NULL until their consumers
@@ -115,39 +198,6 @@ _MODELS = [
     ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434/v1"),
 ]
 
-# The api_* tool surface — get/post/patch/delete against the system's own API
-# (agnostic-runtime §5.4). The dispatcher loads these from `tools` rather than
-# a hard-coded list. `spec` is the JSON-Schema parameter object; each
-# ProviderAdapter projects it onto its provider's tool dialect.
-_PATH_PROP = {
-    "type": "string",
-    "description": 'API path including query, must start with /. e.g. "/shells/2/decisions"',
-}
-#   (name, description, spec)
-_API_TOOLS = [
-    ("api_get",
-     "GET request to the dos-arch API. Path may include a query string. "
-     "Returns the response body as text.",
-     {"type": "object", "properties": {"path": _PATH_PROP}, "required": ["path"]}),
-    ("api_post",
-     "POST request to the dos-arch API. Body sent as JSON.",
-     {"type": "object",
-      "properties": {"path": {"type": "string"},
-                     "body": {"type": "object", "description": "JSON body."}},
-      "required": ["path", "body"]}),
-    ("api_patch",
-     "PATCH request to the dos-arch API. Body sent as JSON.",
-     {"type": "object",
-      "properties": {"path": {"type": "string"}, "body": {"type": "object"}},
-      "required": ["path", "body"]}),
-    ("api_delete",
-     "DELETE request to the dos-arch API. Optional JSON body.",
-     {"type": "object",
-      "properties": {"path": {"type": "string"},
-                     "body": {"type": "object", "description": "Optional JSON body."}},
-      "required": ["path"]}),
-]
-
 
 def seed_models(con: sqlite3.Connection) -> list[str]:
     """INSERT every registry model not already present (matched by name).
@@ -167,19 +217,10 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
 
 
 def seed_tools(con: sqlite3.Connection) -> list[str]:
-    """INSERT every api_* tool not already present, then grant every active
-    tool to every shell (a shell's tool set is the shell_tools join).
-    Returns the names newly seeded. Caller commits."""
-    seeded: list[str] = []
-    for name, description, spec in _API_TOOLS:
-        if con.execute("SELECT 1 FROM tools WHERE name=?", (name,)).fetchone():
-            continue
-        con.execute(
-            "INSERT INTO tools (name, description, kind, spec, handler, status) "
-            "VALUES (?, ?, 'builtin', ?, 'api', 'active')",
-            (name, description, json.dumps(spec)),
-        )
-        seeded.append(name)
+    """INSERT every tool in `assets/tools/` not already present, then grant
+    every active tool to every shell (a shell's tool set is the shell_tools
+    join). Returns the names newly seeded. Caller commits."""
+    seeded = seed_from_assets(con, "tools")
     # Grant every active tool to every shell — INSERT OR IGNORE dedups.
     con.execute(
         "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
