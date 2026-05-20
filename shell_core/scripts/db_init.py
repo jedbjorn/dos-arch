@@ -289,9 +289,13 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     ).fetchone()[0]
     # is_admin=1 — Sys-Admin is the substrate's one admin shell; its API key
     # carries the admin scope. Worker shells created later default to 0.
+    # browser_chat=1 — chat-enabled from cold boot, so the dispatcher (started
+    # by `make up`) serves it immediately; browser chat works on a fresh
+    # install with no post-install activation step.
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "additional_prompt, user_id, is_shared, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1)",
+        "additional_prompt, user_id, is_shared, is_admin, browser_chat) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1)",
         (meta["display_name"], shortname, username, meta.get("role"),
          meta.get("mandate"), additional_prompt, user_id),
     )

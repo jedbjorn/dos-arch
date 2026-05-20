@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build-image.sh — build the dos-arch substrate images.
 #
-# Run AS the dos-arch user (rootless Docker), after rootless-setup.sh.
+# Run as the operator, after rootless-setup.sh.
 #
 #   ./install/build-image.sh [CLAUDE_VERSION]
 #
@@ -28,7 +28,7 @@ CLAUDE_VERSION="${1:-stable}"
 HISTORY_DEPTH=3        # previous builds kept per image (tagged history-1..N)
 
 command -v docker >/dev/null || {
-  echo "ERROR: docker not on PATH — run rootless-setup.sh, then open a fresh shell." >&2
+  echo "ERROR: docker not on PATH — run ./install/rootless-setup.sh first." >&2
   exit 1
 }
 

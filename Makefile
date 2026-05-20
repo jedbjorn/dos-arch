@@ -20,14 +20,14 @@ help:
 	@echo "  make db-sync             refresh dr_router + dr_api from live routes"
 	@echo "  make catalogue           print the substrate catalogue (filter via ARGS=, e.g. ARGS='api')"
 	@echo "  make collect-hardware    probe this host into user_hardware (ARGS='--user-id N')"
-	@echo "  make sync-models         sync the models table from Ollama's installed set"
-	@echo "  make up                  pm2 start the UI (127.0.0.1:5174); API + broker run as containers"
-	@echo "  make down                pm2 delete the UI"
-	@echo "  make restart             pm2 restart the UI"
+	@echo "  make sync-models         sync the models table from Ollama (runs collect-hardware first)"
+	@echo "  make up                  pm2 start the UI + dispatcher; API + broker run as containers"
+	@echo "  make down                pm2 delete the UI + dispatcher"
+	@echo "  make restart             pm2 restart the UI + dispatcher"
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
 	@echo "  make health              curl http://127.0.0.1:8001/health"
-	@echo "  make dispatch            run the browser-chat dispatcher (needs ANTHROPIC_API_KEY)"
+	@echo "  make dispatch            run the browser-chat dispatcher in the foreground (debug; pm2 runs it normally)"
 
 launch:
 	@python3 $(CORE)/scripts/run.py
@@ -45,9 +45,9 @@ gen-api-key:
 	@python3 $(CORE)/scripts/gen_api_key.py $(ARGS)
 
 install:
-	@command -v pm2 >/dev/null     || { echo "ERROR: pm2 not found — host dependencies skipped. As the operator: sudo npm install -g pm2  (see README Quickstart Step 0)."; exit 1; }
-	@command -v node >/dev/null    || { echo "ERROR: node not found — host dependencies skipped. Run README Quickstart Step 0 as the operator."; exit 1; }
-	@command -v python3 >/dev/null || { echo "ERROR: python3 not found — host dependencies skipped. Run README Quickstart Step 0 as the operator."; exit 1; }
+	@command -v pm2 >/dev/null     || { echo "ERROR: pm2 not found — run 'sudo ./install/host-setup.sh' first."; exit 1; }
+	@command -v node >/dev/null    || { echo "ERROR: node not found — run 'sudo ./install/host-setup.sh' first."; exit 1; }
+	@command -v python3 >/dev/null || { echo "ERROR: python3 not found — run 'sudo ./install/host-setup.sh' first."; exit 1; }
 	@echo "Creating .venv (PEP 668 hosts require an isolated env)..."
 	@python3 -m venv .venv
 	@echo "Installing python deps into .venv..."
@@ -77,25 +77,29 @@ collect-hardware:
 	@python3 $(CORE)/scripts/collect_hardware.py $(ARGS)
 
 sync-models:
+	@python3 $(CORE)/scripts/collect_hardware.py
 	@python3 $(CORE)/scripts/model_sync.py $(ARGS)
 
 up:
 	@pm2 start ecosystem.config.cjs
 
 down:
-	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui 2>/dev/null || true
+	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui dosarch-dispatch 2>/dev/null || true
 
 restart:
-	@pm2 restart dosarch-ui
+	@pm2 restart ecosystem.config.cjs
 
 status:
 	@pm2 ls
 
 logs:
-	@pm2 logs dosarch-ui
+	@pm2 logs
 
 health:
 	@curl -fsS http://127.0.0.1:8001/health && echo
 
 dispatch:
-	@PY=./.venv/bin/python3; [ -x "$$PY" ] || { echo "ERROR: .venv missing — run make install"; exit 1; }; "$$PY" $(CORE)/services/dispatch_live.py
+	@PY=./.venv/bin/python3; [ -x "$$PY" ] || { echo "ERROR: .venv missing — run 'make install'"; exit 1; }; \
+	ENV="$$HOME/.config/dos-arch/.env"; [ -f "$$ENV" ] || { echo "ERROR: $$ENV missing — see install/README.md"; exit 1; }; \
+	set -a; . "$$ENV"; set +a; \
+	"$$PY" $(CORE)/services/dispatch_live.py

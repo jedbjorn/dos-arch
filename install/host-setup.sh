@@ -1,104 +1,82 @@
 #!/usr/bin/env bash
 # host-setup.sh — Arch host bootstrap for the dos-arch substrate (sudo).
 #
-# Creates the unprivileged `dos-arch` service user, installs the Docker
-# packages, leaves the rootful daemon disabled, enables linger so the
-# user's rootless daemon survives logout, and stages the dos-arch-side
-# setup files into /home/dos-arch/setup.
+# Installs the system packages and prepares the operator for rootless Docker:
+# ensures subuid/subgid ranges and enables linger so the operator's rootless
+# Docker daemon survives logout.
 #
 #   sudo ./install/host-setup.sh
 #
-# Idempotent — safe to re-run. Pairs with rootless-setup.sh (run AS dos-arch).
+# Single-user model: rootless Docker, the substrate, and every container all
+# run as the operator — the user who invoked sudo. There is NO dedicated
+# service user. This is the only step that needs root; everything after runs
+# as the operator with no sudo. Idempotent — safe to re-run. Pairs with
+# rootless-setup.sh (run next, as the operator).
 set -euo pipefail
 
-SERVICE_USER="dos-arch"
-SERVICE_HOME="/home/${SERVICE_USER}"
 RANGE=65536
 
 if [[ ${EUID} -ne 0 ]]; then
-  echo "ERROR: run with sudo — creates a user and installs packages." >&2
+  echo "ERROR: run with sudo — installs packages and edits subuid/subgid." >&2
   exit 1
 fi
 command -v pacman >/dev/null || {
   echo "ERROR: pacman not found — this script targets Arch-based systems." >&2
   exit 1
 }
+OPERATOR="${SUDO_USER:-}"
+if [[ -z "${OPERATOR}" ]] || ! id "${OPERATOR}" &>/dev/null; then
+  echo "ERROR: cannot determine the operator — invoke via 'sudo', not as root." >&2
+  exit 1
+fi
+echo "=== dos-arch host bootstrap ===  operator: ${OPERATOR}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo "==> [1/4] system packages (pacman)"
+# git/base-devel : clone + make entry points    python  : runtime + venv
+# nodejs/npm     : SvelteKit UI                  docker* : container sandbox
+# slirp4netns/fuse-overlayfs : rootless Docker networking + storage fallback
+# cronie         : cron daemon — runs the nightly catalogue sync
+pacman -S --needed --noconfirm \
+  git base-devel python nodejs npm cronie \
+  docker docker-buildx slirp4netns fuse-overlayfs
 
-echo "==> [1/7] service user: ${SERVICE_USER}"
-if id "${SERVICE_USER}" &>/dev/null; then
-  echo "    exists — skipping"
+echo "==> [2/4] pm2 (npm global — host process manager for the UI + dispatcher)"
+if command -v pm2 >/dev/null; then
+  echo "    pm2 present — skipping"
 else
-  useradd -m -d "${SERVICE_HOME}" -s /bin/bash "${SERVICE_USER}"
-  echo "    created"
+  npm install -g pm2
 fi
 
-echo "==> [2/7] subuid / subgid ranges"
-if grep -q "^${SERVICE_USER}:" /etc/subuid && grep -q "^${SERVICE_USER}:" /etc/subgid; then
-  echo "    present: $(grep "^${SERVICE_USER}:" /etc/subuid)"
+echo "==> [3/4] enable the cron daemon (for the nightly catalogue sync)"
+systemctl enable --now cronie
+echo "    cronie enabled"
+
+echo "==> [4/4] operator rootless prerequisites"
+# subuid/subgid — rootless Docker maps container UIDs into this range.
+if grep -q "^${OPERATOR}:" /etc/subuid && grep -q "^${OPERATOR}:" /etc/subgid; then
+  echo "    subuid/subgid present: $(grep "^${OPERATOR}:" /etc/subuid)"
 else
   # Start a fresh 65536-block above every existing allocation (min 100000).
   end=$(awk -F: '{ e=$2+$3; if (e>m) m=e } END { print m+0 }' /etc/subuid)
   start=$(( end > 100000 ? end : 100000 ))
   usermod --add-subuids "${start}-$((start + RANGE - 1))" \
-          --add-subgids "${start}-$((start + RANGE - 1))" "${SERVICE_USER}"
-  echo "    added ${start}-$((start + RANGE - 1))"
+          --add-subgids "${start}-$((start + RANGE - 1))" "${OPERATOR}"
+  echo "    subuid/subgid added: ${start}-$((start + RANGE - 1))"
 fi
-
-echo "==> [3/7] Docker packages (pacman)"
-# fuse-overlayfs is the storage fallback for kernels < 5.13; harmless on newer.
-# acl provides setfacl — used in step 6 to bridge the operator into ~/shared.
-pacman -S --needed --noconfirm docker docker-buildx slirp4netns fuse-overlayfs acl
-
-echo "==> [4/7] disable the rootful daemon (substrate runs rootless only)"
-systemctl disable --now docker.service docker.socket 2>/dev/null || true
-echo "    docker.service / docker.socket disabled"
-
-echo "==> [5/7] enable linger for ${SERVICE_USER}"
-loginctl enable-linger "${SERVICE_USER}"
-
-echo "==> [6/7] shared runtime directory"
-# Host-side shared root, owned by the service user and bind-mounted into every
-# shell container. Runtime state — never in the repo. Only the ROOT is created
-# here; the per-shell subdirs (<NN-shortname>/{redlines,review,repos,backups})
-# are laid down later by `make bootstrap` / run.py, keyed by shell_id.
-install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${SERVICE_HOME}/shared"
-echo "    ${SERVICE_HOME}/shared"
-
-# FnB bridge: let the operator (the human who invoked sudo) read AND write the
-# shared tree, so redlines and handoffs flow both ways while ownership stays
-# cleanly with the service user. The default ACL (-d) makes files the
-# substrate creates under it later inherit the grant. Mirror of the clone-ACL
-# grant in install/README.md step 3, in the opposite direction.
-if [[ -n "${SUDO_USER:-}" ]] && id "${SUDO_USER}" &>/dev/null; then
-  setfacl -m       "u:${SUDO_USER}:x"   "${SERVICE_HOME}"
-  setfacl -R -m    "u:${SUDO_USER}:rwX" "${SERVICE_HOME}/shared"
-  setfacl -R -d -m "u:${SUDO_USER}:rwX" "${SERVICE_HOME}/shared"
-  echo "    operator '${SUDO_USER}' granted rw on ${SERVICE_HOME}/shared"
-else
-  echo "    WARNING: \$SUDO_USER unset — skipped operator ACL grant."
-  echo "             Grant manually: setfacl -R -m u:<operator>:rwX ${SERVICE_HOME}/shared"
-fi
-
-echo "==> [7/7] stage setup files into ${SERVICE_HOME}/setup"
-install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${SERVICE_HOME}/setup"
-cp -r "${REPO_ROOT}/install" "${REPO_ROOT}/docker" "${SERVICE_HOME}/setup/"
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${SERVICE_HOME}/setup"
+# linger — keeps the operator's systemd --user manager (and the rootless
+# Docker daemon) alive after logout, so the substrate runs unattended.
+loginctl enable-linger "${OPERATOR}"
+echo "    linger enabled for ${OPERATOR}"
 
 cat <<EOF
 
-Host bootstrap done. Remaining steps — full detail in install/README.md:
+Host bootstrap done. Everything from here runs AS THE OPERATOR — no sudo:
 
-  2. Rootless Docker — in a real ${SERVICE_USER} session:
-       sudo machinectl shell ${SERVICE_USER}@
-       cd ~/setup && ./install/rootless-setup.sh
+  ./install/rootless-setup.sh    install + start rootless Docker
 
-  3. Create .env (as the operator, in your repo clone) and grant
-     ${SERVICE_USER} read access — see README step 3.
+setup.sh runs that and the rest end-to-end — see install/README.md.
 
-  4. Build images + start the broker. build-image.sh / broker-up.sh need
-     the FULL repo, so run them from your clone, NOT ~/setup:
-       sudo machinectl shell ${SERVICE_USER}@
-       cd /path/to/dos-arch && ./install/build-image.sh && ./install/broker-up.sh
+Note: the rootful Docker daemon (docker.service) is left untouched. The
+substrate uses a rootless daemon under its own CLI context; rootless-setup.sh
+selects it. If you want rootful Docker off, disable it yourself.
 EOF

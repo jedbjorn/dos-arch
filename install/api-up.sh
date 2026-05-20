@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # api-up.sh — bring up the substrate API container.
 #
-# Run AS the dos-arch user (rootless Docker), after build-image.sh.
+# Run as the operator, after build-image.sh.
 #
 #   ./install/api-up.sh
 #
@@ -21,7 +21,7 @@ IMAGE="dos-api:latest"
 CORE="${REPO}/shell_core"
 
 command -v docker >/dev/null || {
-  echo "ERROR: docker not on PATH — run rootless-setup.sh, then open a fresh shell." >&2
+  echo "ERROR: docker not on PATH — run ./install/rootless-setup.sh first." >&2
   exit 1
 }
 docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
