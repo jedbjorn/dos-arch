@@ -12,7 +12,7 @@
   // (flag CC-60).
   import { onDestroy, tick } from 'svelte'
   import {
-    getModels, getMyShells, getShellChat, getShellChatSession,
+    getModels, getMyShells, activateShell, getShellChat, getShellChatSession,
     createShellChatSession, postShellChat, clearShellSession,
     setSessionModel, getShellSkills,
   } from '$lib/api.js'
@@ -102,6 +102,9 @@
       SHELL_ID = id
       messages = []; chatSessionId = null; waiting = false
       sendError = false; retryText = ''; clearConfirm = false; skills = []
+      // Re-target: the picked shell becomes this user's browser_chat shell,
+      // so the dispatcher follows the switch (it re-discovers browser_chat=1).
+      try { await activateShell(id) } catch {}
       await ensureSession()
       await load()
       await tick(); scrollBottom()
@@ -198,7 +201,11 @@
 
   async function init() {
     try { myShells = await getMyShells() } catch {}
-    if (myShells.length && !SHELL_ID) SHELL_ID = myShells[0].shell_id
+    // Open on the user's browser_chat shell — the one the dispatcher serves —
+    // falling back to the first owned shell if none is flagged.
+    if (myShells.length && !SHELL_ID) {
+      SHELL_ID = (myShells.find(s => s.browser_chat) ?? myShells[0]).shell_id
+    }
     try { models = await getModels() } catch {}
     await ensureSession()
     await load()
@@ -234,7 +241,9 @@
   <div class="chat-col">
 
     <div class="chat-header" bind:this={skillsEl}>
-      {#if myShells.length > 1}
+      <!-- Always a dropdown — switching re-targets browser_chat (switchShell).
+           Plain label only when the user owns no shells. -->
+      {#if myShells.length}
         <select class="shell-select" value={SHELL_ID}
           onchange={e => switchShell(Number(e.target.value))} disabled={switching}>
           {#each myShells as s}
@@ -242,7 +251,7 @@
           {/each}
         </select>
       {:else}
-        <span class="shell-name">{shellName}</span>
+        <span class="shell-name">No shell assigned</span>
       {/if}
       <button class="skills-btn" class:active={showSkills}
         onclick={e => { e.stopPropagation(); toggleSkills() }}>Skills ▾</button>
@@ -434,7 +443,7 @@
   }
   .shell-name { flex: 1; font-size: 13px; font-weight: 700; color: var(--color-text); letter-spacing: 0.04em; }
   .shell-select {
-    flex: 1;
+    flex: 0 0 150px;   /* fixed-width shell picker */
     background: transparent;
     border: none;
     color: var(--color-text);
@@ -448,6 +457,7 @@
   }
   .shell-select option { background: var(--color-surface-2); color: var(--color-text); }
   .skills-btn {
+    margin-left: auto;   /* stay right-aligned now the shell control is narrow */
     background: none;
     border: 1px solid var(--color-border);
     border-radius: 4px;
