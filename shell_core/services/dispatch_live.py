@@ -314,6 +314,12 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     model_name, provider, endpoint = resolve_model(con, msg["chat_session_id"])
     adapter = adapter_for(provider, endpoint)
     tools   = load_tools(con, shell["shell_id"])
+    # Local models go tool-free. Tool support varies model to model — gemma
+    # handles it, deepseek-r1 returns a hard 400 ("does not support tools") —
+    # so the only reliable rule is plain chat for every local model. Cloud
+    # providers (Anthropic, OpenAI) keep the api_* tool surface.
+    if provider == "local":
+        tools = []
     ep = f" endpoint={endpoint}" if endpoint else ""
     print(f"[{shell['display_name']}] msg={msg['message_id']} model={model_name} "
           f"provider={provider}{ep} tools={len(tools)}", flush=True)
