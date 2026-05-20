@@ -56,7 +56,7 @@ from providers import (
 
 _REPO = Path(__file__).resolve().parents[2]
 DB_PATH       = os.environ.get("DISPATCH_DB_PATH", str(_REPO / "shell_core" / "shell_db.db"))
-API_BASE      = os.environ.get("DISPATCH_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+API_BASE      = os.environ.get("DISPATCH_API_BASE", "http://127.0.0.1:8001").rstrip("/")
 MODEL         = os.environ.get("DISPATCH_MODEL", "claude-sonnet-4-6")  # fallback default
 LOCKFILE_PATH = str(Path(__file__).resolve().parent / ".dispatch_live.lock")
 

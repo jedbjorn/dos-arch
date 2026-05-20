@@ -7,7 +7,7 @@
 #
 # Creates the shared `dos-net` network (idempotent) and (re)starts the
 # `dos-api` container on it. Shell containers reach it by Docker DNS name
-# (http://dos-api:8000); the host UI reaches it on 127.0.0.1:8000. The
+# (http://dos-api:8000); the host UI reaches it on 127.0.0.1:8001. The
 # substrate code + shell_db.db are bind-mounted from the repo at run time —
 # never baked into the image, so `git pull` + a re-run updates the API.
 # Idempotent: safe to re-run.
@@ -63,9 +63,9 @@ DRSYNC_PY="${REPO}/.venv/bin/python3"
 echo "==> [5/6] start ${NAME}"
 docker run -d --name "${NAME}" --network "${NET}" \
   -v "${CORE}:/substrate/shell_core" \
-  -p 127.0.0.1:8000:8000 \
+  -p 127.0.0.1:8001:8000 \
   --restart unless-stopped "${IMAGE}" >/dev/null
-echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8000"
+echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8001"
 
 echo "==> [6/6] health check"
 sleep 2
