@@ -6,7 +6,7 @@ import { defineConfig } from 'vite';
 // In dev the SvelteKit server proxies that to the API process, stripping the
 // `/api` prefix — the API routers carry no prefix (e.g. /shells/mine).
 // API_TARGET overrides the default for non-standard local layouts.
-const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:8000';
+const API_TARGET = process.env.API_TARGET || 'http://127.0.0.1:8001';
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],

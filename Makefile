@@ -21,12 +21,12 @@ help:
 	@echo "  make catalogue           print the substrate catalogue (filter via ARGS=, e.g. ARGS='api')"
 	@echo "  make collect-hardware    probe this host into user_hardware (ARGS='--user-id N')"
 	@echo "  make sync-models         sync the models table from Ollama's installed set"
-	@echo "  make up                  pm2 start the UI (127.0.0.1:5173); API + broker run as containers"
+	@echo "  make up                  pm2 start the UI (127.0.0.1:5174); API + broker run as containers"
 	@echo "  make down                pm2 delete the UI"
 	@echo "  make restart             pm2 restart the UI"
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
-	@echo "  make health              curl http://127.0.0.1:8000/health"
+	@echo "  make health              curl http://127.0.0.1:8001/health"
 	@echo "  make dispatch            run the browser-chat dispatcher (needs ANTHROPIC_API_KEY)"
 
 launch:
@@ -83,19 +83,19 @@ up:
 	@pm2 start ecosystem.config.cjs
 
 down:
-	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete shell-infra-api shell-infra-ui 2>/dev/null || true
+	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui 2>/dev/null || true
 
 restart:
-	@pm2 restart shell-infra-ui
+	@pm2 restart dosarch-ui
 
 status:
 	@pm2 ls
 
 logs:
-	@pm2 logs shell-infra-ui
+	@pm2 logs dosarch-ui
 
 health:
-	@curl -fsS http://127.0.0.1:8000/health && echo
+	@curl -fsS http://127.0.0.1:8001/health && echo
 
 dispatch:
 	@PY=./.venv/bin/python3; [ -x "$$PY" ] || { echo "ERROR: .venv missing — run make install"; exit 1; }; "$$PY" $(CORE)/services/dispatch_live.py

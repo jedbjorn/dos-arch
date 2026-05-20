@@ -8,11 +8,11 @@
 module.exports = {
   apps: [
     {
-      name: 'shell-infra-ui',
-      summary: 'SvelteKit substrate UI — /shells, /flags, /plans routes on 127.0.0.1:5173',
+      name: 'dosarch-ui',
+      summary: 'SvelteKit substrate UI — /shells, /flags, /plans routes on 127.0.0.1:5174',
       cwd:  './shell_core/ui',
       script: 'node_modules/.bin/vite',
-      args:   'dev --host 127.0.0.1 --port 5173',
+      args:   'dev --host 127.0.0.1 --port 5174',
       interpreter: 'none',
       autorestart: true,
       max_restarts: 10,
