@@ -1,0 +1,7 @@
+# Seed manifest — consumed by seed_from_assets() in db_init.py.
+# Each *.md in this directory is one `skills` row: frontmatter keys map
+# 1:1 to columns, the markdown body becomes `content`.
+# See the asset_seeding skill for the full convention.
+table = "skills"
+match = "name"
+body  = "content"
