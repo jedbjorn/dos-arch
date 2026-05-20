@@ -8,6 +8,12 @@ model.
 Models previously recorded for this host but no longer present are flipped
 to status='removed' (the row is kept for history).
 
+It then promotes the installed set into the `models` registry (CC-62): each
+installed model becomes an active provider='local' row that the dispatcher
+and the model-switch dropdown can use; a local registry row whose model is
+no longer installed is flipped to status='inactive'. The registry tracks
+Ollama on its own — nothing is hand-registered.
+
 Machine-readable fields (size, params, quantization, context length,
 digest) come straight from Ollama. The editorial bits — provider, our
 family taxonomy, description — come from the small curated maps below;
@@ -205,16 +211,82 @@ def sync(db_path: Path, user_id: int) -> None:
             (hw_id, *seen),
         )
         removed = cur.rowcount
+
+        promoted, reactivated, deactivated = promote_local_models(con, hw_id, base)
         con.commit()
     finally:
         con.close()
 
-    print(f"models (hardware_id={hw_id}): "
+    print(f"installed_models (hardware_id={hw_id}): "
           f"{inserted} inserted, {updated} updated, {removed} marked removed.")
+    print(f"models registry: {promoted} promoted, {reactivated} reactivated, "
+          f"{deactivated} deactivated.")
+
+
+def promote_local_models(con: sqlite3.Connection, hw_id: int,
+                         base: str) -> tuple[int, int, int]:
+    """Mirror this host's installed Ollama models into the `models` registry
+    so they are dispatchable (CC-62). Each installed model becomes an active
+    provider='local' row; a local registry row whose model is no longer
+    installed is flipped to status='inactive' (kept for history, FK-safe).
+
+    Single Ollama host is assumed — the down-sweep reconciles every
+    provider='local' row against this host's installed set. Scope this by
+    endpoint/hardware if a second Ollama host is ever added.
+
+    Returns (promoted, reactivated, deactivated).
+    """
+    endpoint = base.rstrip("/") + "/v1"  # Ollama's OpenAI-compatible base URL
+    installed = con.execute(
+        "SELECT name, context_length, min_vram_gb FROM installed_models "
+        "WHERE hardware_id=? AND status='installed'",
+        (hw_id,),
+    ).fetchall()
+
+    seen: list[str] = []
+    promoted = reactivated = 0
+    for name, ctx, vram in installed:
+        seen.append(name)
+        prior = con.execute(
+            "SELECT status FROM models WHERE name=?", (name,)
+        ).fetchone()
+        # display_name and auth_ref are kept out of the UPDATE branch so a
+        # human-tuned registry row keeps its label.
+        con.execute(
+            """
+            INSERT INTO models
+                (name, display_name, provider, endpoint, auth_ref,
+                 tool_dialect, context_window, locality, vram_estimate_gb,
+                 status)
+            VALUES
+                (:name, :display, 'local', :endpoint, NULL,
+                 'openai', :ctx, 'local', :vram, 'active')
+            ON CONFLICT(name) DO UPDATE SET
+                provider='local', endpoint=excluded.endpoint,
+                tool_dialect='openai', context_window=excluded.context_window,
+                locality='local', vram_estimate_gb=excluded.vram_estimate_gb,
+                status='active'
+            """,
+            {"name": name, "display": f"{name} (local)", "endpoint": endpoint,
+             "ctx": ctx, "vram": vram},
+        )
+        if prior is None:
+            promoted += 1
+        elif prior[0] != "active":
+            reactivated += 1
+
+    placeholders = ",".join("?" * len(seen)) or "''"
+    cur = con.execute(
+        f"""UPDATE models SET status='inactive'
+            WHERE provider='local' AND status='active'
+              AND name NOT IN ({placeholders})""",
+        seen,
+    )
+    return promoted, reactivated, cur.rowcount
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sync the installed_models table from Ollama.")
+    ap = argparse.ArgumentParser(description="Sync installed_models + the models registry from Ollama.")
     ap.add_argument("--user-id", type=int, default=1, help="owning user_id (default 1)")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="path to shell_db.db")
     args = ap.parse_args()
