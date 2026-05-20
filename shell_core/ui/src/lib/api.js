@@ -43,6 +43,7 @@ export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${
 
 export const getModels             = ()                => get('/models')
 export const getMyShells           = ()                => get('/shells/mine')
+export const activateShell         = (shell_id)        => patch(`/shells/${shell_id}/activate`)
 export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)
 export const getShellChatSession   = (shell_id)        => get(`/shells/${shell_id}/chat/session`)
 export const createShellChatSession = (shell_id, model_id) =>

@@ -20,7 +20,10 @@ dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
   - Context is the materialized boot document: one `GET /session-start` call
     returns `{boot_document, dynamic}` — Block 1-2 cached, Block 3 live.
 
-A shell joins the dispatcher by having `shells.browser_chat = 1`.
+A shell joins the dispatcher by setting `shells.browser_chat = 1` and leaves
+by clearing it. A supervisor loop re-checks membership every RECONCILE_SEC,
+so a browser_chat change (e.g. the UI's shell-switch) takes effect without
+a dispatcher restart.
 
 Run:  python3 shell_core/services/dispatch_live.py
 Env:  ANTHROPIC_API_KEY (required), DISPATCH_API_BASE, DISPATCH_MODEL,
@@ -67,6 +70,7 @@ DEFAULT_HISTORY_WINDOW = 25          # fallback if users.chat_history_window uns
 POOL_WORKERS           = int(os.environ.get("DISPATCH_POOL_WORKERS", "5"))
 TOOL_CONCURRENCY       = int(os.environ.get("DISPATCH_TOOL_CONCURRENCY", "20"))
 STUCK_SESSION_SEC      = 300         # warn if a session is in-flight this long
+RECONCILE_SEC          = 5           # supervisor: re-check browser_chat membership
 
 # Process-wide cap on in-flight API calls from execute_tool — N workers × 20
 # tool iterations could otherwise saturate our own API.
@@ -109,6 +113,22 @@ def discover_browser_shell_ids(con: sqlite3.Connection) -> list[int]:
         "SELECT shell_id FROM shells WHERE browser_chat=1 ORDER BY shell_id"
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def clear_in_flight(con: sqlite3.Connection, shell_ids) -> None:
+    """Reset stale turn-in-flight markers for these shells' chat sessions.
+    Safe because dispatch_live holds an exclusive process lock — it is the
+    sole writer of these markers. Called per shell as it joins the
+    dispatcher, so a shell carrying markers from a past run starts clean."""
+    ids = list(shell_ids)
+    if not ids:
+        return
+    ph = ",".join("?" * len(ids))
+    con.execute(
+        f"UPDATE chat_sessions SET turn_in_flight_at=NULL, "
+        f"turn_in_flight_message_id=NULL WHERE shell_id IN ({ph})", ids,
+    )
+    con.commit()
 
 
 def load_shell(con: sqlite3.Connection, shell_id: int):
@@ -434,10 +454,16 @@ def _run_turn(shell, msg, in_flight, in_flight_started, in_flight_warned, lock):
             in_flight_warned.discard(sid)
 
 
-def shell_loop(shell_id: int):
+def shell_loop(shell_id: int, stop_event: threading.Event):
     """One thread per browser shell. Submits per-message work to a per-shell
     pool, with a per-session lock so two messages in the same session
     serialize (history dependency) while different sessions run in parallel.
+
+    Runs until `stop_event` is set — the supervisor sets it when the shell
+    drops browser_chat=1. On stop the polling halts at once and the pool
+    drains in-flight turns before the thread exits; the supervisor will not
+    re-spawn a thread for this shell until the old one is gone, so a shell
+    never has two loops racing the same unread rows.
 
     A sessionless inbound message (chat_session_id IS NULL) keys on None;
     such messages serialize against each other but that is acceptable —
@@ -452,13 +478,13 @@ def shell_loop(shell_id: int):
     in_flight_warned: set = set()
     lock = threading.Lock()
 
-    while True:
+    while not stop_event.is_set():
         try:
             con = db()
             shell = load_shell(con, shell_id)
             if not shell:
                 con.close()
-                time.sleep(5.0)
+                stop_event.wait(5.0)
                 continue
             unread = fetch_unread_for_shell(con, shell_id)
             con.close()
@@ -492,7 +518,10 @@ def shell_loop(shell_id: int):
         except Exception as e:
             print(f"shell-{shell_id} loop error: {e}", file=sys.stderr, flush=True)
             traceback.print_exc()
-        time.sleep(POLL_MS / 1000.0)
+        stop_event.wait(POLL_MS / 1000.0)
+
+    pool.shutdown(wait=True)
+    print(f"shell-{shell_id} loop stopped — browser_chat cleared", flush=True)
 
 
 def main() -> None:
@@ -513,34 +542,29 @@ def main() -> None:
     lockfile.write(f"{os.getpid()}\n")
     lockfile.flush()
 
-    # Boot-clear stale in-flight markers (safe — we are the sole dispatcher).
     # Assert WAL so concurrent workers writing chat_* never block readers.
     boot_con = db()
     journal_mode = boot_con.execute("PRAGMA journal_mode").fetchone()[0]
     if journal_mode.lower() != "wal":
         boot_con.execute("PRAGMA journal_mode=WAL")
         journal_mode = boot_con.execute("PRAGMA journal_mode").fetchone()[0]
-    shell_ids = discover_browser_shell_ids(boot_con)
-    if shell_ids:
-        placeholders = ",".join("?" * len(shell_ids))
-        boot_con.execute(
-            f"UPDATE chat_sessions SET turn_in_flight_at=NULL, turn_in_flight_message_id=NULL "
-            f"WHERE shell_id IN ({placeholders})", shell_ids,
-        )
-        boot_con.commit()
     boot_con.close()
 
+    # Live shell membership. `running` holds one thread + stop-event per
+    # browser_chat=1 shell; `draining` holds threads told to stop that have
+    # not yet finished their in-flight turns. The supervisor loop reconciles
+    # `running` against the DB every RECONCILE_SEC. Per-shell in-flight
+    # markers are cleared as each shell joins (clear_in_flight).
+    running: dict[int, tuple[threading.Thread, threading.Event]] = {}
+    draining: list[tuple[int, threading.Thread]] = []
+
     def _on_sigterm(signum, frame):
-        print("dispatch_live SIGTERM — flushing in-flight markers", flush=True)
+        print("dispatch_live SIGTERM — stopping shell loops + flushing markers", flush=True)
+        for _t, ev in running.values():
+            ev.set()
         try:
             con = db()
-            if shell_ids:
-                ph = ",".join("?" * len(shell_ids))
-                con.execute(
-                    f"UPDATE chat_sessions SET turn_in_flight_at=NULL, "
-                    f"turn_in_flight_message_id=NULL WHERE shell_id IN ({ph})", shell_ids,
-                )
-                con.commit()
+            clear_in_flight(con, list(running.keys()))
             con.close()
         except Exception as e:
             print(f"  flush failed: {e}", file=sys.stderr, flush=True)
@@ -554,22 +578,44 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _on_sigterm)
     signal.signal(signal.SIGINT, _on_sigterm)
 
-    print(f"dispatch_live started — model={MODEL} api={API_BASE} "
-          f"browser_shells={shell_ids} poll={POLL_MS}ms pool={POOL_WORKERS} "
-          f"journal={journal_mode} pid={os.getpid()}", flush=True)
+    print(f"dispatch_live started — model={MODEL} api={API_BASE} poll={POLL_MS}ms "
+          f"reconcile={RECONCILE_SEC}s pool={POOL_WORKERS} journal={journal_mode} "
+          f"pid={os.getpid()}", flush=True)
 
-    if not shell_ids:
-        print("  no shells with browser_chat=1 — idle. Set the flag and restart.", flush=True)
-
-    threads = []
-    for sid in shell_ids:
-        t = threading.Thread(target=shell_loop, args=(sid,), name=f"shell-{sid}", daemon=True)
-        t.start()
-        threads.append(t)
-
-    # Block forever; threads are daemons so SIGTERM kills the process cleanly.
+    # Supervisor: spawn a shell_loop for every shell that gains browser_chat=1,
+    # stop the loop for every shell that loses it. A re-activated shell waits
+    # until its previous (draining) thread is gone, so its unread rows are
+    # never polled by two loops at once.
     while True:
-        time.sleep(3600)
+        try:
+            draining = [(sid, t) for sid, t in draining if t.is_alive()]
+            draining_shells = {sid for sid, _ in draining}
+
+            con = db()
+            current = set(discover_browser_shell_ids(con))
+
+            for sid in sorted(running.keys() - current):
+                t, ev = running.pop(sid)
+                ev.set()
+                draining.append((sid, t))
+                print(f"  - shell {sid} left dispatcher (browser_chat=0)", flush=True)
+
+            for sid in sorted(current - running.keys()):
+                if sid in draining_shells:
+                    continue   # prior thread still draining — retry next cycle
+                clear_in_flight(con, [sid])
+                ev = threading.Event()
+                t = threading.Thread(target=shell_loop, args=(sid, ev),
+                                     name=f"shell-{sid}", daemon=True)
+                t.start()
+                running[sid] = (t, ev)
+                print(f"  + shell {sid} joined dispatcher (browser_chat=1)", flush=True)
+
+            con.close()
+        except Exception as e:
+            print(f"supervisor loop error: {e}", file=sys.stderr, flush=True)
+            traceback.print_exc()
+        time.sleep(RECONCILE_SEC)
 
 
 if __name__ == "__main__":
