@@ -21,9 +21,9 @@ help:
 	@echo "  make catalogue           print the substrate catalogue (filter via ARGS=, e.g. ARGS='api')"
 	@echo "  make collect-hardware    probe this host into user_hardware (ARGS='--user-id N')"
 	@echo "  make sync-models         sync the models table from Ollama (runs collect-hardware first)"
-	@echo "  make up                  pm2 start the UI + dispatcher; API + broker run as containers"
-	@echo "  make down                pm2 delete the UI + dispatcher"
-	@echo "  make restart             pm2 restart the UI + dispatcher"
+	@echo "  make up                  pm2 start the UI, dispatcher + model-sync; API + broker are containers"
+	@echo "  make down                pm2 delete the UI, dispatcher + model-sync"
+	@echo "  make restart             pm2 restart the UI, dispatcher + model-sync"
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
 	@echo "  make health              curl http://127.0.0.1:8001/health"
@@ -84,7 +84,7 @@ up:
 	@pm2 start ecosystem.config.cjs
 
 down:
-	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui dosarch-dispatch 2>/dev/null || true
+	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui dosarch-dispatch dosarch-modelsync 2>/dev/null || true
 
 restart:
 	@pm2 restart ecosystem.config.cjs

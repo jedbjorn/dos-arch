@@ -23,9 +23,15 @@ Requires a user_hardware row for this host first — run collect_hardware.py.
 
 Usage:
     python3 shell_core/scripts/model_sync.py [--user-id N] [--db PATH]
+    python3 shell_core/scripts/model_sync.py --watch [--interval SECONDS]
+
+`--watch` runs continuously, re-syncing whenever Ollama's installed-model
+set changes (a pull or an rm). dos-arch runs it this way as the
+`dosarch-modelsync` pm2 process, so the registry tracks Ollama hands-free.
 
 Env:
-    OLLAMA_HOST   override the Ollama endpoint (default 127.0.0.1:11434)
+    OLLAMA_HOST           override the Ollama endpoint (default 127.0.0.1:11434)
+    MODEL_WATCH_INTERVAL  --watch poll interval in seconds (default 30)
 """
 import argparse
 import json
@@ -33,6 +39,7 @@ import os
 import socket
 import sqlite3
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -236,7 +243,7 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int,
 
     Returns (promoted, reactivated, deactivated).
     """
-    endpoint = base.rstrip("/") + "/v1"  # Ollama's OpenAI-compatible base URL
+    endpoint = base.rstrip("/")  # Ollama base URL — the adapter appends /api/chat
     installed = con.execute(
         "SELECT name, context_length, min_vram_gb FROM installed_models "
         "WHERE hardware_id=? AND status='installed'",
@@ -285,12 +292,60 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int,
     return promoted, reactivated, cur.rowcount
 
 
+def watch(db_path: Path, user_id: int, interval: int) -> None:
+    """Re-sync whenever Ollama's installed-model set changes.
+
+    A standing process (dos-arch runs it as the `dosarch-modelsync` pm2 app):
+    every `interval` seconds it fetches `/api/tags` and compares a signature
+    of (name, digest) pairs against the last seen. On any change — and on
+    first start — it runs the full sync. A failure (Ollama down, no
+    user_hardware row) is logged once, then retried each tick until it clears.
+    """
+    base = _ollama_base()
+    print(f"model_sync watch: polling {base} every {interval}s", flush=True)
+    last_sig: tuple | None = None
+    last_err: str | None = None
+    while True:
+        err: str | None = None
+        try:
+            tags = _api(base, "/api/tags")
+            sig = tuple(sorted(
+                (m["name"], m.get("digest", "")) for m in tags.get("models", [])
+            ))
+            if sig != last_sig:
+                print(f"model_sync watch: installed set changed "
+                      f"({len(sig)} model(s)) — syncing", flush=True)
+                sync(db_path, user_id)
+                last_sig = sig
+        except SystemExit as e:
+            err = f"sync aborted: {e}"
+        except (urllib.error.URLError, OSError) as e:
+            err = f"Ollama unreachable: {e}"
+        except Exception as e:                       # noqa: BLE001
+            err = f"unexpected {type(e).__name__}: {e}"
+        if err and err != last_err:
+            print(f"model_sync watch: {err} — will retry", file=sys.stderr, flush=True)
+        last_err = err
+        time.sleep(interval)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Sync installed_models + the models registry from Ollama.")
     ap.add_argument("--user-id", type=int, default=1, help="owning user_id (default 1)")
     ap.add_argument("--db", type=Path, default=DEFAULT_DB, help="path to shell_db.db")
+    ap.add_argument("--watch", action="store_true",
+                    help="run continuously, re-syncing when Ollama's installed set changes")
+    try:
+        default_interval = max(5, int(os.environ.get("MODEL_WATCH_INTERVAL", "30")))
+    except ValueError:
+        default_interval = 30
+    ap.add_argument("--interval", type=int, default=default_interval,
+                    help="--watch poll interval in seconds (default 30)")
     args = ap.parse_args()
-    sync(args.db, args.user_id)
+    if args.watch:
+        watch(args.db, args.user_id, args.interval)
+    else:
+        sync(args.db, args.user_id)
     return 0
 
 

@@ -1,9 +1,10 @@
 // pm2 process map for the dos-arch substrate — host-level services.
 // Run from the repo root:  pm2 start ecosystem.config.cjs
 //
-// Two apps run here: the SvelteKit UI and the browser-chat dispatcher. The
-// credential broker and the substrate API run as their own containers on the
-// dos-net network (dos-broker, dos-api) — see install/broker-up.sh + api-up.sh.
+// Three apps run here: the SvelteKit UI, the browser-chat dispatcher, and the
+// Ollama model-sync watcher. The credential broker and the substrate API run
+// as their own containers on the dos-net network (dos-broker, dos-api) — see
+// install/broker-up.sh + api-up.sh.
 
 const fs   = require('fs');
 const os   = require('os');
@@ -44,6 +45,19 @@ module.exports = {
       summary: 'Browser-chat dispatcher — own-runtime agent loop serving chat-enabled shells',
       cwd: __dirname,
       script: path.join(__dirname, 'shell_core/services/dispatch_live.py'),
+      interpreter: path.join(__dirname, '.venv/bin/python3'),
+      env: loadEnv(),
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 2000,
+      kill_timeout: 5000,
+    },
+    {
+      name: 'dosarch-modelsync',
+      summary: 'Watches Ollama for installed-model changes — keeps the models registry synced',
+      cwd: __dirname,
+      script: path.join(__dirname, 'shell_core/scripts/model_sync.py'),
+      args: '--watch',
       interpreter: path.join(__dirname, '.venv/bin/python3'),
       env: loadEnv(),
       autorestart: true,

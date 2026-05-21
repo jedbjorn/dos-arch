@@ -184,10 +184,10 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
 #   (name, display_name, provider, auth_ref, tool_dialect, locality, endpoint)
 # Model names verified live against each provider's models.list() — keep them
 # current; a stale name is a hard 404 at call time.
-# Local models: `endpoint` points at the Ollama OpenAI-compatible server; the
-# OllamaAdapter uses tool_dialect='openai' for tool-capable local models. The
-# `qwen2.5:3b` row is a starter placeholder — adjust the endpoint to wherever
-# Ollama actually runs (the dev box has no Ollama; verification points elsewhere).
+# Local models: `endpoint` is the Ollama server base URL; the OllamaAdapter
+# speaks Ollama's native /api/chat (tool_dialect='openai' names the tool-schema
+# shape). The `qwen2.5:3b` row is a starter placeholder — adjust the endpoint
+# to wherever Ollama runs, then let model_sync.py populate the rest.
 _MODELS = [
     ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
     ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
@@ -195,7 +195,7 @@ _MODELS = [
     ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
     ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
     ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
-    ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434/v1"),
+    ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434"),
 ]
 
 
