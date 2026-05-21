@@ -77,7 +77,7 @@ The full, current endpoint list is always at `$DOS_API_URL/openapi.json`.
 
 | Surface | Endpoint(s) | Protocol |
 |---|---|---|
-| **Identity (core)** | `GET` / `PATCH /shells/<self>` | `mandate`, `system_prompt`, `current_state`. `current_state` is a rolling 280-char status — `PATCH` in place, never a log; the cap is trigger-enforced server-side. Laws are universal — rendered into this file's preamble, not API memory. |
+| **Identity (core)** | `GET` / `PATCH /shells/<self>` | `mandate`, `system_prompt`, `current_state`. `current_state` is a rolling status — `PATCH` in place, never a log; aim ~500 chars, a soft target (not length-enforced). Laws are universal — rendered into this file's preamble, not API memory. |
 | **Identity (seed + L&S)** | `POST /shells/<self>/identity-entries` · `PATCH …/identity-entries/{id}` | `kind` = `seed` (cap 10) or `lns` (cap 20); caps enforced server-side. `POST` to add; `PATCH …/identity-entries/{id}` with `{"retire": true}` to curate out — preserved row, no edit (Law 3 spirit). |
 | **Decisions** | `POST` / `GET /shells/<self>/decisions` | Major decisions (M only), **including project-architectural decisions made while working in a code repo**. Repo-level ADR files are mirrors for the repo's audience — never a substitute for the decision record. `POST` new; never edit a prior one — supersede via `parent_decision_id`. |
 | **Flags** | `POST /flags` · `GET /flags` · `PATCH /flags/{id}/resolve` | `POST` to open, `PATCH /resolve` to close, reopen, or set tracking. `resolved` is tri-state: `0` = Open, `1` = Resolved, `2` = Tracking. |
@@ -101,10 +101,10 @@ The full, current endpoint list is always at `$DOS_API_URL/openapi.json`.
 
 Memory is written as it happens, not at close. No batch reconstruction.
 
-**How to write:** every write below is a substrate-API call — the endpoint map is in MEMORY ARCHITECTURE, exact request shapes are at `$DOS_API_URL/openapi.json`. The prose here is *when* and *why*; the API is *how*. Caps and other invariants are enforced server-side: an over-cap or malformed write returns an error response, never a silent success.
+**How to write:** every write below is a substrate-API call — the endpoint map is in MEMORY ARCHITECTURE, exact request shapes are at `$DOS_API_URL/openapi.json`. The prose here is *when* and *why*; the API is *how*. Count caps and other invariants are enforced server-side: a malformed or count-cap-breaking write returns an error response. Entry-body and `current_state` length are soft targets — aim for them; an occasional overrun is accepted.
 
 **current_state** — rolling status, **not a log**. `PATCH /shells/<self>` with a new `current_state`; replace in place, never append.
-- Hard cap: **280 chars**, enforced server-side. Over-cap writes are rejected.
+- Soft target: **~500 chars** — aim for it; length is not enforced, an occasional overrun is fine.
 - Content: what you're working on now / what comes next based on this. Not history.
 - Rewrite when focus shifts. The narrative captures the arc; current_state captures the present.
 - `run.py` re-renders the per-shell `CLAUDE.md` from this field at every launch.

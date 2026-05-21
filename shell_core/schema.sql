@@ -109,8 +109,22 @@ CREATE TABLE skills (
     content     TEXT,
     command     TEXT,
     common      INTEGER NOT NULL DEFAULT 1,
-    is_deleted  INTEGER NOT NULL DEFAULT 0
+    is_deleted  INTEGER NOT NULL DEFAULT 0,
+    trigger_explicit TEXT,                   -- the --name token (spec §07)
+    trigger_keywords TEXT,                   -- comma-separated keyword list
+    trigger_use_when TEXT                    -- one-sentence disambiguator
 );
+
+-- Default trigger_explicit to '--' || name on every insert that leaves it
+-- NULL. Overridable: set trigger_explicit explicitly to keep a legacy /
+-- short token. (Migration 020.)
+CREATE TRIGGER trg_skills_explicit_default
+AFTER INSERT ON skills
+WHEN NEW.trigger_explicit IS NULL
+BEGIN
+  UPDATE skills SET trigger_explicit = '--' || NEW.name
+  WHERE skill_id = NEW.skill_id;
+END;
 
 CREATE TABLE shell_skills (
     shell_skill_id  INTEGER PRIMARY KEY,
@@ -133,7 +147,8 @@ CREATE TABLE tools (
     spec        TEXT,                       -- JSON parameter schema
     handler     TEXT,                       -- executor key (e.g. 'api')
     status      TEXT    NOT NULL DEFAULT 'active'
-                CHECK (status IN ('active','inactive'))
+                CHECK (status IN ('active','inactive')),
+    parsed_example TEXT                      -- parsed-dialect invocation example (spec §05)
 );
 
 CREATE TABLE shell_tools (
@@ -237,7 +252,9 @@ CREATE TABLE shell_identity_entries (
     body        TEXT    NOT NULL,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     retired_at  TEXT,
-    is_deleted  INTEGER NOT NULL DEFAULT 0
+    is_deleted  INTEGER NOT NULL DEFAULT 0,
+    priority    TEXT    CHECK (priority IN ('H','M','L')) DEFAULT 'M',
+    pin         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TRIGGER trg_sie_cap_seed
@@ -262,42 +279,9 @@ BEGIN
   SELECT RAISE(ABORT, 'L&S cap (20) reached for this shell — retire an entry first');
 END;
 
--- Per-entry body caps, by kind: seed 800 (a reflective moment), L&S 400 (a
--- terse principle). Distilled, not logs. BEFORE INSERT only — bodies are
--- immutable (Law 3).
-CREATE TRIGGER trg_sie_body_cap_seed
-BEFORE INSERT ON shell_identity_entries
-WHEN NEW.kind = 'seed' AND length(NEW.body) > 800
-BEGIN
-  SELECT RAISE(ABORT, 'seed entry body exceeds 800 chars — a distilled moment, not a log; trim it');
-END;
-
-CREATE TRIGGER trg_sie_body_cap_lns
-BEFORE INSERT ON shell_identity_entries
-WHEN NEW.kind = 'lns' AND length(NEW.body) > 400
-BEGIN
-  SELECT RAISE(ABORT, 'L&S entry body exceeds 400 chars — a distilled principle, not a log; trim it');
-END;
-
--- ── current_state length cap (rolling status, not a log) ────────────────────
--- Hard cap at 280 chars (~2 lines, ~70 tokens). current_state describes what
--- the shell is working on now and what comes next — NOT a session log. It is
--- rolling: writes overwrite. Identity bodies belong in seed/L&S; logs belong
--- in shell_memory_archives. Triggers below abort writes that exceed the cap.
-
-CREATE TRIGGER trg_current_state_cap_insert
-BEFORE INSERT ON shells
-WHEN NEW.current_state IS NOT NULL AND length(NEW.current_state) > 280
-BEGIN
-  SELECT RAISE(ABORT, 'current_state exceeds 280 chars — rolling status, not a log; trim to "now / next"');
-END;
-
-CREATE TRIGGER trg_current_state_cap_update
-BEFORE UPDATE OF current_state ON shells
-WHEN NEW.current_state IS NOT NULL AND length(NEW.current_state) > 280
-BEGIN
-  SELECT RAISE(ABORT, 'current_state exceeds 280 chars — rolling status, not a log; trim to "now / next"');
-END;
+-- Per-entry body length and current_state length are soft caps as of
+-- migration 020 — a rendered ~target, no ABORT trigger. The count caps
+-- above (trg_sie_cap_seed/lns) stay: curation, not tokens.
 
 -- ── Projects (per-shell project memory + standing procedures) ────────────────
 
