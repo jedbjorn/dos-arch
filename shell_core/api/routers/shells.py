@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 import re
 import uuid
 from datetime import date
-from pathlib import Path
 
 from api.common.db import get_db
 from api.common.auth import _require_shell_creator
@@ -16,8 +15,6 @@ router = APIRouter(tags=["shells"])
 TOKEN_WARN      = 140_000
 TOKEN_AUTOCLEAR = 150_000
 
-_SYSTEM_PROMPT_TEMPLATE = Path(__file__).resolve().parents[2] / "templates" / "shell_system_prompt.md"
-
 
 # ── Shell creation ────────────────────────────────────────────────────────────
 
@@ -26,8 +23,6 @@ class CreateShellBody(BaseModel):
     shortname:         str
     role:              str | None = None
     mandate:           str | None = None
-    domain_and_scope:  str
-    operating_context: str
     connections:       str | None = None
     partner:           str | None = None
     user_id:           int
@@ -35,7 +30,7 @@ class CreateShellBody(BaseModel):
     api_auth:          int = 0   # 0 = CLI shell (browser-auth); 1 = API shell (broker-routed)
 
 
-@router.post("/shells", summary="Create a new shell from the system-prompt template (Forge / admin / UI only)")
+@router.post("/shells", summary="Create a new shell — role / mandate / connections columns (Forge / admin / UI only)")
 def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db)):
     _require_shell_creator(request, con)
 
@@ -49,25 +44,15 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
     if not con.execute("SELECT 1 FROM users WHERE user_id=?", (body.user_id,)).fetchone():
         raise HTTPException(404, f"user_id {body.user_id} not found")
 
-    # Render the canonical template. The domain sections come from the body;
-    # the operational blocks are template-verbatim. <self> stays literal —
-    # run.py substitutes it for the booting shell's id at render time.
-    additional_prompt = (_SYSTEM_PROMPT_TEMPLATE.read_text()
-        .replace("{{DISPLAY_NAME}}", body.display_name)
-        .replace("{{SHORTNAME}}", short)
-        .replace("{{FLAG_PREFIX}}", short.upper())
-        .replace("{{DOMAIN_AND_SCOPE}}", body.domain_and_scope)
-        .replace("{{OPERATING_CONTEXT}}", body.operating_context))
-    if "{{" in additional_prompt:
-        raise HTTPException(500, "system-prompt template left an unfilled slot")
-
+    # Identity is columns, not a rendered template: role / mandate frame the
+    # shell (catalog Section C), connections is its operating context
+    # (Section B). The boot-prompt catalog composes the rest.
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "additional_prompt, connections, user_id, is_shared, is_admin, api_auth) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
+        "connections, user_id, is_shared, is_admin, api_auth) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
         (body.display_name, short, body.partner, body.role, body.mandate,
-         additional_prompt, body.connections, body.user_id,
-         1 if body.api_auth else 0),
+         body.connections, body.user_id, 1 if body.api_auth else 0),
     )
     new_id = cur.lastrowid
 

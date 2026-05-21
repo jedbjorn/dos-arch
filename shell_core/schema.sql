@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS "shells" (
     partner               TEXT,
     role                  TEXT,
     mandate               TEXT,
-    additional_prompt     TEXT    NOT NULL,
     boot_document         TEXT,
     current_state         TEXT,
     connections           TEXT,
