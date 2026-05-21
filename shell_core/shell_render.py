@@ -25,7 +25,9 @@ same directory on ``sys.path`` before importing this module.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
+from pathlib import Path
 
 
 def render_identity(shell_row: sqlite3.Row) -> str:
@@ -95,12 +97,17 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
 # sixteen; the per-section renderers above and below it are the building
 # blocks.
 #
-# Slice 1 (this change) wires every DB-driven section. The baked universal
-# sections — Memory protocol, Laws, Communication, Output shape — and the
-# dialect-shaped Tools section render a `_pending` placeholder until their
-# slices land. `assemble_catalog` is not yet called by either render path.
+# The DB-driven sections render from live shell state. The baked universal
+# sections — Memory protocol, Laws, Communication, Output shape — come from
+# templates/catalog_universal.md via `render_universal`. The dialect-shaped
+# Tools section still renders a `_pending` placeholder until slice 3.
+# `assemble_catalog` is not yet called by either render path.
 
 RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
+
+# The baked universal layer — sections identical for every shell (spec §02).
+_UNIVERSAL_PATH = Path(__file__).resolve().parent / "templates" / "catalog_universal.md"
+_UNIVERSAL_MARKER = re.compile(r"^<!-- @@ (\w+) @@ -->$")
 
 
 def _pending(slice_label: str) -> str:
@@ -108,6 +115,23 @@ def _pending(slice_label: str) -> str:
     slice. Visible only when `assemble_catalog` is exercised directly — no
     render path calls it yet."""
     return f"_(pending — {slice_label})_"
+
+
+def render_universal() -> dict[str, str]:
+    """Parse the baked universal layer (`templates/catalog_universal.md`) into
+    its section bodies, keyed by marker: SYSTEM_OVERRIDE, MEMORY_PROTOCOL,
+    LAWS, COMMUNICATION, OUTPUT_SHAPE. These sections are identical for every
+    shell (spec §02); the file is their single source of truth."""
+    blocks: dict[str, list[str]] = {}
+    key: str | None = None
+    for line in _UNIVERSAL_PATH.read_text().splitlines():
+        marker = _UNIVERSAL_MARKER.match(line)
+        if marker:
+            key = marker.group(1)
+            blocks[key] = []
+        elif key is not None:
+            blocks[key].append(line)
+    return {k: "\n".join(v).strip() for k, v in blocks.items()}
 
 
 def render_boot_context(runtime_ctx: dict) -> str:
@@ -199,13 +223,13 @@ def assemble_catalog(
     dialect: str = "anthropic",
     runtime_ctx: dict,
 ) -> str:
-    """Compose the full 16-section typed boot-prompt catalog (spec §02) for a
-    shell. Pure read.
+    """Compose the full typed boot-prompt catalog (spec §02) for a shell — a
+    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections. Pure read.
 
     `runtime_ctx` carries the render-time values a DB query cannot give —
-    wall-clock, session ids; see `render_boot_context`. `dialect` shapes the
-    Tools and Output sections (slice 3); until then those, and the baked
-    universal sections, render as `_pending` placeholders.
+    wall-clock, session ids; see `render_boot_context`. The baked universal
+    sections come from `catalog_universal.md`; `dialect` shapes the Tools
+    section, still a `_pending` placeholder until slice 3.
 
     Not yet wired into either render path — `compose_claude_md` and
     `compose_boot_document` are cut over to it in later slices."""
@@ -216,6 +240,7 @@ def assemble_catalog(
     ).fetchone()
     if shell is None:
         raise ValueError(f"shell {shell_id} not found")
+    universal = render_universal()
 
     # ⌂ then A–O, in catalog order (spec §02).
     sections = [
@@ -226,14 +251,15 @@ def assemble_catalog(
         ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
         ("TOOLS",             _pending("slice 3 — dialect-aware tool roster")),
         ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
-        ("MEMORY PROTOCOL",   _pending("slice 2 — baked universal template")),
+        ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"]),
         ("CURRENT STATE",     render_current_state(shell)),
         ("SEED",              render_seed(con, shell_id)),
         ("LESSONS & STANCES", render_lns(con, shell_id)),
         ("RECENT DECISIONS",  render_recent_decisions(con, shell_id)),
         ("OPEN FLAGS",        render_flags_pointer(con, shell_id)),
-        ("LAWS",              _pending("slice 2 — baked universal template")),
-        ("COMMUNICATION",     _pending("slice 2 — baked universal template")),
-        ("OUTPUT SHAPE",      _pending("slice 2/3 — baked + dialect tail")),
+        ("LAWS",              universal["LAWS"]),
+        ("COMMUNICATION",     universal["COMMUNICATION"]),
+        ("OUTPUT SHAPE",      universal["OUTPUT_SHAPE"]),
     ]
-    return "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
+    catalog = "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
+    return f"## SYSTEM OVERRIDE ##\n{universal['SYSTEM_OVERRIDE']}\n\n{catalog}"
