@@ -25,6 +25,7 @@ same directory on ``sys.path`` before importing this module.
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -215,128 +216,78 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
     return f"{n} open. Invoke `--flag-triage` to surface."
 
 
-# Section E — the common memory-tool roster (spec §06.1). Authored vocabulary,
-# not a `tools`-table read: it names the substrate memory operations every
-# shell shares. MEMORY PROTOCOL (section G) carries their API form and the
-# when/why; this section is the call surface, shaped per dialect (spec §05).
-_COMMON_TOOLS = [
-    {
-        "name": "identity_write",
-        "sig": "kind, body, source_tag?",
-        "purpose": "append a seed or L&S entry to your own memory",
-        "params": [
-            ("kind", "str", "required", "one of: seed | lns"),
-            ("body", "str", "required", "the entry — aim ~500 chars"),
-            ("source_tag", "str", "optional", "a short project tag"),
-        ],
-        "example": {"kind": "lns",
-                    "body": "prefer editing an existing file over making a new one"},
-    },
-    {
-        "name": "identity_retire",
-        "sig": "entry_id",
-        "purpose": "curate out a seed or L&S entry — preserves the row, no edit",
-        "params": [("entry_id", "int", "required", "the entry to retire")],
-        "example": {"entry_id": "42"},
-    },
-    {
-        "name": "decision_record",
-        "sig": "decision, rationale, priority?",
-        "purpose": "record a Major decision",
-        "params": [
-            ("decision", "str", "required", "what was decided"),
-            ("rationale", "str", "required", "why"),
-            ("priority", "str", "optional", "defaults to M"),
-        ],
-        "example": {"decision": "render Section E from a static roster",
-                    "rationale": "the tools table holds HTTP verbs, not semantic tools"},
-    },
-    {
-        "name": "state_update",
-        "sig": "current_state?, connections?",
-        "purpose": "replace your rolling current_state (or connections)",
-        "params": [
-            ("current_state", "str", "optional", "the new now/next status"),
-            ("connections", "str", "optional", "where things live"),
-        ],
-        "example": {"current_state": "drafting the tool roster; next: wire it in"},
-    },
-    {
-        "name": "flag_open",
-        "sig": "display_name, priority, description?",
-        "purpose": "open a flag for a blocker",
-        "params": [
-            ("display_name", "str", "required", "e.g. SA-001"),
-            ("priority", "str", "required", "one of: High | Medium | Low"),
-            ("description", "str", "optional", "[Area] what | Blocker for: x"),
-        ],
-        "example": {"display_name": "SA-007", "priority": "High",
-                    "description": "[render] dialect resolution unspecified"},
-    },
-    {
-        "name": "flag_resolve",
-        "sig": "flag_id, resolution_notes?",
-        "purpose": "resolve or reopen a flag",
-        "params": [
-            ("flag_id", "int", "required", "the flag to resolve"),
-            ("resolution_notes", "str", "optional", "how it was resolved"),
-        ],
-        "example": {"flag_id": "7", "resolution_notes": "fixed in PR #52"},
-    },
-    {
-        "name": "narrative_append",
-        "sig": "archive_id, body",
-        "purpose": "append an entry to this session's narrative",
-        "params": [
-            ("archive_id", "int", "required", "your archive — see BOOT"),
-            ("body", "str", "required", "[HH:MM] 1-2 lines"),
-        ],
-        "example": {"archive_id": "12",
-                    "body": "[14:32] shipped the tool roster, dialect-shaped"},
-    },
-    {
-        "name": "openapi_fetch",
-        "sig": "",
-        "purpose": "return the live substrate endpoint inventory",
-        "params": [],
-        "example": {},
-    },
-]
+# Section E — the tools this shell can call. Read from the `tools` ⋈
+# `shell_tools` grant — the same source the dispatcher's `load_tools()` uses,
+# so the prompt and the runtime cannot disagree on what the shell can call.
+# The substrate API is the whole tool surface; these are generic HTTP verbs
+# against it. Which path is a seed / a decision / a flag — that map is in
+# MEMORY PROTOCOL (section G).
 
 
-def render_tools(dialect: str = "anthropic") -> str:
-    """Section E — the common memory-tool roster, shaped by tool dialect
-    (spec §05). `anthropic` / `openai`: a compact name + purpose roster — the
-    provider applies the schema. `parsed`: each tool with its params, a worked
-    invocation, and a refusal fallback — a local model forms the call as text
-    and the harness extracts it."""
+def _spec_params(spec: str | None) -> list[str]:
+    """Rendered param lines from a tool's JSON-schema `spec` — for the parsed
+    dialect, where the local model forms the call as text."""
+    try:
+        schema = json.loads(spec) if spec else {}
+    except (json.JSONDecodeError, TypeError):
+        return []
+    required = set(schema.get("required", []))
+    lines = []
+    for name, prop in (schema.get("properties") or {}).items():
+        typ = prop.get("type", "?")
+        req = "required" if name in required else "optional"
+        note = prop.get("description", "")
+        lines.append(f"  {name:<6} {typ:<8} {req}" + (f"  {note}" if note else ""))
+    return lines
+
+
+def render_tools(con: sqlite3.Connection, shell_id: int,
+                 dialect: str = "anthropic") -> str:
+    """Section E — the shell's granted tools (`tools` ⋈ `shell_tools`), shaped
+    by tool dialect (spec §05). `anthropic` / `openai`: a name + description
+    roster — the provider applies each tool's schema. `parsed`: each tool with
+    its params and a worked `<tool:…>` invocation, for a local model that
+    forms the call as text."""
+    rows = con.execute(
+        "SELECT t.name, t.description, t.spec FROM tools t "
+        "JOIN shell_tools st ON st.tool_id = t.tool_id "
+        "WHERE st.shell_id=? AND t.status='active' ORDER BY t.tool_id",
+        (shell_id,),
+    ).fetchall()
+    if not rows:
+        return "(none granted)"
+
     if dialect == "parsed":
         out = [
             "# parsed dialect — the runtime applies no tool schema. Form each",
-            "# call in this format; the harness extracts and executes it.",
+            "# call in this format; the harness extracts and executes it. The",
+            "# endpoint paths are in MEMORY PROTOCOL.",
             "",
         ]
-        for t in _COMMON_TOOLS:
-            out.append(f"**{t['name']}** — {t['purpose']}")
-            if t["params"]:
+        for r in rows:
+            out.append(f"**{r['name']}** — {r['description']}")
+            params = _spec_params(r["spec"])
+            if params:
                 out.append("params:")
-                for name, typ, req, note in t["params"]:
-                    out.append(f"  {name:<14} {typ:<4} {req:<9} {note}")
-            out.append("invoke:")
-            if t["example"]:
-                out.append(f"  <tool:{t['name']}>")
-                out += [f"  {k}: {v}" for k, v in t["example"].items()]
-                out.append("  </tool>")
-            else:
-                out.append(f"  <tool:{t['name']} />")
+                out += params
             out.append("")
-        out.append("If you cannot form a valid call, say so plainly:")
-        out.append("  i can't record this yet — i'm missing {field}")
+        out += [
+            "invoke (example):",
+            "  <tool:api_post>",
+            "  path: /shells/<self>/decisions",
+            '  body: {"decision": "...", "rationale": "..."}',
+            "  </tool>",
+            "",
+            "If you cannot form a valid call, say so plainly:",
+            "  i can't do this yet — i'm missing {what}",
+        ]
         return "\n".join(out)
 
-    # anthropic / openai — a roster only; the provider applies the schema.
-    out = ["# the provider applies the tool schema — this is the roster."]
-    out += [f"- **{t['name']}({t['sig']})** — {t['purpose']}." for t in _COMMON_TOOLS]
+    # anthropic / openai — the provider applies each tool's schema; a roster
+    # is enough. The substrate API is the surface; paths are in MEMORY PROTOCOL.
+    out = ["# the provider applies each tool's schema — this is the roster.",
+           "# the substrate API is the surface; endpoint paths are in MEMORY PROTOCOL."]
+    out += [f"- **{r['name']}** — {r['description']}" for r in rows]
     return "\n".join(out)
 
 
@@ -396,7 +347,7 @@ def assemble_catalog(
         ("OPERATING CONTEXT", render_operating_context(shell)),
         ("DOMAIN & SCOPE",    render_domain_scope(shell)),
         ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
-        ("TOOLS",             render_tools(dialect)),
+        ("TOOLS",             render_tools(con, shell_id, dialect)),
         ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
         ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"]),
         ("CURRENT STATE",     render_current_state(shell)),

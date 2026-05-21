@@ -73,6 +73,14 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
         "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
         [(new_id, sid) for sid in skill_ids],
     )
+    # Grant the substrate tool set — every active tool, mirroring db_init's
+    # seed_tools. Without this a new shell has no `shell_tools` rows: an empty
+    # TOOLS section in the catalog and no tools from the dispatcher.
+    con.execute(
+        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+        "SELECT ?, tool_id FROM tools WHERE status='active'",
+        (new_id,),
+    )
     rerender_boot_document(con, new_id)
     con.commit()
     return {"shell_id": new_id, "shortname": short, "skills_attached": len(skill_ids)}
