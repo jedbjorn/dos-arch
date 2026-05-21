@@ -157,16 +157,6 @@ def get_shell_session_start(shell_id: int, con = Depends(get_db)):
     return payload
 
 
-# current_state cap — mirrors trg_current_state_cap_* in schema.sql.
-# Pre-validated in the handler so an over-cap write returns a clean 422
-# instead of the unhandled trigger ABORT surfacing as a 500.
-CURRENT_STATE_CAP = 280
-
-# Per-entry body caps for identity entries — mirror trg_sie_body_cap_* in
-# schema.sql. seed is reflective (800); L&S is a terse principle (400).
-IDENTITY_BODY_CAP = {"seed": 800, "lns": 400}
-
-
 class UpdateShellBody(BaseModel):
     display_name:      str | None = None
     shortname:         str | None = None
@@ -206,13 +196,9 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     if body.mandate is not None:
         fields.append("mandate = ?"); args.append(body.mandate.strip() or None)
     if body.current_state is not None:
+        # Rolling status — length is a rendered soft ~target, not enforced
+        # here (soft caps, spec §04 / migration 020).
         state = body.current_state.strip() or None
-        if state is not None and len(state) > CURRENT_STATE_CAP:
-            raise HTTPException(
-                422,
-                f"current_state exceeds {CURRENT_STATE_CAP} chars ({len(state)}) "
-                f'— rolling status, not a log; trim to "now / next"',
-            )
         fields.append("current_state = ?"); args.append(state)
     if body.connections is not None:
         fields.append("connections = ?"); args.append(body.connections.strip() or None)
@@ -252,7 +238,7 @@ class CreateIdentityEntryBody(BaseModel):
     source_tag: str | None = None
 
 
-@router.post("/shells/{shell_id}/identity-entries", summary="Create a seed or L&S entry (cap-enforced via trigger)")
+@router.post("/shells/{shell_id}/identity-entries", summary="Create a seed or L&S entry (count cap enforced via trigger)")
 def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = Depends(get_db)):
     if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
@@ -261,16 +247,9 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
     entry_body = body.body.strip()
     if not entry_body:
         raise HTTPException(422, "body is required")
-    # Body cap — mirrors trg_sie_body_cap_* in schema.sql. Pre-validated here
-    # so an over-cap write returns a clean 422 instead of the trigger ABORT
-    # surfacing as a 500 (same pattern as the current_state cap).
-    cap = IDENTITY_BODY_CAP[body.kind]
-    if len(entry_body) > cap:
-        raise HTTPException(
-            422,
-            f"{body.kind} entry body exceeds {cap} chars ({len(entry_body)}) "
-            "— identity entries are distilled, not logs; trim it",
-        )
+    # Body length is a rendered soft ~target as of migration 020 — not
+    # enforced here. The count caps (10 seed / 20 L&S) stay trigger-enforced;
+    # the INSERT below catches that ABORT and surfaces it as a 409.
     try:
         cur = con.execute("""
             INSERT INTO shell_identity_entries (shell_id, kind, entry_date, source_tag, body)
