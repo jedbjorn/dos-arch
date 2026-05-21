@@ -132,13 +132,18 @@ def render_boot_context(runtime_ctx: dict) -> str:
     """Section ⌂ — wall-clock + session metadata, computed by the caller at
     render time. A local model has no clock, so this section is its only one.
     `runtime_ctx` keys: `datetime` (a datetime), `session_id`, `archive_id`,
-    `shell_id`, and optional `model`."""
+    `shell_id`, and optional `model` / `operator`. `operator` names who is
+    driving the session — a shared shell (Forge) needs it to know who to
+    assign a newly-created shell to."""
     dt = runtime_ctx["datetime"]
     model = runtime_ctx.get("model") or "—"
+    line2 = f"shell_id: {runtime_ctx['shell_id']} · model: {model}"
+    if runtime_ctx.get("operator"):
+        line2 += f" · operator: {runtime_ctx['operator']}"
     return (
         f"session: {runtime_ctx['session_id']} · archive: {runtime_ctx['archive_id']} · "
         f"date: {dt:%Y-%m-%d (%A)} · {dt:%H:%M} local\n"
-        f"shell_id: {runtime_ctx['shell_id']} · model: {model}"
+        f"{line2}"
     )
 
 
