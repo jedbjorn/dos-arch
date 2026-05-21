@@ -588,7 +588,7 @@ made in Quickstart Step 0 — no second clone.
 3. Seeds every skill from `shell_core/assets/skills/` — one tracked `.md` per skill, frontmatter + body.
 4. Seeds Forge, the shared bootstrap shell, from `shell_core/assets/shells/forge.md` (`is_shared=1`, `create_shell` attached).
 5. Prompts for the first user — username + password. This is the substrate admin.
-6. Seeds Sys-Admin, the resident admin/dev shell, owned by that user — system prompt rendered from `shell_core/templates/shell_system_prompt.md`, with every `common`-flagged skill attached.
+6. Seeds Sys-Admin, the resident admin/dev shell, owned by that user — identity columns (`role`, `mandate`, `connections`) from `shell_core/assets/shells/sys-admin.md`, with every `common`-flagged skill attached.
 
 So a freshly-bootstrapped substrate already has a working admin shell. On
 `make launch` the first user enters their username, clears the password
@@ -664,7 +664,7 @@ shell_core/
   scripts/catalogue.py    `make catalogue` — print the catalogue grouped by ref_table
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
-  templates/              catalog_universal.md (baked catalog layer) + shell_system_prompt.md (new-shell template)
+  templates/              catalog_universal.md — baked universal layer of the boot-prompt catalog
   migrations/             Versioned *.sql migrations — applied in order by migrate.py (auto-run in api-up.sh; on demand via make migrate). schema.sql builds a fresh DB; migrations carry an existing one forward. _legacy/ holds pre-runner .py migrations, not applied.
 docker/
   shell/                  Dockerfile for the dos-shell image — one container per shell instance
@@ -687,7 +687,7 @@ is the canonical schema. Tables, grouped by purpose:
 
 **Identity**
 - `users` — username, scrypt password hash + salt, theme prefs.
-- `shells` — one row per shell. Identity columns + `additional_prompt` (operating protocol) + `boot_document` (materialized boot doc) + `current_state` + `connections` + `is_shared` + `user_id` (owner) + `browser_chat` (1 = served by the dispatcher).
+- `shells` — one row per shell. Identity columns + `boot_document` (materialized boot doc) + `current_state` + `connections` + `is_shared` + `user_id` (owner) + `browser_chat` (1 = served by the dispatcher).
 - `shell_identity_entries` — seed and L&S entries, one row each. Caps enforced by triggers.
 - `shell_decisions` — major decisions log. Append-only; supersede via `parent_decision_id`.
 
@@ -739,9 +739,8 @@ Triggers worth knowing about:
 
 **A shell** is one row in the `shells` table plus rows it accumulates in
 sibling tables (identity entries, decisions, archives, flags, projects,
-skills). Its `additional_prompt` carries the operating protocol; its identity
-columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) are
-stable; its `current_state` is a 280-char rolling status; and its
+skills). Its identity columns (`display_name`, `shortname`, `owner`, `role`,
+`mandate`) and `connections` are stable; its `current_state` is a 280-char rolling status; and its
 `shell_memory_archives` rows are the per-session narrative log.
 
 **The launcher** (`make launch` → `shell_core/scripts/run.py`):
@@ -792,7 +791,6 @@ When `run.py` boots a shell, it queries the DB and writes a flat
 | Render fields (session_id, archive_id) | `## ACTIVE SESSION` |
 | Authenticated user (`user_id`, `username`) | `## OPERATOR` — who is driving this session; Forge keys off this when assigning newly-created shells |
 | `shells` identity columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) | `## IDENTITY` |
-| `shells.additional_prompt` | `## SYSTEM PROMPT` (operating protocol — definitions, memory architecture, write protocol) |
 | `shells.current_state` | `## CURRENT STATE` (rolling 280-char status) |
 | `shell_identity_entries WHERE kind='seed'` | `## SEED` (row-per-entry, cap 10) |
 | `shell_identity_entries WHERE kind='lns'` | `## LESSONS & STANCES` (row-per-entry, cap 20) |
@@ -822,8 +820,7 @@ column as a cached system block and the tail as a fresh one each turn.
 
 ## How memory writes work
 
-Memory is written *as work happens*, not at session close. The shell's
-`additional_prompt` documents the per-table protocol; the short version:
+Memory is written *as work happens*, not at session close. The short version:
 
 | Surface | Write pattern |
 |---|---|
@@ -880,8 +877,8 @@ From inside Forge:
 1. The operator runs the `create_shell` skill.
 2. Forge interviews: display_name, shortname, mandate, role, owner.
 3. Forge INSERTs into `shells` (with `user_id` = the operator, `is_shared`
-   = 0, `additional_prompt` from a chosen template) and INSERTs links into
-   `shell_skills` for any baseline skills.
+   = 0, and `role` / `mandate` / `connections` from the interview) and
+   INSERTs links into `shell_skills` for any baseline skills.
 4. Operator restarts (`make launch`) and picks the new shell.
 5. The new shell runs `bootstrap_interview` on first boot — interviews the
    operator about projects, environment, and conventions, then writes a

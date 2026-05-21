@@ -54,7 +54,7 @@ Six auto-derive from real state; three are curated lists inside `dr_sync.py`:
 | Changed | Keep in sync |
 |---|---|
 | a route / router | the `summary=` and the router-module docstring |
-| a **core** memory endpoint (shell state, flags, seed/L&S, decisions) | also the `MEMORY ARCHITECTURE` table in `shell_core/templates/shell_system_prompt.md`, in the same PR |
+| a **core** memory endpoint (shell state, flags, seed/L&S, decisions) | also the `MEMORY_PROTOCOL` block in `shell_core/templates/catalog_universal.md`, in the same PR |
 | `ecosystem.config.cjs` | the app's `summary` field |
 | a backend / UI lib | the module docstring / first `//` comment |
 | a notable file, automation, or env var | the matching `_*_ENTRIES` list in `/substrate/shell_core/scripts/dr_sync.py` |

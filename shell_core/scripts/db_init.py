@@ -37,7 +37,6 @@ from shared_dirs import ensure_shared_dirs
 ROOT        = Path(__file__).resolve().parents[2]
 ASSETS      = ROOT / "shell_core" / "assets"
 SHELLS_DIR  = ASSETS / "shells"
-TEMPLATE    = ROOT / "shell_core" / "templates" / "shell_system_prompt.md"
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -245,12 +244,14 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
 
     seed_skills(con)
 
-    meta, prompt = parse_frontmatter((SHELLS_DIR / "forge.md").read_text())
+    # forge.md: frontmatter → identity columns; body → connections (the
+    # catalog's Operating Context section). No template, no additional_prompt.
+    meta, body = parse_frontmatter((SHELLS_DIR / "forge.md").read_text())
     cur = con.execute(
-        "INSERT INTO shells (display_name, shortname, mandate, additional_prompt, "
+        "INSERT INTO shells (display_name, shortname, mandate, connections, "
         "has_identity, is_shared) VALUES (?, ?, ?, ?, 1, ?)",
         (meta["display_name"], meta["shortname"], meta.get("mandate"),
-         prompt, int(meta.get("is_shared", "0"))),
+         body.strip(), int(meta.get("is_shared", "0"))),
     )
     forge_id = cur.lastrowid
     _attach_skills(con, forge_id, meta.get("skills", ""))
@@ -260,8 +261,8 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
 
 def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     """Seed the resident admin/dev shell, owned by `user_id`. Returns
-    (shell_id, created). The additional_prompt is rendered from the canonical
-    template, with the two domain sections supplied by sys-admin.md."""
+    (shell_id, created). sys-admin.md's frontmatter carries the identity
+    columns; its body is the shell's connections (catalog Operating Context)."""
     meta, body = parse_frontmatter((SHELLS_DIR / "sys-admin.md").read_text())
     shortname = meta["shortname"]
 
@@ -270,19 +271,6 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     ).fetchone()
     if existing:
         return existing[0], False
-
-    domain, _, operating = body.partition("## OPERATING CONTEXT")
-    domain = domain.replace("## DOMAIN & SCOPE", "").strip()
-    operating = operating.strip()
-
-    additional_prompt = (TEMPLATE.read_text()
-        .replace("{{DISPLAY_NAME}}", meta["display_name"])
-        .replace("{{SHORTNAME}}", shortname)
-        .replace("{{FLAG_PREFIX}}", shortname.upper())
-        .replace("{{DOMAIN_AND_SCOPE}}", domain)
-        .replace("{{OPERATING_CONTEXT}}", operating))
-    if "{{" in additional_prompt:
-        raise ValueError("unfilled template slot in sys-admin render")
 
     username = con.execute(
         "SELECT username FROM users WHERE user_id=?", (user_id,)
@@ -294,10 +282,10 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     # install with no post-install activation step.
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "additional_prompt, user_id, is_shared, is_admin, browser_chat) "
+        "connections, user_id, is_shared, is_admin, browser_chat) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1)",
         (meta["display_name"], shortname, username, meta.get("role"),
-         meta.get("mandate"), additional_prompt, user_id),
+         meta.get("mandate"), body.strip(), user_id),
     )
     sa_id = cur.lastrowid
     _attach_skills(con, sa_id, meta.get("skills", ""))
