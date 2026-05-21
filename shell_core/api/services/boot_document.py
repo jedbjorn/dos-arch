@@ -1,80 +1,45 @@
 """Boot-document composition — the materialized per-shell system prompt.
 
-`compose_boot_document` renders a shell's stable boot payload (Blocks 1-2 of
-the agnostic-runtime spec §5.1) from DB state. `rerender_boot_document` writes
-that render into `shells.boot_document`; the API identity-write paths call it
-so the column stays fresh without DB triggers (dos-arch decision #107).
+`compose_boot_document` renders a shell's boot document — the full typed
+section catalog (shell-prompt-renderer spec §02) — from DB state.
+`rerender_boot_document` writes that render into `shells.boot_document`; the
+API identity-write paths call it so the column stays fresh without DB
+triggers (dos-arch decision #107).
 
 `session_start_payload` is what `GET /shells/{id}/session-start` returns: the
 materialized document plus a live Block-3 dynamic tail (datetime, flag count,
 unread inbox) assembled per request. The dispatcher reads it in one call.
 """
 from datetime import datetime, timezone
-from pathlib import Path
 import sqlite3
 
-from shell_render import render_identity, render_lns, render_seed, render_skills
-
-# boot.md — universal SYSTEM OVERRIDE + LAWS preamble, same for every shell.
-_BOOT_PREAMBLE_PATH = Path(__file__).resolve().parents[2] / "templates" / "boot.md"
+from shell_render import assemble_catalog
 
 
 def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
-    """Render a shell's stable boot payload from DB state. Pure — reads only,
-    no writes. Raises ValueError if the shell does not exist."""
-    shell = con.execute(
-        "SELECT display_name, shortname, partner, role, mandate, "
-        "current_state, additional_prompt FROM shells WHERE shell_id=?",
-        (shell_id,),
+    """Render a shell's boot document — the full typed section catalog
+    (shell-prompt-renderer spec §02) — from DB state. Pure: reads only.
+    Raises ValueError if the shell does not exist.
+
+    Materialized into `shells.boot_document` and read once per turn by the
+    dispatcher. The catalog renders at the `anthropic` dialect: the
+    materialized document is model-agnostic, so the dialect-shaped Tools /
+    Output sections take their default here — refining them per session is
+    a follow-up. The live wall-clock and flag count stay the dynamic block's
+    job (`_dynamic_block`), not this cached render."""
+    row = con.execute(
+        "SELECT active_archive_id FROM shells WHERE shell_id=?", (shell_id,)
     ).fetchone()
-    if shell is None:
+    if row is None:
         raise ValueError(f"shell {shell_id} not found")
-
-    # <self> sentinel → this shell's id, so an operating-protocol template
-    # cloned across shells still resolves api_* paths (e.g. /shells/<self>)
-    # to the right shell. Mirrors run.py's CLI render.
-    operating_protocol = (shell["additional_prompt"] or "").strip().replace(
-        "<self>", str(shell_id))
-
-    parts = [
-        _BOOT_PREAMBLE_PATH.read_text().rstrip(),
-        "",
-        "## IDENTITY",
-        "",
-        render_identity(shell),
-        "",
-        "---",
-        "",
-        "## OPERATING PROTOCOL",
-        "",
-        operating_protocol,
-        "",
-        "---",
-        "",
-        "## CURRENT STATE",
-        "",
-        (shell["current_state"] or "(none)").strip(),
-        "",
-        "---",
-        "",
-        "## SEED",
-        "",
-        render_seed(con, shell_id),
-        "",
-        "---",
-        "",
-        "## LESSONS & STANCES",
-        "",
-        render_lns(con, shell_id),
-        "",
-        "---",
-        "",
-        "## SKILLS",
-        "",
-        render_skills(con, shell_id),
-        "",
-    ]
-    return "\n".join(parts)
+    runtime_ctx = {
+        "datetime": datetime.now(),  # host-local — the BOOT line labels it "local"
+        "session_id": "—",          # materialized doc — no session in scope
+        "archive_id": row["active_archive_id"] or "—",
+        "shell_id": shell_id,
+        "model": None,
+    }
+    return assemble_catalog(con, shell_id, dialect="anthropic", runtime_ctx=runtime_ctx)
 
 
 def rerender_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
