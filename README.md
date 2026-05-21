@@ -664,7 +664,7 @@ shell_core/
   scripts/catalogue.py    `make catalogue` — print the catalogue grouped by ref_table
   scripts/create_user.py / set_password.py  Admin scripts for users
   assets/                 Seed data — skills/*.md + shells/{forge,sys-admin}.md
-  templates/              boot.md (preamble) + shell_system_prompt.md (new-shell template)
+  templates/              catalog_universal.md (baked catalog layer) + shell_system_prompt.md (new-shell template)
   migrations/             Versioned *.sql migrations — applied in order by migrate.py (auto-run in api-up.sh; on demand via make migrate). schema.sql builds a fresh DB; migrations carry an existing one forward. _legacy/ holds pre-runner .py migrations, not applied.
 docker/
   shell/                  Dockerfile for the dos-shell image — one container per shell instance
@@ -789,7 +789,6 @@ When `run.py` boots a shell, it queries the DB and writes a flat
 | Source | Rendered as |
 |---|---|
 | `~/.claude/CLAUDE.md` (harness-injected before everything) | universal preamble — LAWS, SYSTEM OVERRIDE, shell-selection logic |
-| `shell_core/templates/boot.md` | per-substrate preamble (LAWS + SYSTEM OVERRIDE again, scoped) |
 | Render fields (session_id, archive_id) | `## ACTIVE SESSION` |
 | Authenticated user (`user_id`, `username`) | `## OPERATOR` — who is driving this session; Forge keys off this when assigning newly-created shells |
 | `shells` identity columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) | `## IDENTITY` |

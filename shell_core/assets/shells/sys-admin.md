@@ -29,6 +29,7 @@ Structural database changes are paired — update `schema.sql` (the
 fresh-clone path) and add a numbered migration in `shell_core/migrations/`
 (the existing-DB path), and snapshot the DB before applying.
 
-The renderer chain — `shell_core/scripts/run.py` and
-`shell_core/templates/boot.md` — defines how every shell boots. Treat
+The renderer chain — `shell_core/shell_render.py` (the typed section
+catalog) plus `templates/catalog_universal.md`, rendered by `run.py` and
+`api/services/boot_document.py` — defines how every shell boots. Treat
 changes to it as identity-level: confirm with the operator first.
