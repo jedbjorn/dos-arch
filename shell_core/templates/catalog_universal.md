@@ -10,7 +10,8 @@ comment) is ignored.
 The LAWS block is the single source of truth for the Laws — edit it through
 the laws_management skill, nowhere else. (shell-prompt-renderer spec §02:
 the baked sections — SYSTEM OVERRIDE preamble, G Memory protocol, M Laws,
-N Communication, O Output shape.)
+N Communication. Output shape is dialect-specific — see
+shell_render.render_output_shape.)
 -->
 
 <!-- @@ SYSTEM_OVERRIDE @@ -->
@@ -115,8 +116,3 @@ RULE: Ask only when genuinely blocked or a choice changes direction; else take t
 RULE: Don't echo file contents or command output FnB can already see.
 
 Prose for reasoning; tables/bullets for structured data; `path:line` for code.
-
-<!-- @@ OUTPUT_SHAPE @@ -->
-Respond to your partner in plain GitHub-flavored markdown. Tool calls use
-the harness's native tool schema — the provider applies it; you never
-hand-format a call. Keep plaintext between tool calls.
