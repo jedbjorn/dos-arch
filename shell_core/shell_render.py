@@ -11,8 +11,10 @@ Both compose from the *same* DB state, and several sections — identity,
 seed, L&S, skills — were rendered by byte-identical copy-pasted functions in
 each file. This module is the single home for those shared section
 renderers: a change to how a section renders now lands once, not once per
-renderer. The two paths still own their own section *ordering* and
-*assembly*; only the shared building blocks are unified here.
+renderer. ``assemble_catalog`` goes further — it composes the full
+16-section typed catalog (spec §02), section order and all, from the
+per-section renderers below; the two render paths converge on it as each
+is cut over.
 
 This is the seam the shell-prompt-renderer spec (§01) builds the typed
 section catalog on — keep new shared section renderers here.
@@ -83,3 +85,155 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
         desc = (r["description"] or "").strip().splitlines()[0] if r["description"] else ""
         lines.append(f"- **{r['name']}** — {desc}")
     return "\n".join(lines)
+
+
+# ── Typed section catalog (shell-prompt-renderer spec §02) ────────────────────
+#
+# The catalog is the ordered set of sections every rendered boot prompt is
+# built from — identity frames first, constraints (Laws, Communication) sit
+# last where recency keeps them honoured. `assemble_catalog` composes all
+# sixteen; the per-section renderers above and below it are the building
+# blocks.
+#
+# Slice 1 (this change) wires every DB-driven section. The baked universal
+# sections — Memory protocol, Laws, Communication, Output shape — and the
+# dialect-shaped Tools section render a `_pending` placeholder until their
+# slices land. `assemble_catalog` is not yet called by either render path.
+
+RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
+
+
+def _pending(slice_label: str) -> str:
+    """Placeholder body for a catalog section whose renderer lands in a later
+    slice. Visible only when `assemble_catalog` is exercised directly — no
+    render path calls it yet."""
+    return f"_(pending — {slice_label})_"
+
+
+def render_boot_context(runtime_ctx: dict) -> str:
+    """Section ⌂ — wall-clock + session metadata, computed by the caller at
+    render time. A local model has no clock, so this section is its only one.
+    `runtime_ctx` keys: `datetime` (a datetime), `session_id`, `archive_id`,
+    `shell_id`, and optional `model`."""
+    dt = runtime_ctx["datetime"]
+    model = runtime_ctx.get("model") or "—"
+    return (
+        f"session: {runtime_ctx['session_id']} · archive: {runtime_ctx['archive_id']} · "
+        f"date: {dt:%Y-%m-%d (%A)} · {dt:%H:%M} local\n"
+        f"shell_id: {runtime_ctx['shell_id']} · model: {model}"
+    )
+
+
+def render_operating_context(shell_row: sqlite3.Row) -> str:
+    """Section B — where the shell runs: repos, paths, services, conventions.
+    Straight from `shells.connections`."""
+    return (shell_row["connections"] or "").strip() or "(none)"
+
+
+def render_domain_scope(shell_row: sqlite3.Row) -> str:
+    """Section C — the shell's role and mandate, from the shell row."""
+    role = (shell_row["role"] or "").strip()
+    mandate = (shell_row["mandate"] or "").strip()
+    return f"role: {role or '—'}\nmandate: {mandate or '—'}"
+
+
+def render_active_projects(con: sqlite3.Connection, shell_id: int) -> str:
+    """Section D — the shell's non-deleted project assignments."""
+    rows = con.execute(
+        "SELECT p.shortname, p.purpose, p.status FROM projects p "
+        "JOIN project_shells ps ON ps.project_id = p.project_id "
+        "WHERE ps.shell_id=? AND ps.is_deleted=0 AND COALESCE(p.is_deleted,0)=0 "
+        "ORDER BY p.shortname",
+        (shell_id,),
+    ).fetchall()
+    if not rows:
+        return "None currently assigned."
+    lines = []
+    for r in rows:
+        purpose = (r["purpose"] or "").strip() or "(no purpose set)"
+        lines.append(f"- {r['shortname']} · {purpose} · status: {r['status'] or 'active'}")
+    return "\n".join(lines)
+
+
+def render_current_state(shell_row: sqlite3.Row) -> str:
+    """Section H — the shell's rolling now/next status."""
+    return (shell_row["current_state"] or "").strip() or "(none)"
+
+
+def render_recent_decisions(con: sqlite3.Connection, shell_id: int) -> str:
+    """Section K — the most recent decisions, newest first (spec §02: top N)."""
+    rows = con.execute(
+        "SELECT decision_date, priority, decision, rationale FROM shell_decisions "
+        "WHERE shell_id=? AND COALESCE(is_deleted,0)=0 "
+        "ORDER BY decision_date DESC, decision_id DESC LIMIT ?",
+        (shell_id, RECENT_DECISIONS_N),
+    ).fetchall()
+    if not rows:
+        return "(none recorded yet)"
+    out = []
+    for r in rows:
+        line = f"[{r['decision_date']}] {r['priority']} · {r['decision']}"
+        if (r["rationale"] or "").strip():
+            line += f"\nrationale: {r['rationale'].strip()}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
+    """Section L — a count of open flags, never the flags themselves. The
+    flag-triage skill does the actual read (spec §03)."""
+    n = con.execute(
+        "SELECT COUNT(*) FROM flags "
+        "WHERE shell_id=? AND resolved=0 AND COALESCE(is_deleted,0)=0",
+        (shell_id,),
+    ).fetchone()[0]
+    if not n:
+        return "0 open."
+    return f"{n} open. Invoke `--flag-triage` to surface."
+
+
+def assemble_catalog(
+    con: sqlite3.Connection,
+    shell_id: int,
+    *,
+    dialect: str = "anthropic",
+    runtime_ctx: dict,
+) -> str:
+    """Compose the full 16-section typed boot-prompt catalog (spec §02) for a
+    shell. Pure read.
+
+    `runtime_ctx` carries the render-time values a DB query cannot give —
+    wall-clock, session ids; see `render_boot_context`. `dialect` shapes the
+    Tools and Output sections (slice 3); until then those, and the baked
+    universal sections, render as `_pending` placeholders.
+
+    Not yet wired into either render path — `compose_claude_md` and
+    `compose_boot_document` are cut over to it in later slices."""
+    shell = con.execute(
+        "SELECT display_name, shortname, partner, role, mandate, "
+        "current_state, connections FROM shells WHERE shell_id=?",
+        (shell_id,),
+    ).fetchone()
+    if shell is None:
+        raise ValueError(f"shell {shell_id} not found")
+
+    # ⌂ then A–O, in catalog order (spec §02).
+    sections = [
+        ("BOOT",              render_boot_context(runtime_ctx)),
+        ("IDENTITY",          render_identity(shell)),
+        ("OPERATING CONTEXT", render_operating_context(shell)),
+        ("DOMAIN & SCOPE",    render_domain_scope(shell)),
+        ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
+        ("TOOLS",             _pending("slice 3 — dialect-aware tool roster")),
+        ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
+        ("MEMORY PROTOCOL",   _pending("slice 2 — baked universal template")),
+        ("CURRENT STATE",     render_current_state(shell)),
+        ("SEED",              render_seed(con, shell_id)),
+        ("LESSONS & STANCES", render_lns(con, shell_id)),
+        ("RECENT DECISIONS",  render_recent_decisions(con, shell_id)),
+        ("OPEN FLAGS",        render_flags_pointer(con, shell_id)),
+        ("LAWS",              _pending("slice 2 — baked universal template")),
+        ("COMMUNICATION",     _pending("slice 2 — baked universal template")),
+        ("OUTPUT SHAPE",      _pending("slice 2/3 — baked + dialect tail")),
+    ]
+    return "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
