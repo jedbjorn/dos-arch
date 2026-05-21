@@ -22,24 +22,36 @@ def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
     Raises ValueError if the shell does not exist.
 
     Materialized into `shells.boot_document` and read once per turn by the
-    dispatcher. The catalog renders at the `anthropic` dialect: the
-    materialized document is model-agnostic, so the dialect-shaped Tools /
-    Output sections take their default here — refining them per session is
-    a follow-up. The live wall-clock and flag count stay the dynamic block's
-    job (`_dynamic_block`), not this cached render."""
+    dispatcher. The catalog renders at the dialect of the shell's current
+    model — that shapes the Tools and Output Shape sections; a model-less
+    shell defaults to anthropic. The document stays correct across model
+    switches because the chat-session handlers re-materialize it on a switch
+    (`api/routers/shells.py`). Tools / Output are dialect-dependent but only
+    model-switch-volatile, not per-turn — so they belong in this cacheable
+    render, not the dynamic block. The live wall-clock and flag count stay
+    the dynamic block's job (`_dynamic_block`)."""
     row = con.execute(
         "SELECT active_archive_id FROM shells WHERE shell_id=?", (shell_id,)
     ).fetchone()
     if row is None:
         raise ValueError(f"shell {shell_id} not found")
+    # The shell's current tool dialect — from its most-recent model-bearing
+    # chat session. No session, or a model-less one → anthropic, the default.
+    model = con.execute(
+        "SELECT m.name, m.tool_dialect FROM chat_sessions cs "
+        "JOIN models m ON m.model_id = cs.model_id "
+        "WHERE cs.shell_id=? ORDER BY cs.is_active DESC, cs.last_active DESC LIMIT 1",
+        (shell_id,),
+    ).fetchone()
+    dialect = model["tool_dialect"] if model else "anthropic"
     runtime_ctx = {
         "datetime": datetime.now(),  # host-local — the BOOT line labels it "local"
         "session_id": "—",          # materialized doc — no session in scope
         "archive_id": row["active_archive_id"] or "—",
         "shell_id": shell_id,
-        "model": None,
+        "model": model["name"] if model else None,
     }
-    return assemble_catalog(con, shell_id, dialect="anthropic", runtime_ctx=runtime_ctx)
+    return assemble_catalog(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
 
 
 def rerender_boot_document(con: sqlite3.Connection, shell_id: int) -> str:

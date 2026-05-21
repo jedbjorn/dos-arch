@@ -690,6 +690,9 @@ def create_chat_session(shell_id: int, request: Request, body: dict | None = Non
         "INSERT INTO chat_sessions (chat_session_id, shell_id, user_id, model_id) VALUES (?,?,?,?)",
         (session_id, shell_id, user_id, model_id),
     )
+    # The new session's model sets the shell's tool dialect — re-materialize
+    # the boot document so its Tools / Output Shape sections match.
+    rerender_boot_document(con, shell_id)
     con.commit()
     row = dict(con.execute(
         "SELECT chat_session_id, started_at, last_active, is_active, model_id FROM chat_sessions WHERE chat_session_id=?",
@@ -726,6 +729,11 @@ def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get
     if fields:
         params += [session_id, shell_id]
         con.execute(f"UPDATE chat_sessions SET last_active=CURRENT_TIMESTAMP,{','.join(fields)} WHERE chat_session_id=? AND shell_id=?", params)
+        # A model switch changes the shell's tool dialect — re-materialize the
+        # boot document. Token-counter updates don't carry model_id, so this
+        # fires only on an actual switch.
+        if "model_id" in body:
+            rerender_boot_document(con, shell_id)
         con.commit()
     row = dict(con.execute("SELECT chat_session_id, total_tokens, token_warning_sent, is_active, model_id FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone())
     return row
