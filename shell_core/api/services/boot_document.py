@@ -13,63 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 
+from shell_render import render_identity, render_lns, render_seed, render_skills
+
 # boot.md — universal SYSTEM OVERRIDE + LAWS preamble, same for every shell.
 _BOOT_PREAMBLE_PATH = Path(__file__).resolve().parents[2] / "templates" / "boot.md"
-
-
-def _identity_table(shell: sqlite3.Row) -> str:
-    def cell(v: object) -> str:
-        s = v.strip() if isinstance(v, str) else (v or "")
-        return str(s) if s else "—"
-    return (
-        "| | |\n"
-        "|---|---|\n"
-        f"| **Name** | {cell(shell['display_name'])} |\n"
-        f"| **Shortname** | {cell(shell['shortname'])} |\n"
-        f"| **Partner** | {cell(shell['partner'])} |\n"
-        f"| **Role** | {cell(shell['role'])} |\n"
-        f"| **Mandate** | {cell(shell['mandate'])} |"
-    )
-
-
-def _render_seed(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute(
-        "SELECT entry_date, body FROM shell_identity_entries "
-        "WHERE shell_id=? AND kind='seed' AND is_deleted=0 AND retired_at IS NULL "
-        "ORDER BY entry_date, entry_id",
-        (shell_id,),
-    ).fetchall()
-    if not rows:
-        return "(none)"
-    return "\n\n".join(f"### {r['entry_date']}\n{r['body']}" for r in rows)
-
-
-def _render_lns(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute(
-        "SELECT body FROM shell_identity_entries "
-        "WHERE shell_id=? AND kind='lns' AND is_deleted=0 AND retired_at IS NULL "
-        "ORDER BY entry_date, entry_id",
-        (shell_id,),
-    ).fetchall()
-    if not rows:
-        return "(none)"
-    return "\n\n".join(r["body"] for r in rows)
-
-
-def _render_skills(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute(
-        "SELECT s.name, s.description FROM skills s "
-        "JOIN shell_skills ss ON ss.skill_id = s.skill_id "
-        "WHERE ss.shell_id=? AND s.is_deleted=0 ORDER BY s.name",
-        (shell_id,),
-    ).fetchall()
-    if not rows:
-        return "(none)"
-    lines = []
-    for r in rows:
-        desc = (r["description"] or "").strip().splitlines()[0] if r["description"] else ""
-        lines.append(f"- **{r['name']}** — {desc}")
-    return "\n".join(lines)
 
 
 def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
@@ -94,7 +41,7 @@ def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
         "",
         "## IDENTITY",
         "",
-        _identity_table(shell),
+        render_identity(shell),
         "",
         "---",
         "",
@@ -112,19 +59,19 @@ def compose_boot_document(con: sqlite3.Connection, shell_id: int) -> str:
         "",
         "## SEED",
         "",
-        _render_seed(con, shell_id),
+        render_seed(con, shell_id),
         "",
         "---",
         "",
         "## LESSONS & STANCES",
         "",
-        _render_lns(con, shell_id),
+        render_lns(con, shell_id),
         "",
         "---",
         "",
         "## SKILLS",
         "",
-        _render_skills(con, shell_id),
+        render_skills(con, shell_id),
         "",
     ]
     return "\n".join(parts)

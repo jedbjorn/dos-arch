@@ -25,10 +25,18 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+# run.py executes as a script (`python3 shell_core/scripts/run.py`), so only
+# shell_core/scripts/ lands on sys.path — enough for the sibling imports
+# below. The shared render chain lives a level up at shell_core/shell_render.py;
+# put shell_core/ on the path so it imports the same way it does inside the
+# API process, where PYTHONPATH=/substrate/shell_core makes that the root.
+SUBSTRATE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(SUBSTRATE_ROOT / "shell_core"))
+
 from db_init import ensure_forge
 from shared_dirs import SHARED_ROOT, ensure_shared_dirs, shared_dir_container_path
+from shell_render import render_identity, render_lns, render_seed, render_skills
 
-SUBSTRATE_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH        = SUBSTRATE_ROOT / "shell_core" / "shell_db.db"
 TEMPLATE_PATH  = SUBSTRATE_ROOT / "shell_core" / "templates" / "boot.md"
 SHELLS_DIR     = SUBSTRATE_ROOT / "shells"
@@ -318,31 +326,6 @@ def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> s
 
 # ── State render ──────────────────────────────────────────────────────────────
 
-def render_seed(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute("""
-        SELECT entry_date, body FROM shell_identity_entries
-        WHERE shell_id=? AND kind='seed' AND is_deleted=0 AND retired_at IS NULL
-        ORDER BY entry_date, entry_id
-    """, (shell_id,)).fetchall()
-    if not rows:
-        return "(none)"
-    out = []
-    for r in rows:
-        out.append(f"### {r['entry_date']}\n{r['body']}")
-    return "\n\n".join(out)
-
-
-def render_lns(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute("""
-        SELECT body FROM shell_identity_entries
-        WHERE shell_id=? AND kind='lns' AND is_deleted=0 AND retired_at IS NULL
-        ORDER BY entry_date, entry_id
-    """, (shell_id,)).fetchall()
-    if not rows:
-        return "(none)"
-    return "\n\n".join(r["body"] for r in rows)
-
-
 def render_projects(con: sqlite3.Connection, shell_id: int) -> str:
     rows = con.execute("""
         SELECT p.shortname, p.purpose, ps.role
@@ -375,22 +358,6 @@ def render_operator(user_row: sqlite3.Row) -> str:
     )
 
 
-def render_identity(shell_row: sqlite3.Row) -> str:
-    """Markdown table of the shell's identity columns. Empty cells render as '—'."""
-    def cell(v):
-        s = (v or "").strip() if isinstance(v, str) else (v or "")
-        return s if s else "—"
-    return (
-        "| | |\n"
-        "|---|---|\n"
-        f"| **Name** | {cell(shell_row['display_name'])} |\n"
-        f"| **Shortname** | {cell(shell_row['shortname'])} |\n"
-        f"| **Partner** | {cell(shell_row['partner'])} |\n"
-        f"| **Role** | {cell(shell_row['role'])} |\n"
-        f"| **Mandate** | {cell(shell_row['mandate'])} |"
-    )
-
-
 def render_shared_dirs(shell_row: sqlite3.Row) -> str:
     """The shell's own scratch space under the shared mount — rendered as the
     container-relative path the shell sees from inside its own container."""
@@ -401,23 +368,6 @@ def render_shared_dirs(shell_row: sqlite3.Row) -> str:
         "subdirs are yours, to use in collaboration with FnB. Other shells can\n"
         "see it; by convention it is yours."
     )
-
-
-def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute("""
-        SELECT s.name, s.description
-        FROM skills s
-        JOIN shell_skills ss ON ss.skill_id = s.skill_id
-        WHERE ss.shell_id=? AND s.is_deleted=0
-        ORDER BY s.name
-    """, (shell_id,)).fetchall()
-    if not rows:
-        return "(none)"
-    lines = []
-    for r in rows:
-        desc = (r["description"] or "").strip().split("\n")[0]
-        lines.append(f"- **{r['name']}** — {desc}")
-    return "\n".join(lines)
 
 
 def fetch_counts(con: sqlite3.Connection, shell_id: int) -> dict:
