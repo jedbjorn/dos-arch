@@ -730,8 +730,11 @@ carries `name` + `description_short` (≤100 chars) for fast lookup. See the
 Triggers worth knowing about:
 - `trg_sie_cap_seed` — seed cap = 10
 - `trg_sie_cap_lns` — L&S cap = 20
-- `trg_sie_body_cap_seed` / `trg_sie_body_cap_lns` — per-entry body caps: seed 800, L&S 400
-- `trg_current_state_cap_insert` / `trg_current_state_cap_update` — 280-char cap on `shells.current_state`
+- `trg_skills_explicit_default` — defaults a skill's `--name` trigger token on insert
+
+Entry-body and `current_state` *lengths* are soft targets, not triggers —
+the renderer states the aim, an occasional overrun is accepted (migration
+020). Only the seed / L&S *count* caps stay trigger-enforced.
 
 ---
 
@@ -740,14 +743,15 @@ Triggers worth knowing about:
 **A shell** is one row in the `shells` table plus rows it accumulates in
 sibling tables (identity entries, decisions, archives, flags, projects,
 skills). Its identity columns (`display_name`, `shortname`, `owner`, `role`,
-`mandate`) and `connections` are stable; its `current_state` is a 280-char rolling status; and its
-`shell_memory_archives` rows are the per-session narrative log.
+`mandate`) and `connections` are stable; its `current_state` is a rolling
+now/next status; and its `shell_memory_archives` rows are the per-session
+narrative log.
 
 **The launcher** (`make launch` → `shell_core/scripts/run.py`):
 
 1. Authenticates a user against `users` (scrypt-hashed password).
 2. Picks a shell (interactively, or from CLI: `make launch-<shortname>`).
-3. Composes a single flat `CLAUDE.md` from live DB state.
+3. Composes `CLAUDE.md` — the typed section catalog — from live DB state.
 4. Opens a new row in `shell_memory_archives` (sets `shells.active_archive_id`).
 5. Ensures the shell's per-shell Docker container (run-if-missing /
    start-if-stopped) and `docker exec`s `claude` into it. The shell's
@@ -782,39 +786,55 @@ shells. A user with zero owned shells lands in Forge automatically.
 
 ## How memory recall works
 
-When `run.py` boots a shell, it queries the DB and writes a flat
-`shells/<shortname>/CLAUDE.md`. Sources, in render order:
+When `run.py` boots a shell it queries the DB and writes
+`shells/<shortname>/CLAUDE.md` — the **typed section catalog**, the
+16-section document both render paths compose through
+`shell_render.assemble_catalog`. One shared composer; the launcher writes
+it to a file, the dispatcher materializes it to a column.
 
-| Source | Rendered as |
+A **baked universal layer** (`templates/catalog_universal.md`) supplies the
+sections identical for every shell; the rest render from live DB state.
+In catalog order:
+
+| Section | Source |
 |---|---|
-| `~/.claude/CLAUDE.md` (harness-injected before everything) | universal preamble — LAWS, SYSTEM OVERRIDE, shell-selection logic |
-| Render fields (session_id, archive_id) | `## ACTIVE SESSION` |
-| Authenticated user (`user_id`, `username`) | `## OPERATOR` — who is driving this session; Forge keys off this when assigning newly-created shells |
-| `shells` identity columns (`display_name`, `shortname`, `owner`, `role`, `mandate`) | `## IDENTITY` |
-| `shells.current_state` | `## CURRENT STATE` (rolling 280-char status) |
-| `shell_identity_entries WHERE kind='seed'` | `## SEED` (row-per-entry, cap 10) |
-| `shell_identity_entries WHERE kind='lns'` | `## LESSONS & STANCES` (row-per-entry, cap 20) |
-| `projects` ⋈ `project_shells` | `## ACTIVE PROJECTS` |
-| `skills` ⋈ `shell_skills` | `## SKILLS` (name + description only — content lazy-loaded on use) |
-| `COUNT(*)` of seed / L&S / open flags | `## STATUS` |
+| `## SYSTEM OVERRIDE ##` (preamble) | baked — `catalog_universal.md` |
+| `## BOOT ##` | runtime — wall-clock, session / archive ids, operator |
+| `## IDENTITY ##` | `shells` identity columns + `users` |
+| `## OPERATING CONTEXT ##` | `shells.connections` |
+| `## DOMAIN & SCOPE ##` | `shells.role` / `shells.mandate` |
+| `## ACTIVE PROJECTS ##` | `projects` ⋈ `project_shells` |
+| `## TOOLS ##` | static common-tool roster, shaped by the model's dialect |
+| `## SKILLS AVAILABLE ##` | `skills` ⋈ `shell_skills` — name + triggers (content lazy-loaded) |
+| `## MEMORY PROTOCOL ##` | baked — `catalog_universal.md` |
+| `## CURRENT STATE ##` | `shells.current_state` |
+| `## SEED ##` | `shell_identity_entries WHERE kind='seed'` (cap 10) |
+| `## LESSONS & STANCES ##` | `shell_identity_entries WHERE kind='lns'` (cap 20) |
+| `## RECENT DECISIONS ##` | `shell_decisions` — most recent few |
+| `## OPEN FLAGS ##` | `COUNT(*)` of open flags — a pointer, not the flags |
+| `## LAWS ##` | baked — `catalog_universal.md` |
+| `## COMMUNICATION ##` | baked — `catalog_universal.md` |
+| `## OUTPUT SHAPE ##` | universal, shaped by the model's dialect |
 
-The harness *also* injects a system-reminder each turn listing **plugin
-skills** (auto-discovered from `~/.claude/plugins/`). That's a separate
-live channel, not part of the rendered `CLAUDE.md`.
+The harness *also* injects its own `~/.claude/CLAUDE.md` and a
+system-reminder each turn listing **plugin skills** (auto-discovered from
+`~/.claude/plugins/`). That is a separate live channel, not part of the
+rendered catalog.
 
-The lazy-loading principle: load the **map** at boot (skill names,
-table names, where things live), fetch the **territory** on demand
-(skill content, decision rationale, connections markdown). Keeps the
+The lazy-loading principle: load the **map** at boot (skill names + their
+triggers, section pointers, where things live), fetch the **territory** on
+demand (skill content, decision rationale, connections markdown). Keeps the
 session-start budget flat and predictable.
 
-The browser-chat dispatcher composes the same identity by a different
-route. Instead of rendering a file, `compose_boot_document()` assembles the
-stable payload — operating protocol, identity, `current_state`, seed, L&S,
-skills — into `shells.boot_document`, a **materialized** column kept fresh
-by the API's identity-write paths (re-render on write, no DB triggers).
-`GET /shells/{id}/session-start` returns that column plus a small live tail
-(datetime, open-flag count, unread inbox); the dispatcher delivers the
-column as a cached system block and the tail as a fresh one each turn.
+The browser-chat dispatcher composes the *same* catalog by a different
+route: `compose_boot_document()` calls `assemble_catalog` and stores the
+result in `shells.boot_document`, a **materialized** column kept fresh by
+the API's identity-write paths (re-render on write, no DB triggers) and
+re-materialized on a model switch — so its dialect-shaped Tools and Output
+sections match the conversation's model. `GET /shells/{id}/session-start`
+returns that column plus a small live tail (datetime, open-flag count,
+unread inbox); the dispatcher delivers the column as a cached system block
+and the tail as a fresh one each turn.
 
 ---
 
@@ -824,7 +844,7 @@ Memory is written *as work happens*, not at session close. The short version:
 
 | Surface | Write pattern |
 |---|---|
-| `shells.current_state` | `UPDATE` in place. 280-char trigger-enforced cap. Rolling status — never a log. |
+| `shells.current_state` | `UPDATE` in place. Rolling now/next status, never a log — aim ~500 chars (a soft target, not enforced). |
 | `shell_memory_archives.full_narrative` | One row per session, opened by `run.py` at boot. The shell appends `[HH:MM] {note}` lines at inflection points (decision, surprise, course change). |
 | `shell_identity_entries` (seed) | `INSERT` only. Caps at 10, enforced by `trg_sie_cap_seed`. To curate, `UPDATE retired_at` (preserves the row). |
 | `shell_identity_entries` (lns) | `INSERT` only. Caps at 20, enforced by `trg_sie_cap_lns`. Same retire-don't-edit pattern. |
@@ -833,9 +853,10 @@ Memory is written *as work happens*, not at session close. The short version:
 | `shells.connections` | `UPDATE` free-form markdown when environment changes (new repo, moved path, deprecated service). Lazy-loaded on demand. |
 | `projects` / `project_shells` | `INSERT` to add a project; `UPDATE projects.standing` when standing rules change. |
 
-The cap triggers are load-bearing: they make "curate, don't accumulate"
-mechanical. A shell trying to plant an 11th seed gets `RAISE(ABORT)` —
-forcing an explicit retirement first.
+The seed and L&S **count** caps are load-bearing: they make "curate, don't
+accumulate" mechanical. A shell trying to plant an 11th seed gets
+`RAISE(ABORT)` — forcing an explicit retirement first. Entry *length* is a
+soft target, not a trigger (migration 020).
 
 ---
 
@@ -858,8 +879,9 @@ So a user always sees: their owned shells + every shared shell. Forge is
 the only shared shell by convention; nothing in the schema prevents others.
 
 **Assignment happens at creation.** When Forge runs the `create_shell`
-skill, it reads the `## OPERATOR` block from its own rendered `CLAUDE.md`
-(populated by `run.py` from the authenticated user) and INSERTs the new
+skill, it reads the `operator:` line from the `## BOOT ##` section of its
+own rendered `CLAUDE.md` (populated by `run.py` from the authenticated
+user) and INSERTs the new
 shell row with `user_id = <operator>` and `is_shared = 0`. That makes the
 new shell private to the user who created it — even though Forge itself is
 shared.
