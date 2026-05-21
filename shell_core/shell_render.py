@@ -98,10 +98,11 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
 # blocks.
 #
 # The DB-driven sections render from live shell state. The baked universal
-# sections — Memory protocol, Laws, Communication, Output shape — come from
-# templates/catalog_universal.md via `render_universal`. The dialect-shaped
-# Tools section still renders a `_pending` placeholder until slice 3.
-# `assemble_catalog` is not yet called by either render path.
+# sections — Memory protocol, Laws, Communication — come from
+# templates/catalog_universal.md via `render_universal`. The Tools and Output
+# Shape sections are dialect-shaped (spec §05) — `render_tools` /
+# `render_output_shape`. `assemble_catalog` is not yet called by either
+# render path.
 
 RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
 
@@ -110,18 +111,11 @@ _UNIVERSAL_PATH = Path(__file__).resolve().parent / "templates" / "catalog_unive
 _UNIVERSAL_MARKER = re.compile(r"^<!-- @@ (\w+) @@ -->$")
 
 
-def _pending(slice_label: str) -> str:
-    """Placeholder body for a catalog section whose renderer lands in a later
-    slice. Visible only when `assemble_catalog` is exercised directly — no
-    render path calls it yet."""
-    return f"_(pending — {slice_label})_"
-
-
 def render_universal() -> dict[str, str]:
     """Parse the baked universal layer (`templates/catalog_universal.md`) into
     its section bodies, keyed by marker: SYSTEM_OVERRIDE, MEMORY_PROTOCOL,
-    LAWS, COMMUNICATION, OUTPUT_SHAPE. These sections are identical for every
-    shell (spec §02); the file is their single source of truth."""
+    LAWS, COMMUNICATION. These sections are identical for every shell
+    (spec §02); the file is their single source of truth."""
     blocks: dict[str, list[str]] = {}
     key: str | None = None
     for line in _UNIVERSAL_PATH.read_text().splitlines():
@@ -216,6 +210,154 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
     return f"{n} open. Invoke `--flag-triage` to surface."
 
 
+# Section E — the common memory-tool roster (spec §06.1). Authored vocabulary,
+# not a `tools`-table read: it names the substrate memory operations every
+# shell shares. MEMORY PROTOCOL (section G) carries their API form and the
+# when/why; this section is the call surface, shaped per dialect (spec §05).
+_COMMON_TOOLS = [
+    {
+        "name": "identity_write",
+        "sig": "kind, body, source_tag?",
+        "purpose": "append a seed or L&S entry to your own memory",
+        "params": [
+            ("kind", "str", "required", "one of: seed | lns"),
+            ("body", "str", "required", "the entry — aim ~500 chars"),
+            ("source_tag", "str", "optional", "a short project tag"),
+        ],
+        "example": {"kind": "lns",
+                    "body": "prefer editing an existing file over making a new one"},
+    },
+    {
+        "name": "identity_retire",
+        "sig": "entry_id",
+        "purpose": "curate out a seed or L&S entry — preserves the row, no edit",
+        "params": [("entry_id", "int", "required", "the entry to retire")],
+        "example": {"entry_id": "42"},
+    },
+    {
+        "name": "decision_record",
+        "sig": "decision, rationale, priority?",
+        "purpose": "record a Major decision",
+        "params": [
+            ("decision", "str", "required", "what was decided"),
+            ("rationale", "str", "required", "why"),
+            ("priority", "str", "optional", "defaults to M"),
+        ],
+        "example": {"decision": "render Section E from a static roster",
+                    "rationale": "the tools table holds HTTP verbs, not semantic tools"},
+    },
+    {
+        "name": "state_update",
+        "sig": "current_state?, connections?",
+        "purpose": "replace your rolling current_state (or connections)",
+        "params": [
+            ("current_state", "str", "optional", "the new now/next status"),
+            ("connections", "str", "optional", "where things live"),
+        ],
+        "example": {"current_state": "drafting the tool roster; next: wire it in"},
+    },
+    {
+        "name": "flag_open",
+        "sig": "display_name, priority, description?",
+        "purpose": "open a flag for a blocker",
+        "params": [
+            ("display_name", "str", "required", "e.g. SA-001"),
+            ("priority", "str", "required", "one of: High | Medium | Low"),
+            ("description", "str", "optional", "[Area] what | Blocker for: x"),
+        ],
+        "example": {"display_name": "SA-007", "priority": "High",
+                    "description": "[render] dialect resolution unspecified"},
+    },
+    {
+        "name": "flag_resolve",
+        "sig": "flag_id, resolution_notes?",
+        "purpose": "resolve or reopen a flag",
+        "params": [
+            ("flag_id", "int", "required", "the flag to resolve"),
+            ("resolution_notes", "str", "optional", "how it was resolved"),
+        ],
+        "example": {"flag_id": "7", "resolution_notes": "fixed in PR #52"},
+    },
+    {
+        "name": "narrative_append",
+        "sig": "archive_id, body",
+        "purpose": "append an entry to this session's narrative",
+        "params": [
+            ("archive_id", "int", "required", "your archive — see BOOT"),
+            ("body", "str", "required", "[HH:MM] 1-2 lines"),
+        ],
+        "example": {"archive_id": "12",
+                    "body": "[14:32] shipped the tool roster, dialect-shaped"},
+    },
+    {
+        "name": "openapi_fetch",
+        "sig": "",
+        "purpose": "return the live substrate endpoint inventory",
+        "params": [],
+        "example": {},
+    },
+]
+
+
+def render_tools(dialect: str = "anthropic") -> str:
+    """Section E — the common memory-tool roster, shaped by tool dialect
+    (spec §05). `anthropic` / `openai`: a compact name + purpose roster — the
+    provider applies the schema. `parsed`: each tool with its params, a worked
+    invocation, and a refusal fallback — a local model forms the call as text
+    and the harness extracts it."""
+    if dialect == "parsed":
+        out = [
+            "# parsed dialect — the runtime applies no tool schema. Form each",
+            "# call in this format; the harness extracts and executes it.",
+            "",
+        ]
+        for t in _COMMON_TOOLS:
+            out.append(f"**{t['name']}** — {t['purpose']}")
+            if t["params"]:
+                out.append("params:")
+                for name, typ, req, note in t["params"]:
+                    out.append(f"  {name:<14} {typ:<4} {req:<9} {note}")
+            out.append("invoke:")
+            if t["example"]:
+                out.append(f"  <tool:{t['name']}>")
+                out += [f"  {k}: {v}" for k, v in t["example"].items()]
+                out.append("  </tool>")
+            else:
+                out.append(f"  <tool:{t['name']} />")
+            out.append("")
+        out.append("If you cannot form a valid call, say so plainly:")
+        out.append("  i can't record this yet — i'm missing {field}")
+        return "\n".join(out)
+
+    # anthropic / openai — a roster only; the provider applies the schema.
+    out = ["# the provider applies the tool schema — this is the roster."]
+    out += [f"- **{t['name']}({t['sig']})** — {t['purpose']}." for t in _COMMON_TOOLS]
+    return "\n".join(out)
+
+
+def render_output_shape(dialect: str = "anthropic") -> str:
+    """Section O — how to address the operator and emit tool calls, shaped by
+    dialect (spec §02, §05)."""
+    if dialect == "parsed":
+        return (
+            "Respond to the operator in plaintext. The runtime applies no tool "
+            "schema — form each call yourself in the `<tool:name> … </tool>` "
+            "format shown in TOOLS, and the harness extracts it. If you cannot "
+            "form a valid call, say so plainly rather than emit a malformed one."
+        )
+    if dialect == "openai":
+        return (
+            "Respond to the operator in plain markdown. Tool calls use the "
+            "OpenAI function-call schema — the runtime parses them; you never "
+            "hand-format a call. Keep plaintext between tool calls."
+        )
+    return (
+        "Respond to your partner in plain GitHub-flavored markdown. Tool calls "
+        "use the harness's native tool schema — the provider applies it; you "
+        "never hand-format a call. Keep plaintext between tool calls."
+    )
+
+
 def assemble_catalog(
     con: sqlite3.Connection,
     shell_id: int,
@@ -228,8 +370,8 @@ def assemble_catalog(
 
     `runtime_ctx` carries the render-time values a DB query cannot give —
     wall-clock, session ids; see `render_boot_context`. The baked universal
-    sections come from `catalog_universal.md`; `dialect` shapes the Tools
-    section, still a `_pending` placeholder until slice 3.
+    sections come from `catalog_universal.md`; `dialect` shapes the Tools and
+    Output Shape sections.
 
     Not yet wired into either render path — `compose_claude_md` and
     `compose_boot_document` are cut over to it in later slices."""
@@ -249,7 +391,7 @@ def assemble_catalog(
         ("OPERATING CONTEXT", render_operating_context(shell)),
         ("DOMAIN & SCOPE",    render_domain_scope(shell)),
         ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
-        ("TOOLS",             _pending("slice 3 — dialect-aware tool roster")),
+        ("TOOLS",             render_tools(dialect)),
         ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
         ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"]),
         ("CURRENT STATE",     render_current_state(shell)),
@@ -259,7 +401,7 @@ def assemble_catalog(
         ("OPEN FLAGS",        render_flags_pointer(con, shell_id)),
         ("LAWS",              universal["LAWS"]),
         ("COMMUNICATION",     universal["COMMUNICATION"]),
-        ("OUTPUT SHAPE",      universal["OUTPUT_SHAPE"]),
+        ("OUTPUT SHAPE",      render_output_shape(dialect)),
     ]
     catalog = "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
     return f"## SYSTEM OVERRIDE ##\n{universal['SYSTEM_OVERRIDE']}\n\n{catalog}"
