@@ -6,10 +6,11 @@ there on. `assistant_message` / `tool_result_message` build the normalized
 next-turn messages — provider-blind, so they live with the contract, not
 the adapter.
 
-A1 ships Anthropic + OpenAI. CC-51 adds Ollama (the `local` provider) via
-the OpenAI-compatible endpoint, reusing the OpenAI dialect for tool-capable
-local models. Provider resolution flows from the `models` registry
-(`models.provider` + `models.endpoint`).
+A1 ships Anthropic + OpenAI. CC-51 adds Ollama (the `local` provider); it
+speaks Ollama's native `/api/chat`, which lets it own the context window
+(`num_ctx`) instead of letting the model truncate the prompt silently.
+Provider resolution flows from the `models` registry (`models.provider` +
+`models.endpoint`).
 """
 
 from .anthropic_adapter import AnthropicAdapter
