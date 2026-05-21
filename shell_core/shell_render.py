@@ -98,11 +98,10 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
 # blocks.
 #
 # The DB-driven sections render from live shell state. The baked universal
-# sections — Memory protocol, Laws, Communication — come from
+# sections — Definitions, Memory protocol, Laws, Communication — come from
 # templates/catalog_universal.md via `render_universal`. The Tools and Output
 # Shape sections are dialect-shaped (spec §05) — `render_tools` /
-# `render_output_shape`. `assemble_catalog` is not yet called by either
-# render path.
+# `render_output_shape`.
 
 RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
 
@@ -113,9 +112,9 @@ _UNIVERSAL_MARKER = re.compile(r"^<!-- @@ (\w+) @@ -->$")
 
 def render_universal() -> dict[str, str]:
     """Parse the baked universal layer (`templates/catalog_universal.md`) into
-    its section bodies, keyed by marker: SYSTEM_OVERRIDE, MEMORY_PROTOCOL,
-    LAWS, COMMUNICATION. These sections are identical for every shell
-    (spec §02); the file is their single source of truth."""
+    its section bodies, keyed by marker: SYSTEM_OVERRIDE, DEFINITIONS,
+    MEMORY_PROTOCOL, LAWS, COMMUNICATION. These sections are identical for
+    every shell (spec §02); the file is their single source of truth."""
     blocks: dict[str, list[str]] = {}
     key: str | None = None
     for line in _UNIVERSAL_PATH.read_text().splitlines():
@@ -151,13 +150,6 @@ def render_operating_context(shell_row: sqlite3.Row) -> str:
     """Section B — where the shell runs: repos, paths, services, conventions.
     Straight from `shells.connections`."""
     return (shell_row["connections"] or "").strip() or "(none)"
-
-
-def render_domain_scope(shell_row: sqlite3.Row) -> str:
-    """Section C — the shell's role and mandate, from the shell row."""
-    role = (shell_row["role"] or "").strip()
-    mandate = (shell_row["mandate"] or "").strip()
-    return f"role: {role or '—'}\nmandate: {mandate or '—'}"
 
 
 def render_active_projects(con: sqlite3.Connection, shell_id: int) -> str:
@@ -345,19 +337,22 @@ def render_output_shape(dialect: str = "anthropic") -> str:
     dialect (spec §02, §05)."""
     if dialect == "parsed":
         return (
-            "Respond to the operator in plaintext. The runtime applies no tool "
-            "schema — form each call yourself in the `<tool:name> … </tool>` "
-            "format shown in TOOLS, and the harness extracts it. If you cannot "
-            "form a valid call, say so plainly rather than emit a malformed one."
+            "Respond to the operator in plaintext — never use fenced code "
+            "blocks. The runtime applies no tool schema — form each call "
+            "yourself in the `<tool:name> … </tool>` format shown in TOOLS, "
+            "and the harness extracts it. If you cannot form a valid call, "
+            "say so plainly rather than emit a malformed one."
         )
     if dialect == "openai":
         return (
-            "Respond to the operator in plain markdown. Tool calls use the "
+            "Respond to the operator in plain markdown — never use fenced "
+            "code blocks; inline `code` spans are fine. Tool calls use the "
             "OpenAI function-call schema — the runtime parses them; you never "
             "hand-format a call. Keep plaintext between tool calls."
         )
     return (
-        "Respond to your partner in plain GitHub-flavored markdown. Tool calls "
+        "Respond to your partner in plain GitHub-flavored markdown — never "
+        "use fenced code blocks; inline `code` spans are fine. Tool calls "
         "use the harness's native tool schema — the provider applies it; you "
         "never hand-format a call. Keep plaintext between tool calls."
     )
@@ -378,8 +373,8 @@ def assemble_catalog(
     sections come from `catalog_universal.md`; `dialect` shapes the Tools and
     Output Shape sections.
 
-    Not yet wired into either render path — `compose_claude_md` and
-    `compose_boot_document` are cut over to it in later slices."""
+    Both render paths compose through it — `compose_claude_md` (the CLI
+    launcher) and `compose_boot_document` (the API)."""
     shell = con.execute(
         "SELECT display_name, shortname, partner, role, mandate, "
         "current_state, connections FROM shells WHERE shell_id=?",
@@ -393,8 +388,8 @@ def assemble_catalog(
     sections = [
         ("BOOT",              render_boot_context(runtime_ctx)),
         ("IDENTITY",          render_identity(shell)),
+        ("DEFINITIONS",       universal["DEFINITIONS"]),
         ("OPERATING CONTEXT", render_operating_context(shell)),
-        ("DOMAIN & SCOPE",    render_domain_scope(shell)),
         ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
         ("TOOLS",             render_tools(dialect)),
         ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
