@@ -34,11 +34,10 @@ SUBSTRATE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SUBSTRATE_ROOT / "shell_core"))
 
 from db_init import ensure_forge
-from shared_dirs import SHARED_ROOT, ensure_shared_dirs, shared_dir_container_path
-from shell_render import render_identity, render_lns, render_seed, render_skills
+from shared_dirs import SHARED_ROOT, ensure_shared_dirs
+from shell_render import assemble_catalog
 
 DB_PATH        = SUBSTRATE_ROOT / "shell_core" / "shell_db.db"
-TEMPLATE_PATH  = SUBSTRATE_ROOT / "shell_core" / "templates" / "boot.md"
 SHELLS_DIR     = SUBSTRATE_ROOT / "shells"
 
 BACKUP_DIR     = Path.home() / "db_backups" / "dos-arch"
@@ -324,68 +323,6 @@ def ensure_container(shortname: str, workdir: Path, is_admin: bool = False) -> s
     return name
 
 
-# ── State render ──────────────────────────────────────────────────────────────
-
-def render_projects(con: sqlite3.Connection, shell_id: int) -> str:
-    rows = con.execute("""
-        SELECT p.shortname, p.purpose, ps.role
-        FROM projects p
-        JOIN project_shells ps ON ps.project_id = p.project_id
-        WHERE ps.shell_id=? AND ps.is_deleted=0
-          AND COALESCE(p.is_deleted,0)=0
-          AND (p.status IS NULL OR p.status NOT IN ('archived','dropped'))
-        ORDER BY p.shortname
-    """, (shell_id,)).fetchall()
-    if not rows:
-        return "(none)"
-    lines = []
-    for r in rows:
-        role_part = f" ({r['role']})" if r["role"] else ""
-        purpose = r["purpose"] or "(no purpose set)"
-        lines.append(f"- {r['shortname']}{role_part}: {purpose}")
-    return "\n".join(lines)
-
-
-def render_operator(user_row: sqlite3.Row) -> str:
-    """Identifies who is driving this session. Crucial for shared shells
-    (Forge needs to know which user to assign newly-bootstrapped shells to)
-    and informational on owned shells."""
-    return (
-        "| | |\n"
-        "|---|---|\n"
-        f"| **user_id** | `{user_row['user_id']}` |\n"
-        f"| **username** | {user_row['username']} |"
-    )
-
-
-def render_shared_dirs(shell_row: sqlite3.Row) -> str:
-    """The shell's own scratch space under the shared mount — rendered as the
-    container-relative path the shell sees from inside its own container."""
-    base = shared_dir_container_path(shell_row["shell_id"], shell_row["shortname"])
-    return (
-        f"`{base}/` is your directory inside the shared mount — it contains\n"
-        "`redlines/`, `review/`, `repos/`, and `backups/`. This dir and its\n"
-        "subdirs are yours, to use in collaboration with FnB. Other shells can\n"
-        "see it; by convention it is yours."
-    )
-
-
-def fetch_counts(con: sqlite3.Connection, shell_id: int) -> dict:
-    seed_count = con.execute(
-        "SELECT COUNT(*) FROM shell_identity_entries WHERE shell_id=? AND kind='seed' AND is_deleted=0 AND retired_at IS NULL",
-        (shell_id,),
-    ).fetchone()[0]
-    lns_count = con.execute(
-        "SELECT COUNT(*) FROM shell_identity_entries WHERE shell_id=? AND kind='lns' AND is_deleted=0 AND retired_at IS NULL",
-        (shell_id,),
-    ).fetchone()[0]
-    flag_count = con.execute(
-        "SELECT COUNT(*) FROM flags WHERE shell_id=? AND resolved=0 AND is_deleted=0",
-        (shell_id,),
-    ).fetchone()[0]
-    return {"seed": seed_count, "lns": lns_count, "flags": flag_count}
-
-
 # ── Session archive ───────────────────────────────────────────────────────────
 
 def open_session(con: sqlite3.Connection, shell_id: int) -> tuple[str, int]:
@@ -415,98 +352,27 @@ def open_session(con: sqlite3.Connection, shell_id: int) -> tuple[str, int]:
 # ── Compose ───────────────────────────────────────────────────────────────────
 
 def compose_claude_md(
-    shell_row: sqlite3.Row,
+    con: sqlite3.Connection,
+    shell_id: int,
     user_row: sqlite3.Row,
     session_id: str,
     archive_id: int,
-    counts: dict,
-    seed: str, lns: str, projects: str, skills: str,
 ) -> str:
-    template = TEMPLATE_PATH.read_text()
-    current_state = (shell_row["current_state"] or "(none)").strip()
-    additional_prompt = (shell_row["additional_prompt"] or "").strip()
-    # <self> sentinel → this shell's id (lets templates be cloned across shells safely)
-    additional_prompt = additional_prompt.replace("<self>", str(shell_row["shell_id"]))
-    identity = render_identity(shell_row)
-    operator = render_operator(user_row)
-    shared_dirs = render_shared_dirs(shell_row)
+    """Render a CLI shell's CLAUDE.md — the full typed section catalog
+    (shell-prompt-renderer spec §02), via the shared `assemble_catalog`.
 
-    parts = [
-        template.rstrip(),
-        "",
-        "## ACTIVE SESSION",
-        "",
-        f"- shell_id: `{shell_row['shell_id']}`",
-        f"- display_name: `{shell_row['display_name']}`",
-        f"- shortname: `{shell_row['shortname']}`",
-        f"- session_id: `{session_id}`",
-        f"- archive_id: `{archive_id}`",
-        "",
-        "---",
-        "",
-        "## OPERATOR",
-        "",
-        operator,
-        "",
-        "---",
-        "",
-        "## IDENTITY",
-        "",
-        identity,
-        "",
-        "---",
-        "",
-        "## YOUR SPACE",
-        "",
-        shared_dirs,
-        "",
-        "---",
-        "",
-        "## SYSTEM PROMPT",
-        "",
-        additional_prompt,
-        "",
-        "---",
-        "",
-        "## CURRENT STATE",
-        "",
-        current_state,
-        "",
-        "---",
-        "",
-        "## SEED",
-        "",
-        seed,
-        "",
-        "---",
-        "",
-        "## LESSONS & STANCES",
-        "",
-        lns,
-        "",
-        "---",
-        "",
-        "## ACTIVE PROJECTS",
-        "",
-        projects,
-        "",
-        "---",
-        "",
-        "## SKILLS",
-        "",
-        skills,
-        "",
-        "---",
-        "",
-        "## STATUS",
-        "",
-        f"- **Session:** {session_id}",
-        f"- **Seed:** {counts['seed']}",
-        f"- **L&S:** {counts['lns']}",
-        f"- **Flags:** {counts['flags']} open → `surface_flags`",
-        "",
-    ]
-    return "\n".join(parts)
+    A CLI shell runs interactive Claude Code: anthropic dialect, always. The
+    authenticated operator is carried in the BOOT section so a shared shell
+    (Forge) knows who to assign a newly-created shell to."""
+    runtime_ctx = {
+        "datetime": datetime.now(),
+        "session_id": session_id,
+        "archive_id": archive_id,
+        "shell_id": shell_id,
+        "model": None,
+        "operator": f"{user_row['username']} (user_id {user_row['user_id']})",
+    }
+    return assemble_catalog(con, shell_id, dialect="anthropic", runtime_ctx=runtime_ctx)
 
 
 def atomic_write(path: Path, content: str) -> None:
@@ -554,12 +420,6 @@ def main() -> None:
             print_picker(user_shells)
             chosen = prompt_pick(user_shells)
 
-    seed     = render_seed(con, chosen["shell_id"])
-    lns      = render_lns(con, chosen["shell_id"])
-    projects = render_projects(con, chosen["shell_id"])
-    skills   = render_skills(con, chosen["shell_id"])
-    counts   = fetch_counts(con, chosen["shell_id"])
-
     workdir = SHELLS_DIR / chosen["shortname"]
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / DIR_SENTINEL).write_text("managed by shell_core/scripts/run.py\n")
@@ -585,13 +445,12 @@ def main() -> None:
     )
     con.commit()
 
-    # Re-fetch after opening session so the row has updated active_archive_id
-    full = con.execute(
-        "SELECT shell_id, display_name, shortname, partner, role, mandate, current_state, additional_prompt, api_auth FROM shells WHERE shell_id=?",
-        (chosen["shell_id"],),
-    ).fetchone()
+    # api_auth picks the Anthropic auth path below; it is not on the picker row.
+    api_auth = con.execute(
+        "SELECT api_auth FROM shells WHERE shell_id=?", (chosen["shell_id"],),
+    ).fetchone()["api_auth"]
 
-    content = compose_claude_md(full, user, session_id, archive_id, counts, seed, lns, projects, skills)
+    content = compose_claude_md(con, chosen["shell_id"], user, session_id, archive_id)
     atomic_write(workdir / "CLAUDE.md", content)
 
     con.close()
@@ -617,7 +476,7 @@ def main() -> None:
     #     non-secret placeholder: it satisfies Claude Code's "a credential is
     #     present" check (so it skips browser login) and the broker overrides
     #     it regardless. See shell_core/broker/README.md.
-    if full["api_auth"]:
+    if api_auth:
         exec_args += ["-e", f"ANTHROPIC_BASE_URL={BROKER_ANTHROPIC_URL}",
                       "-e", "ANTHROPIC_AUTH_TOKEN=broker-injected"]
         print("→ API shell — Anthropic routed through the broker")
