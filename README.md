@@ -801,8 +801,8 @@ In catalog order:
 | `## SYSTEM OVERRIDE ##` (preamble) | baked — `catalog_universal.md` |
 | `## BOOT ##` | runtime — wall-clock, session / archive ids, operator |
 | `## IDENTITY ##` | `shells` identity columns + `users` |
+| `## DEFINITIONS ##` | baked — `catalog_universal.md` |
 | `## OPERATING CONTEXT ##` | `shells.connections` |
-| `## DOMAIN & SCOPE ##` | `shells.role` / `shells.mandate` |
 | `## ACTIVE PROJECTS ##` | `projects` ⋈ `project_shells` |
 | `## TOOLS ##` | static common-tool roster, shaped by the model's dialect |
 | `## SKILLS AVAILABLE ##` | `skills` ⋈ `shell_skills` — name + triggers (content lazy-loaded) |
