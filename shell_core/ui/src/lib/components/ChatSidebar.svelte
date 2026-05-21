@@ -60,6 +60,21 @@
     Object.fromEntries(PROVIDERS.map(p => [p.key, models.filter(m => m.provider === p.key)]))
   )
 
+  // Local rows sit under the "Local" header — the "(local)" suffix the DB
+  // carries on their display_name is redundant in the list.
+  const modelLabel = (m) => (m.display_name ?? '').replace(/\s*\(local\)\s*$/i, '')
+
+  // Token meter: running conversation total vs the active model's context
+  // window. Outbound carries a real token count; inbound is estimated ~chars/4.
+  const activeModel   = $derived(models.find(m => String(m.model_id) === selectedModel))
+  const contextWindow = $derived(activeModel?.context_window ?? null)
+  const chatTokens    = $derived(
+    messages.reduce((sum, m) =>
+      sum + (m.direction === 'outbound' && m.tokens != null
+        ? m.tokens
+        : Math.ceil((m.body?.length ?? 0) / 4)), 0)
+  )
+
   function parseArgs(desc) {
     if (!desc) return ''
     const m = desc.match(/^`([^`]+)`/)
@@ -227,7 +242,7 @@
           <div class="provider-head">{p.label}</div>
           {#each modelsByProvider[p.key] ?? [] as m}
             <button class="model-row" class:active={String(m.model_id) === selectedModel}
-              onclick={() => changeModel(String(m.model_id))}>{m.display_name}</button>
+              onclick={() => changeModel(String(m.model_id))}>{modelLabel(m)}</button>
           {/each}
           {#if !(modelsByProvider[p.key] ?? []).length}
             <div class="model-none">(none yet)</div>
@@ -318,13 +333,6 @@
           </div>
         {/if}
 
-        {#if clearConfirm}
-          <div class="clear-confirm">
-            <span>Clear this conversation?</span>
-            <button class="clear-yes" onclick={clearChat}>Yes</button>
-            <button class="clear-no"  onclick={() => clearConfirm = false}>No</button>
-          </div>
-        {/if}
       {/if}
     </div>
 
@@ -342,19 +350,31 @@
       <div class="compose-btns">
         <button class="cbtn stop" disabled
           title="Stop an in-flight turn — backend not wired yet (CC-60)">stop</button>
-        <button class="cbtn clear" onclick={() => clearConfirm = true}
-          disabled={!messages.length}>clear</button>
+        {#if clearConfirm}
+          <!-- Inline confirm — expands left in the button column, not into chat. -->
+          <div class="clear-inline">
+            <button class="cbtn confirm-clear" onclick={clearChat}>confirm</button>
+            <button class="cbtn cancel-clear" onclick={() => clearConfirm = false}>✕</button>
+          </div>
+        {:else}
+          <button class="cbtn clear" onclick={() => clearConfirm = true}
+            disabled={!messages.length}>clear</button>
+        {/if}
         <button class="cbtn send" onclick={send}
           disabled={sending || !SHELL_ID || !draft.trim()}>send</button>
       </div>
     </div>
-    {#if draft.length > MAX_INBOUND_CHARS * 0.8}
-      <div class="compose-meta">
+    <div class="compose-meta">
+      <span class="token-count"
+        class:near-cap={contextWindow && chatTokens > contextWindow * 0.9}>
+        {chatTokens.toLocaleString()}{#if contextWindow} / {contextWindow.toLocaleString()}{/if} tok
+      </span>
+      {#if draft.length > MAX_INBOUND_CHARS * 0.8}
         <span class="char-count" class:at-cap={draft.length >= MAX_INBOUND_CHARS}>
           {draft.length.toLocaleString()} / {MAX_INBOUND_CHARS.toLocaleString()}
         </span>
-      </div>
-    {/if}
+      {/if}
+    </div>
 
   </div>
 </aside>
@@ -372,7 +392,7 @@
 
   /* ── Available Models column ──────────────────────────────────────────── */
   .models-col {
-    width: 132px;
+    width: 135px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -380,7 +400,10 @@
     background: var(--color-surface-2);
   }
   .col-title {
-    padding: 10px 12px;
+    height: 52px;            /* aligns this divider with the app header's */
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -437,7 +460,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    height: 52px;            /* aligns this divider with the app header's */
+    padding: 0 12px;
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface-2);
   }
@@ -552,18 +576,10 @@
   .retry-btn  { font-family: var(--font-mono); font-size: 10px; font-weight: 600; background: none; border: 1px solid var(--color-accent); border-radius: 4px; color: var(--color-accent); cursor: pointer; padding: 2px 8px; }
   .retry-btn:hover { background: rgba(0,114,255,0.08); }
 
-  .clear-confirm {
-    align-self: stretch;
-    display: flex; align-items: center; gap: 6px;
-    background: var(--color-surface-2); border: 1px solid var(--color-border);
-    border-radius: 6px; padding: 6px 10px;
-    font-family: var(--font-mono); font-size: 10px; color: var(--color-text-dim);
-  }
-  .clear-confirm span { flex: 1; }
-  .clear-yes { background: none; border: 1px solid var(--color-red); border-radius: 4px; color: var(--color-red); font-family: var(--font-mono); font-size: 10px; cursor: pointer; padding: 2px 8px; }
-  .clear-yes:hover { background: rgba(224,85,85,0.15); }
-  .clear-no  { background: none; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text-dim); font-family: var(--font-mono); font-size: 10px; cursor: pointer; padding: 2px 8px; }
-  .clear-no:hover { border-color: var(--color-text-dim); color: var(--color-text); }
+  .clear-inline { display: flex; gap: 4px; justify-content: flex-end; }
+  .cbtn.confirm-clear { border-color: var(--color-red); color: var(--color-red); }
+  .cbtn.confirm-clear:hover { background: rgba(224,85,85,0.12); }
+  .cbtn.cancel-clear { padding: 3px 8px; }
 
   .compose { display: flex; gap: 8px; padding: 8px 12px; background: var(--color-surface-2); border-top: 1px solid var(--color-border); }
   .input {
@@ -579,7 +595,7 @@
     line-height: 1.4;
   }
   .input:focus { outline: none; border-color: var(--color-accent); }
-  .compose-btns { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
+  .compose-btns { display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; align-items: flex-end; }
   .cbtn {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -597,7 +613,9 @@
   .cbtn.send:not(:disabled):hover { background: rgba(0,114,255,0.08); }
   .cbtn.clear:not(:disabled):hover { border-color: var(--color-red); color: var(--color-red); }
 
-  .compose-meta { display: flex; justify-content: flex-end; padding: 0 12px 6px; background: var(--color-surface-2); }
-  .char-count { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-dim); }
+  .compose-meta { display: flex; justify-content: space-between; gap: 8px; padding: 2px 12px 6px; background: var(--color-surface-2); }
+  .token-count { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-dim); }
+  .token-count.near-cap { color: var(--color-amber); }
+  .char-count { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-dim); margin-left: auto; }
   .char-count.at-cap { color: var(--color-red); }
 </style>

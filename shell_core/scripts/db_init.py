@@ -178,10 +178,10 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
 # ── Models registry (agnostic-runtime §4.1) ──────────────────────────────────
 
 # The model registry. A1 ships Anthropic + OpenAI; Gemini / local land with
-# CC-51. context_window / max_output / cost_* stay NULL until their consumers
-# (compaction CC-52/53, cost accounting) need them — A1 reads only
-# name / provider / tool_dialect / auth_ref / status.
-#   (name, display_name, provider, auth_ref, tool_dialect, locality, endpoint)
+# CC-51. context_window is seeded — the browser-chat token meter reads it;
+# max_output / cost_* stay NULL until their consumers (cost accounting) need
+# them. Local context_window is a starter value, refined live by model_sync.py.
+#   (name, display_name, provider, auth_ref, tool_dialect, locality, endpoint, context_window)
 # Model names verified live against each provider's models.list() — keep them
 # current; a stale name is a hard 404 at call time.
 # Local models: `endpoint` is the Ollama server base URL; the OllamaAdapter
@@ -189,13 +189,13 @@ def seed_skills(con: sqlite3.Connection) -> list[str]:
 # shape). The `qwen2.5:3b` row is a starter placeholder — adjust the endpoint
 # to wherever Ollama runs, then let model_sync.py populate the rest.
 _MODELS = [
-    ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
-    ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
-    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None),
-    ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
-    ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
-    ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai",    "remote", None),
-    ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434"),
+    ("claude-opus-4-7",           "Claude Opus 4.7",   "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None,                      200_000),
+    ("claude-sonnet-4-6",         "Claude Sonnet 4.6", "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None,                      200_000),
+    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5",  "anthropic", "ANTHROPIC_API_KEY", "anthropic", "remote", None,                      200_000),
+    ("gpt-5.5",                   "GPT-5.5",           "openai",    "OPENAI_API_KEY",    "openai",    "remote", None,                      128_000),
+    ("gpt-5.5-pro",               "GPT-5.5 Pro",       "openai",    "OPENAI_API_KEY",    "openai",    "remote", None,                      128_000),
+    ("gpt-5.4-mini",              "GPT-5.4 Mini",      "openai",    "OPENAI_API_KEY",    "openai",    "remote", None,                      128_000),
+    ("qwen2.5:3b",                "Qwen2.5 3B (local)","local",     None,                "openai",    "local",  "http://localhost:11434", 32_768),
 ]
 
 
@@ -203,14 +203,14 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
     """INSERT every registry model not already present (matched by name).
     Returns the names newly seeded. Caller commits."""
     seeded: list[str] = []
-    for name, display, provider, auth_ref, dialect, locality, endpoint in _MODELS:
+    for name, display, provider, auth_ref, dialect, locality, endpoint, ctx_window in _MODELS:
         if con.execute("SELECT 1 FROM models WHERE name=?", (name,)).fetchone():
             continue
         con.execute(
             "INSERT INTO models (name, display_name, provider, auth_ref, "
-            "tool_dialect, locality, endpoint, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
-            (name, display, provider, auth_ref, dialect, locality, endpoint),
+            "tool_dialect, locality, endpoint, context_window, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')",
+            (name, display, provider, auth_ref, dialect, locality, endpoint, ctx_window),
         )
         seeded.append(name)
     return seeded
