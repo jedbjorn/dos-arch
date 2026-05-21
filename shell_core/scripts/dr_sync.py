@@ -418,7 +418,8 @@ _FILEPATH_ENTRIES = [
     # (name, path, kind, description_short)
     ("schema",        ROOT / "shell_core" / "schema.sql",                "file", "Canonical SQLite schema (~25 tables + triggers + 2 catalogue views)"),
     ("shell_db",      ROOT / "shell_core" / "shell_db.db",               "file", "Live SQLite store — gitignored, local-only, bootstrap via make bootstrap"),
-    ("boot_template", ROOT / "shell_core" / "templates" / "boot.md",     "file", "Universal preamble (LAWS + SYSTEM OVERRIDE) — render chain input"),
+    ("catalog_template", ROOT / "shell_core" / "templates" / "catalog_universal.md", "file", "Baked universal catalog layer (Laws, Memory protocol, Communication) — render-chain input"),
+    ("render_chain",  ROOT / "shell_core" / "shell_render.py",           "file", "Typed section catalog — assemble_catalog, the shared boot-prompt renderer"),
     ("launcher",      ROOT / "shell_core" / "scripts" / "run.py",        "file", "Auth → picker → render CLAUDE.md → exec claude"),
     ("dr_sync",       ROOT / "shell_core" / "scripts" / "dr_sync.py",    "file", "Catalogue populator — wired sync targets + dispatch"),
     ("bootstrap",     ROOT / "shell_core" / "scripts" / "bootstrap.py",  "file", "One-shot bootstrapper — schema + skills + Forge + first user + Sys-Admin"),
