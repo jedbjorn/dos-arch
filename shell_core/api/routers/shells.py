@@ -9,6 +9,7 @@ from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import rerender_boot_document, rerender_shell_sessions, session_start_payload
+from api.services.model_runtime import unload_if_local
 
 router = APIRouter(tags=["shells"])
 
@@ -756,6 +757,11 @@ def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get
                  session_id),
             )
         con.commit()
+        if model_changed:
+            # The previous model is now unused — evict it from Ollama if it
+            # is local, so its keep_alive residency is not held for a model
+            # this session no longer talks to. Best-effort (model_runtime).
+            unload_if_local(con, existing["model_id"])
     row = dict(con.execute("SELECT chat_session_id, total_tokens, token_warning_sent, is_active, model_id FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone())
     return row
 

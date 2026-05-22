@@ -169,10 +169,13 @@
   }
 
   async function startNewSession() {
-    // A new session is born with the default model — it has a dialect from
-    // turn one, and there is no follow-up PATCH (which would post a spurious
-    // model-switch marker into a brand-new chat).
-    return adoptSession(await createShellChatSession(SHELL_ID, defaultModelId()))
+    // A new session is born with the model already in use — falling back to
+    // the default only on first use, when nothing is selected yet. Clear
+    // keeps you on your model; only an explicit switch changes it. Passing
+    // the model at creation (not a follow-up PATCH) keeps the dialect right
+    // from turn one and avoids a spurious model-switch marker in a new chat.
+    const modelId = selectedModel ? Number(selectedModel) : defaultModelId()
+    return adoptSession(await createShellChatSession(SHELL_ID, modelId))
   }
 
   async function ensureSession() {
