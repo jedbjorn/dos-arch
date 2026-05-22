@@ -85,6 +85,15 @@ TOOL_SEMAPHORE = threading.Semaphore(TOOL_CONCURRENCY)
 # name->verb mapping, dispatcher-side, not part of a tool's stored definition.
 METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_delete": "DELETE"}
 
+# Named API routes: a tool whose stored `handler` is a key here fires a
+# fixed (method, path) and uses its `input` dict as the request body — the
+# model never sees the path/HTTP details, only the content schema. Keep
+# entries narrow ("one tool, one route"); the generic api_* surface stays
+# the right tool for anything ad-hoc.
+NAMED_API_ROUTES: dict[str, tuple[str, str]] = {
+    "flag.create": ("POST", "/flags"),
+}
+
 # One cached adapter per (provider, endpoint) — adapters are thread-safe and
 # reused across shell threads. Built lazily. Endpoint matters for `local`
 # (Ollama can be served from many hosts); for cloud providers it is None.
@@ -290,8 +299,9 @@ def fetch_session_start(shell_id: int, chat_session_id, token: str | None = None
 def execute_tool(name: str, params: dict, handler: str | None, token: str | None = None):
     """Run one tool call. Returns (text, is_error). A tool whose stored
     `handler` is 'api' hits the dos-arch API — METHOD_MAP maps the tool name
-    to an HTTP verb; every other handler key routes to a shell_core.services
-    .tools handler via run_tool()."""
+    to an HTTP verb; a handler in NAMED_API_ROUTES fires a fixed (method,
+    path) with `params` as the body; every other handler key routes to a
+    shell_core.services.tools handler via run_tool()."""
     params = params or {}
     if handler == "api":
         method = METHOD_MAP.get(name)
@@ -303,6 +313,10 @@ def execute_tool(name: str, params: dict, handler: str | None, token: str | None
         # Process-wide cap on concurrent API calls — protects our own API.
         with TOOL_SEMAPHORE:
             return _request(method, path, body=params.get("body"), timeout=30, token=token)
+    if handler in NAMED_API_ROUTES:
+        method, path = NAMED_API_ROUTES[handler]
+        with TOOL_SEMAPHORE:
+            return _request(method, path, body=params, timeout=30, token=token)
     if not handler:
         return f"tool '{name}' has no handler registered", True
     return run_tool(handler, params)
