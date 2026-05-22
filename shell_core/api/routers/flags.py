@@ -193,16 +193,26 @@ def update_flag_start_date(flag_id: int, body: StartDateBody, con = Depends(get_
     return _get_flag(con, flag_id)
 
 
-@router.get("/flags", summary="List all flags, ordered by status then schedule")
-def get_all_flags(con = Depends(get_db)):
+@router.get("/flags", summary="List flags, optionally scoped to one shell, ordered by status then schedule")
+def get_all_flags(shell_id: int | None = None, con = Depends(get_db)):
+    """Pass `?shell_id=` to scope the list to one shell. Unscoped (no
+    param) keeps the prior behaviour — every flag in the substrate, for
+    the admin UI. The OPEN FLAGS prompt pointer and the surface_flags
+    skill both rely on this filter — the pointer's per-shell count and
+    the skill's per-shell triage must read the same rows."""
+    where = ["f.is_deleted = 0"]
+    params: list = []
+    if shell_id is not None:
+        where.append("f.shell_id = ?")
+        params.append(shell_id)
     rows = con.execute(f"""
         SELECT {FLAG_LIST_COLS}
         {FLAG_BASE_FROM}
-        WHERE f.is_deleted = 0
+        WHERE {' AND '.join(where)}
         ORDER BY CASE f.resolved WHEN 0 THEN 0 WHEN 2 THEN 1 WHEN 1 THEN 2 END,
                  fs.effective_start ASC NULLS LAST,
                  f.flag_id ASC
-    """).fetchall()
+    """, params).fetchall()
     return [dict(r) for r in rows]
 
 

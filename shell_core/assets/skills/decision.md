@@ -33,8 +33,8 @@ canonical; repo files link to it, never the reverse.
 ## Steps
 
 `$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment;
-`<self>` is your shell_id and `{archive_id}` is in `## ACTIVE SESSION` of
-your CLAUDE.md.
+`<self>` is your `shell_id:` and `{archive_id}` is your `archive:` — both
+in `## BOOT ##` of your CLAUDE.md.
 
 1. **Resolve args.** If decision or context were not provided inline,
    interview — "What is the decision?", "What is the context — why does this
@@ -57,7 +57,11 @@ your CLAUDE.md.
      -H "Content-Type: application/json" \
      -d '{"narrative_entry": "[HH:MM] DECISION: {decision} — {context}"}'
    ```
-   On a non-2xx response: surface the error to the operator and stop.
+   If `{archive_id}` is `—` (no archive row for this session — common on
+   API-model shells, where `shell_memory_archives` is unpopulated), skip
+   step 3. The decision record from step 2 is canonical; the narrative
+   line is a convenience. On any other non-2xx response: surface the
+   error to the operator and stop.
 
 4. **Confirm:** "Decision recorded."
 
