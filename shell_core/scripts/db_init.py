@@ -215,12 +215,34 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
     return seeded
 
 
+# Tool handler-family prefix -> the skill that carries that family. A tool
+# whose handler is e.g. 'file.read' scopes to file-ops; the api_* tools
+# (handler 'api') match nothing here and stay general (skill_id NULL).
+_HANDLER_SKILL = {
+    "file": "file-ops", "proc": "process-exec",
+    "git":  "git-workflow", "net":  "web-fetch",
+}
+
+
 def seed_tools(con: sqlite3.Connection) -> list[str]:
-    """INSERT every tool in `assets/tools/` not already present. Returns the
-    names newly seeded. Caller commits. Tools need no per-shell grant — a
-    general tool (skill_id NULL) is universal, a skill-bound tool comes with
-    its skill — so this is now a plain asset seed."""
-    return seed_from_assets(con, "tools")
+    """INSERT every tool in `assets/tools/` not already present, then scope
+    each skill-bound tool to its skill by handler-family prefix (file.* ->
+    file-ops, proc.* -> process-exec, git.* -> git-workflow, net.* ->
+    web-fetch). Returns the names newly seeded. Caller commits. Tools need no
+    per-shell grant — a general tool (skill_id NULL) is universal, a
+    skill-bound tool comes with its skill."""
+    seeded = seed_from_assets(con, "tools")
+    for prefix, skill_name in _HANDLER_SKILL.items():
+        row = con.execute(
+            "SELECT skill_id FROM skills WHERE name=? AND is_deleted=0",
+            (skill_name,),
+        ).fetchone()
+        if row:
+            con.execute(
+                "UPDATE tools SET skill_id=? WHERE skill_id IS NULL AND handler LIKE ?",
+                (row[0], prefix + ".%"),
+            )
+    return seeded
 
 
 def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:

@@ -79,11 +79,11 @@ def main() -> int:
         con.commit()
         print(f"  seeded Sys-Admin (shell_id={sa_id}, partner=user_id {user_id})")
 
-        # Tools last — the grant step joins against every shell, so Forge and
-        # Sys-Admin must already exist.
+        # Tools after skills — seed_tools scopes each tool to its skill, so
+        # the skills must already be seeded (they are, above).
         seeded_tools = seed_tools(con)
         con.commit()
-        print(f"  seeded {len(seeded_tools)} tools (granted to all shells)")
+        print(f"  seeded {len(seeded_tools)} tools")
     finally:
         con.close()
 
