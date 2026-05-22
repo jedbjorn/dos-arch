@@ -481,11 +481,12 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
     ~/shared on machines without the VM mount).
     """
     counts = {"filepaths": {"insert": 0, "update": 0, "retire": 0}}
-    seen_ids: list[int] = []
+    known_paths: set[str] = set()
     for name, path, kind, desc in _FILEPATH_ENTRIES:
+        path_str = _catalog_path(path)
+        known_paths.add(path_str)
         if not path.exists():
             continue
-        path_str = _catalog_path(path)
         existing = conn.execute(
             "SELECT filepath_id FROM dr_filepath WHERE path = ?", (path_str,)
         ).fetchone()
@@ -496,16 +497,29 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
                 (name, _truncate(desc), kind, existing[0])
             )
             counts["filepaths"]["update"] += 1
-            seen_ids.append(existing[0])
         else:
-            cur = conn.execute(
+            conn.execute(
                 "INSERT INTO dr_filepath (name, description_short, path, kind, last_verified) "
                 "VALUES (?, ?, ?, ?, date('now'))",
                 (name, _truncate(desc), path_str, kind)
             )
             counts["filepaths"]["insert"] += 1
-            seen_ids.append(cur.lastrowid)
-    counts["filepaths"]["retire"] = _reap(conn, "dr_filepath", "filepath_id", seen_ids)
+    # Reap on entry-set membership, not per-run row visibility (unlike _reap).
+    # A dr_filepath row is retired only when its path is no longer a curated
+    # _FILEPATH_ENTRIES entry at all. A path the list still carries but this
+    # execution context cannot see is kept: the dos-api container bind-mounts
+    # only shell_core, so Makefile / ecosystem.config.cjs / ~/.claude are
+    # absent there — a partial filesystem view must never retire entries that
+    # are still curated. _catalog_path is context-independent, so `known_paths`
+    # is the same set whether the sync runs from the host or the container.
+    if known_paths:
+        placeholders = ",".join("?" * len(known_paths))
+        cur = conn.execute(
+            f"UPDATE dr_filepath SET status = 'retired' "
+            f"WHERE status = 'active' AND path NOT IN ({placeholders})",
+            tuple(known_paths),
+        )
+        counts["filepaths"]["retire"] = cur.rowcount
     return counts
 
 
