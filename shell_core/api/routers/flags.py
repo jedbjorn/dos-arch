@@ -121,7 +121,6 @@ class UpdateFlagBody(BaseModel):
     display_name:     str         = Field(default="", max_length=250)
     description:      str         = ""
     priority:         str         = Field(default="", max_length=15)
-    resolution_notes: str         = ""
     start_date:       str         = Field(default="", max_length=25)
     parent_flag_id:   int | None  = None
     clear_parent:     bool        = False
@@ -368,11 +367,5 @@ def update_flag(flag_id: int, body: UpdateFlagBody, con = Depends(get_db)):
             "UPDATE flags SET estimated_days = ? WHERE flag_id = ?",
             (body.estimated_days, flag_id)
         )
-    if body.resolution_notes.strip():
-        stamp = date.today().strftime("%b %-d, %Y")
-        entry = f"## Note: {stamp}\n{body.resolution_notes.strip()}"
-        existing = flag["resolution_notes"] or ""
-        new_notes = (existing + "\n\n" + entry).strip()
-        con.execute("UPDATE flags SET resolution_notes = ? WHERE flag_id = ?", (new_notes, flag_id))
     con.commit()
     return _get_flag(con, flag_id)
