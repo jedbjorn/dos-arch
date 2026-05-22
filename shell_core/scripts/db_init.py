@@ -215,24 +215,18 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
     return seeded
 
 
-# Tool handler-family prefix -> the skill that carries that family. A tool
-# whose handler is e.g. 'file.read' scopes to file-ops; the api_* tools
-# (handler 'api') match nothing here and stay general (skill_id NULL).
-_HANDLER_SKILL = {
-    "file": "file-ops", "proc": "process-exec",
-    "git":  "git-workflow", "net":  "web-fetch",
-}
-
-
 def seed_tools(con: sqlite3.Connection) -> list[str]:
     """INSERT every tool in `assets/tools/` not already present, then scope
-    each skill-bound tool to its skill by handler-family prefix (file.* ->
-    file-ops, proc.* -> process-exec, git.* -> git-workflow, net.* ->
-    web-fetch). Returns the names newly seeded. Caller commits. Tools need no
-    per-shell grant — a general tool (skill_id NULL) is universal, a
-    skill-bound tool comes with its skill."""
+    each skill-bound tool to its skill via the [skill_map] table in the tools
+    seed manifest — it maps a tool handler-family prefix to the skill that
+    carries it (file.* -> file-ops, proc.* -> process-exec, …). A tool whose
+    prefix is unlisted (the api_* verbs) stays general. Returns the names
+    newly seeded. Caller commits. Tools need no per-shell grant — a general
+    tool (skill_id NULL) is universal, a skill-bound tool comes with its skill."""
     seeded = seed_from_assets(con, "tools")
-    for prefix, skill_name in _HANDLER_SKILL.items():
+    skill_map = tomllib.loads(
+        (ASSETS / "tools" / "_seed.toml").read_text()).get("skill_map", {})
+    for prefix, skill_name in skill_map.items():
         row = con.execute(
             "SELECT skill_id FROM skills WHERE name=? AND is_deleted=0",
             (skill_name,),

@@ -9,3 +9,15 @@ table       = "tools"
 match       = "name"
 body        = "spec"
 body_format = "json"
+
+# ── skill scoping ────────────────────────────────────────────────────────────
+# Consumed by seed_tools() in db_init.py, not the generic seeder. Each entry
+# maps a tool handler-family prefix to the skill that carries that family: a
+# tool whose `handler` starts "<prefix>." is scoped to that skill. A tool
+# whose prefix is unlisted (the api_* verbs, handler 'api') stays general
+# (skill_id NULL). Adding a tool family is a line here — no code change.
+[skill_map]
+file = "file-ops"
+proc = "process-exec"
+git  = "git-workflow"
+net  = "web-fetch"
