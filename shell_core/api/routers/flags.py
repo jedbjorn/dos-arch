@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from datetime import date
 
 from api.common.db import get_db, _valid_date, _enum_error
+from api.common.auth import _caller_shell
 
 router = APIRouter(tags=["flags"])
 
@@ -72,8 +73,8 @@ def _validate_parent(con, parent_flag_id):
 
 class FlagBody(BaseModel):
     display_name:   str = Field(max_length=250)
-    priority:       str = Field(max_length=15)
     description:    str = ""
+    priority:       str = Field(default="Medium", max_length=15)
     status:         int | None = Field(
         default=None, description="0 = Open (default), 1 = Resolved, 2 = Tracking")
     start_date:     str = Field(default="", max_length=25)
@@ -128,7 +129,7 @@ class UpdateFlagBody(BaseModel):
 
 
 @router.post("/flags", summary="Create a new flag")
-def create_flag(body: FlagBody, con = Depends(get_db)):
+def create_flag(body: FlagBody, request: Request, con = Depends(get_db)):
     if body.priority not in FLAG_PRIORITIES:
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
     _valid_date(body.start_date)
@@ -141,6 +142,11 @@ def create_flag(body: FlagBody, con = Depends(get_db)):
     else:
         resolved = 0
     _validate_parent(con, body.parent_flag_id)
+    # Owner: an explicit shell_id in the body wins (the UI sets it from the
+    # active shell picker); otherwise default to the calling shell when the
+    # Bearer token resolved one. The keyless localhost UI without an
+    # explicit shell_id still lands shell_id=NULL — by design, "no owner".
+    shell_id = body.shell_id if body.shell_id is not None else _caller_shell(request)
     con.execute("""
         INSERT INTO flags (display_name, priority, description,
                            start_date, parent_flag_id, estimated_days,
@@ -154,7 +160,7 @@ def create_flag(body: FlagBody, con = Depends(get_db)):
         body.parent_flag_id,
         body.estimated_days,
         resolved,
-        body.shell_id,
+        shell_id,
     ))
     flag_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     con.commit()

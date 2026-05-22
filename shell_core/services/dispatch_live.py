@@ -136,8 +136,12 @@ def clear_in_flight(con: sqlite3.Connection, shell_ids) -> None:
 
 
 def load_shell(con: sqlite3.Connection, shell_id: int):
+    # api_key is the Bearer token the dispatcher carries on every API call
+    # made on this shell's behalf (migration 031). Re-read per turn — no
+    # cache — so a rotation (e.g. via run.py at CLI launch) is picked up
+    # without a dispatcher restart.
     return con.execute(
-        "SELECT shell_id, display_name FROM shells WHERE shell_id=?", (shell_id,)
+        "SELECT shell_id, display_name, api_key FROM shells WHERE shell_id=?", (shell_id,)
     ).fetchone()
 
 
@@ -233,12 +237,18 @@ def fetch_unread_for_shell(con: sqlite3.Connection, shell_id: int):
 
 # ── HTTP to our own API ─────────────────────────────────────────────────────--
 
-def _request(method: str, path: str, body=None, timeout: int = 30):
-    """One HTTP call to the dos-arch API. Returns (text, is_error)."""
+def _request(method: str, path: str, body=None, timeout: int = 30, token: str | None = None):
+    """One HTTP call to the dos-arch API. Returns (text, is_error).
+
+    `token`, when provided, is sent as `Authorization: Bearer <token>` — the
+    API middleware resolves it to a shell_id so endpoints (e.g. create_flag)
+    can default owner fields without the model having to fill them."""
     if not path.startswith("/"):
         path = "/" + path
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"} if data is not None else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(API_BASE + path, data=data, method=method, headers=headers)
     for attempt in range(3):
         if attempt > 0:
@@ -260,7 +270,7 @@ def _request(method: str, path: str, body=None, timeout: int = 30):
     return "error: retries exhausted", True
 
 
-def fetch_session_start(shell_id: int, chat_session_id) -> dict:
+def fetch_session_start(shell_id: int, chat_session_id, token: str | None = None) -> dict:
     """GET the materialized boot document + live dynamic tail for a chat
     session. Returns the decoded payload, or {'error': ...} if the call fails
     or the inbound message carries no session."""
@@ -268,7 +278,7 @@ def fetch_session_start(shell_id: int, chat_session_id) -> dict:
         return {"error": "message has no chat session"}
     text, is_error = _request(
         "GET", f"/shells/{shell_id}/sessions/{chat_session_id}/session-start",
-        timeout=15)
+        timeout=15, token=token)
     if is_error:
         return {"error": text}
     try:
@@ -277,7 +287,7 @@ def fetch_session_start(shell_id: int, chat_session_id) -> dict:
         return {"error": f"bad session-start payload: {e}"}
 
 
-def execute_tool(name: str, params: dict, handler: str | None):
+def execute_tool(name: str, params: dict, handler: str | None, token: str | None = None):
     """Run one tool call. Returns (text, is_error). A tool whose stored
     `handler` is 'api' hits the dos-arch API — METHOD_MAP maps the tool name
     to an HTTP verb; every other handler key routes to a shell_core.services
@@ -292,14 +302,15 @@ def execute_tool(name: str, params: dict, handler: str | None):
             return "missing or invalid path", True
         # Process-wide cap on concurrent API calls — protects our own API.
         with TOOL_SEMAPHORE:
-            return _request(method, path, body=params.get("body"), timeout=30)
+            return _request(method, path, body=params.get("body"), timeout=30, token=token)
     if not handler:
         return f"tool '{name}' has no handler registered", True
     return run_tool(handler, params)
 
 
 def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id,
-               tokens: int, cache_hit_tokens=None, cache_miss_tokens=None):
+               tokens: int, cache_hit_tokens=None, cache_miss_tokens=None,
+               token: str | None = None):
     text, is_error = _request("POST", f"/shells/{shell_id}/chat/reply", body={
         "body": body,
         "source_message_id": source_message_id,
@@ -309,7 +320,7 @@ def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id,
         "cache_hit_tokens": cache_hit_tokens,
         "cache_miss_tokens": cache_miss_tokens,
         "is_new_session": False,
-    })
+    }, token=token)
     return (0 if is_error else 200), text
 
 
@@ -336,6 +347,9 @@ def render_dynamic(dyn: dict) -> str:
 # ── The agent loop ────────────────────────────────────────────────────────────
 
 def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
+    # The shell's Bearer token — every API call this turn carries it so the
+    # API middleware resolves request.state.shell_id to this shell.
+    token   = shell["api_key"]
     window  = load_user_history_window(con, msg["user_id"])
     history = load_history(con, msg["chat_session_id"], window)
     if not history:
@@ -369,12 +383,13 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     print(f"[{shell['display_name']}] msg={msg['message_id']} model={model_name} "
           f"provider={provider}{ep} tools={len(tools)}", flush=True)
 
-    ss = fetch_session_start(shell["shell_id"], msg["chat_session_id"])
+    ss = fetch_session_start(shell["shell_id"], msg["chat_session_id"], token=token)
     if "error" in ss:
         print(f"[{shell['display_name']}] session-start failed: {ss['error']}",
               file=sys.stderr, flush=True)
         post_reply(shell["shell_id"], "(I could not load my context — please retry.)",
-                   msg["message_id"], msg["chat_session_id"], msg["user_id"], 0)
+                   msg["message_id"], msg["chat_session_id"], msg["user_id"], 0,
+                   token=token)
         return
 
     # Normalized system blocks: Block 1-2 (materialized boot document) is
@@ -418,7 +433,8 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
                 tool_results = []
                 for tc in parsed.tool_calls:
                     result, is_error = execute_tool(
-                        tc["name"], tc["input"], tool_handlers.get(tc["name"]))
+                        tc["name"], tc["input"], tool_handlers.get(tc["name"]),
+                        token=token)
                     short_in  = json.dumps(tc["input"])[:140].replace("\n", " ")
                     short_out = result[:140].replace("\n", " ")
                     print(f"  tool={tc['name']} in={short_in} err={is_error} out={short_out}", flush=True)
@@ -443,7 +459,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     status, resp_body = post_reply(
         shell["shell_id"], final_text, msg["message_id"],
         msg["chat_session_id"], msg["user_id"], context_tokens,
-        cache_hit_tokens, cache_miss_tokens,
+        cache_hit_tokens, cache_miss_tokens, token=token,
     )
     print(f"[{shell['display_name']}] reply_status={status} tokens={context_tokens}", flush=True)
     if status >= 400:

@@ -1,7 +1,9 @@
 """Identity, decisions, archives, chat, messages — the per-shell CRUD surface."""
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
+import hashlib
 import re
+import secrets
 import uuid
 from datetime import date
 
@@ -51,12 +53,18 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
     # Identity is columns, not a rendered template: role / mandate frame the
     # shell (catalog Section C), connections is its operating context
     # (Section B). The boot-prompt catalog composes the rest.
+    # Auth: every shell gets an api_key at creation — the dispatcher's
+    # Bearer carrier and the API middleware's identity signal. Plaintext +
+    # sha256 hash both stored (alpha simplification — see migration 031).
+    api_key      = secrets.token_urlsafe(32)
+    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "connections, user_id, is_shared, is_admin, api_auth) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)",
+        "connections, user_id, is_shared, is_admin, api_auth, api_key, api_key_hash) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)",
         (body.display_name, short, body.partner, body.role, body.mandate,
-         body.connections, body.user_id, 1 if body.api_auth else 0),
+         body.connections, body.user_id, 1 if body.api_auth else 0,
+         api_key, api_key_hash),
     )
     new_id = cur.lastrowid
 
