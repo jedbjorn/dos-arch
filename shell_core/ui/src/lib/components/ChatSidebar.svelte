@@ -64,16 +64,21 @@
   // carries on their display_name is redundant in the list.
   const modelLabel = (m) => (m.display_name ?? '').replace(/\s*\(local\)\s*$/i, '')
 
-  // Token meter: running conversation total vs the active model's context
-  // window. Outbound carries a real token count; inbound is estimated ~chars/4.
+  // Token meter: the live conversation's context size vs the active model's
+  // window. Each completed turn's outbound message carries that turn's total
+  // (input + output); every turn's input re-includes the whole history, so
+  // the latest turn's count *is* the current context — earlier turns are not
+  // summed. A not-yet-answered inbound message adds a rough ~chars/4 estimate.
   const activeModel   = $derived(models.find(m => String(m.model_id) === selectedModel))
   const contextWindow = $derived(activeModel?.context_window ?? null)
-  const chatTokens    = $derived(
-    messages.reduce((sum, m) =>
-      sum + (m.direction === 'outbound' && m.tokens != null
-        ? m.tokens
-        : Math.ceil((m.body?.length ?? 0) / 4)), 0)
-  )
+  const chatTokens = $derived.by(() => {
+    let ctx = 0, pending = 0
+    for (const m of messages) {
+      if (m.direction === 'outbound' && m.tokens != null) { ctx = m.tokens; pending = 0 }
+      else pending += Math.ceil((m.body?.length ?? 0) / 4)
+    }
+    return ctx + pending
+  })
 
   function parseArgs(desc) {
     if (!desc) return ''
