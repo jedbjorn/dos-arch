@@ -279,13 +279,16 @@ def execute_tool(name: str, params: dict):
         return _request(method, path, body=body, timeout=30)
 
 
-def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id, tokens: int):
+def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id,
+               tokens: int, cache_hit_tokens=None, cache_miss_tokens=None):
     text, is_error = _request("POST", f"/shells/{shell_id}/chat/reply", body={
         "body": body,
         "source_message_id": source_message_id,
         "session_id": session_id,
         "user_id": user_id,
         "tokens": tokens,
+        "cache_hit_tokens": cache_hit_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
         "is_new_session": False,
     })
     return (0 if is_error else 200), text
@@ -364,8 +367,10 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     # Each iteration's input re-includes the running transcript, so the last
     # iteration's in+out is the conversation's context size after the turn —
     # take that, not a sum across iterations (which would double-count).
-    context_tokens = 0
-    final_text     = ""
+    context_tokens    = 0
+    cache_hit_tokens  = None
+    cache_miss_tokens = None
+    final_text        = ""
 
     try:
         for iteration in range(MAX_TOOL_ITER):
@@ -373,9 +378,20 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
             response = adapter.call(request)
             parsed   = adapter.parse_response(response)
             u = parsed.usage
-            context_tokens = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+            cache_hit_tokens  = u.get("cache_hit_tokens")
+            cache_miss_tokens = u.get("cache_miss_tokens")
+            # Context size is the whole input (cached + fresh) + output. With
+            # caching on, the provider reports only the *fresh* input under
+            # input_tokens, so prefer the cache fields' sum when present —
+            # otherwise the token meter undercounts by the cached prefix.
+            if cache_hit_tokens is not None or cache_miss_tokens is not None:
+                input_tokens = (cache_hit_tokens or 0) + (cache_miss_tokens or 0)
+            else:
+                input_tokens = u.get("input_tokens") or 0
+            context_tokens = input_tokens + (u.get("output_tokens") or 0)
             print(f"[{shell['display_name']}] iter={iteration} stop={parsed.stop_reason} "
-                  f"in={u.get('input_tokens')} out={u.get('output_tokens')}", flush=True)
+                  f"in={u.get('input_tokens')} out={u.get('output_tokens')} "
+                  f"cache_hit={cache_hit_tokens}", flush=True)
 
             if parsed.stop_reason == "tool_use":
                 messages.append(assistant_message(parsed))
@@ -406,6 +422,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     status, resp_body = post_reply(
         shell["shell_id"], final_text, msg["message_id"],
         msg["chat_session_id"], msg["user_id"], context_tokens,
+        cache_hit_tokens, cache_miss_tokens,
     )
     print(f"[{shell['display_name']}] reply_status={status} tokens={context_tokens}", flush=True)
     if status >= 400:

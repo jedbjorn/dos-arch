@@ -219,8 +219,34 @@ CREATE TABLE chat_messages (
     read_by_shell   INTEGER NOT NULL DEFAULT 0,
     is_deleted      INTEGER NOT NULL DEFAULT 0,
     chat_session_id TEXT REFERENCES chat_sessions(chat_session_id),
-    tokens          INTEGER
+    tokens          INTEGER,
+    cache_hit_tokens  INTEGER,           -- input tokens served from cache (a hit)
+    cache_miss_tokens INTEGER            -- input tokens processed fresh (a miss)
 );
+
+-- Per-session cache-hit roll-up — surfaces a model silently missing every
+-- cache. Counts live on the outbound (reply) row; rows without cache data
+-- (Ollama, pre-024, warning/clear messages) are excluded so `turns` counts
+-- only real model turns. (Migration 024.)
+CREATE VIEW v_cache_health AS
+SELECT
+  cs.chat_session_id,
+  cs.shell_id,
+  m.name     AS model_name,
+  m.provider AS provider,
+  COUNT(*)                               AS turns,
+  SUM(COALESCE(cm.cache_hit_tokens,  0)) AS cache_hit_tokens,
+  SUM(COALESCE(cm.cache_miss_tokens, 0)) AS cache_miss_tokens,
+  CAST(SUM(COALESCE(cm.cache_hit_tokens, 0)) AS REAL)
+    / NULLIF(SUM(COALESCE(cm.cache_hit_tokens,  0)
+                 + COALESCE(cm.cache_miss_tokens, 0)), 0) AS hit_rate
+FROM chat_sessions cs
+JOIN chat_messages cm ON cm.chat_session_id = cs.chat_session_id
+JOIN models        m  ON m.model_id = cs.model_id
+WHERE cm.direction = 'outbound'
+  AND COALESCE(cm.is_deleted, 0) = 0
+  AND (cm.cache_hit_tokens IS NOT NULL OR cm.cache_miss_tokens IS NOT NULL)
+GROUP BY cs.chat_session_id;
 
 -- ── Flags (substrate task tracking) ───────────────────────────────────────────
 

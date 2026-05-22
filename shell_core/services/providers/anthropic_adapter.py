@@ -4,10 +4,10 @@ The first and reference adapter. It owns the only `import anthropic` in the
 runtime; the dispatcher speaks the normalized contract in `base.py`.
 
 Anthropic's content-block model *is* the normalized message format (base.py
-picks it as the reference dialect), so `format_request`'s message
-translation is an identity — only `system` (cache hints) and `tools` (the
-tool-call dialect) need projection. The OpenAI / Gemini / local adapters do
-real message restructuring here.
+picks it as the reference dialect), so `format_request` does no message
+restructuring — it only adds a cache breakpoint to the last message, and
+projects `system` (cache hints) and `tools` (the tool-call dialect). The
+OpenAI / Gemini / local adapters do real message restructuring here.
 
 `cost()` returns 0.0 — the dispatcher is tokens-only in alpha (decision
 #108); per-model rates land with the `models` registry consumers (CC-52/53).
@@ -18,6 +18,30 @@ from __future__ import annotations
 import anthropic
 
 from .base import ParsedResponse, ProviderAdapter, ProviderError
+
+
+def _breakpoint_messages(messages: list) -> list:
+    """Copy `messages`, placing a cache breakpoint on the last message's final
+    content block. The system breakpoint caches the boot document; this one
+    caches the conversation prefix, so each iteration of the dispatcher's tool
+    loop reads the previous iteration's transcript from cache instead of
+    re-prefilling it. Copied, never mutated — the dispatcher reuses the same
+    `messages` list across loop iterations, so an in-place edit would leave
+    stale breakpoints on old messages and overrun Anthropic's four-slot cap."""
+    if not messages:
+        return messages
+    out = list(messages)
+    last = dict(out[-1])
+    content = last["content"]
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    else:
+        content = [dict(b) for b in content]
+    if content:
+        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+    last["content"] = content
+    out[-1] = last
+    return out
 
 
 class AnthropicAdapter(ProviderAdapter):
@@ -60,8 +84,9 @@ class AnthropicAdapter(ProviderAdapter):
             "max_tokens": max_tokens,
             "system": system,
             # messages: the normalized format is Anthropic's content-block
-            # shape, so this reference adapter passes them through unchanged.
-            "messages": messages,
+            # shape — passed through unchanged but for a cache breakpoint on
+            # the last message, so the conversation prefix caches turn to turn.
+            "messages": _breakpoint_messages(messages),
         }
         if native_tools:
             request["tools"] = native_tools
@@ -85,10 +110,20 @@ class AnthropicAdapter(ProviderAdapter):
             if b.type == "tool_use"
         ]
         u = response.usage
+        # Cache fields: cache_read is the prefix served from cache (a hit);
+        # input + cache_creation is processed fresh (a miss — cache writes
+        # included). getattr — responses predating prompt caching omit them.
+        cache_read     = getattr(u, "cache_read_input_tokens", 0) or 0
+        cache_creation = getattr(u, "cache_creation_input_tokens", 0) or 0
         return ParsedResponse(
             text=text,
             tool_calls=tool_calls,
-            usage={"input_tokens": u.input_tokens, "output_tokens": u.output_tokens},
+            usage={
+                "input_tokens":      u.input_tokens,
+                "output_tokens":     u.output_tokens,
+                "cache_hit_tokens":  cache_read,
+                "cache_miss_tokens": u.input_tokens + cache_creation,
+            },
             stop_reason=response.stop_reason,
         )
 

@@ -149,12 +149,22 @@ class OpenAIAdapter(ProviderAdapter):
             )
 
         u = response.usage
+        prompt_tokens = u.prompt_tokens if u else 0
+        # OpenAI reports the cached prefix under prompt_tokens_details; the
+        # remainder of the prompt is processed fresh. Older or non-compliant
+        # responses omit the detail object — default to a zero hit.
+        cache_hit = 0
+        details = getattr(u, "prompt_tokens_details", None) if u else None
+        if details is not None:
+            cache_hit = getattr(details, "cached_tokens", 0) or 0
         return ParsedResponse(
             text=text,
             tool_calls=tool_calls,
             usage={
-                "input_tokens": u.prompt_tokens if u else 0,
-                "output_tokens": u.completion_tokens if u else 0,
+                "input_tokens":      prompt_tokens,
+                "output_tokens":     u.completion_tokens if u else 0,
+                "cache_hit_tokens":  cache_hit,
+                "cache_miss_tokens": max(prompt_tokens - cache_hit, 0),
             },
             stop_reason=_STOP_REASON.get(choice.finish_reason, "other"),
         )

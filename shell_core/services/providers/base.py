@@ -67,7 +67,10 @@ class ParsedResponse:
 
     text        — the assistant's text, joined across text blocks.
     tool_calls  — [{"id": str, "name": str, "input": dict}], empty if none.
-    usage       — {"input_tokens": int, "output_tokens": int}.
+    usage       — int token counts: "input_tokens", "output_tokens", and —
+                  when the provider reports caching (Anthropic, OpenAI) —
+                  "cache_hit_tokens" / "cache_miss_tokens". Ollama omits the
+                  cache keys.
     stop_reason — normalized; see the vocabulary in the module docstring.
     """
 
