@@ -12,8 +12,12 @@ from api.services.boot_document import rerender_boot_document, rerender_shell_se
 
 router = APIRouter(tags=["shells"])
 
-TOKEN_WARN      = 170_000
-TOKEN_AUTOCLEAR = 180_000
+# Warn / auto-clear thresholds as a fraction of the session model's context
+# window — a fixed token count cannot fit every model. A model with no
+# context_window recorded falls back to DEFAULT_CONTEXT_WINDOW.
+TOKEN_WARN_FRACTION      = 0.80
+TOKEN_AUTOCLEAR_FRACTION = 0.95
+DEFAULT_CONTEXT_WINDOW   = 128_000
 
 
 # ── Shell creation ────────────────────────────────────────────────────────────
@@ -810,8 +814,7 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
     if source_id:
         con.execute("UPDATE chat_messages SET read_by_shell=1 WHERE message_id=? AND shell_id=?", (source_id, shell_id))
 
-    new_total = call_tokens
-    cleared   = False
+    cleared        = False
     new_session_id = None
     if session_id and user_id:
         if is_new:
@@ -821,12 +824,11 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
                 (session_id, shell_id, user_id, call_tokens)
             )
         else:
-            row = con.execute("SELECT total_tokens FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone()
-            prev = row[0] if row else 0
-            new_total = prev + call_tokens
+            # total_tokens is the live context size — this turn's count, not a
+            # running sum (each turn's count already includes the whole history).
             con.execute(
                 "UPDATE chat_sessions SET last_active=CURRENT_TIMESTAMP, total_tokens=? WHERE chat_session_id=?",
-                (new_total, session_id)
+                (call_tokens, session_id)
             )
 
     cur = con.execute(
@@ -835,20 +837,34 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
     )
     reply_id = cur.lastrowid
 
-    if session_id and user_id and new_total >= TOKEN_WARN:
+    # Warn / auto-clear thresholds scale with the session model's context
+    # window; call_tokens is this turn's context size (see total_tokens above).
+    window = DEFAULT_CONTEXT_WINDOW
+    if session_id:
+        wrow = con.execute(
+            "SELECT m.context_window FROM chat_sessions cs "
+            "LEFT JOIN models m ON m.model_id = cs.model_id "
+            "WHERE cs.chat_session_id=?", (session_id,)
+        ).fetchone()
+        if wrow and wrow[0]:
+            window = wrow[0]
+    warn_at  = window * TOKEN_WARN_FRACTION
+    clear_at = window * TOKEN_AUTOCLEAR_FRACTION
+
+    if session_id and user_id and call_tokens >= warn_at:
         warned = con.execute("SELECT token_warning_sent FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone()
         if warned and not warned[0]:
             con.execute(
                 "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id) VALUES (?,?,?,?)",
                 (shell_id, "outbound",
-                 f"⚠️ This conversation is approaching {TOKEN_AUTOCLEAR:,} tokens. "
-                 f"It will auto-clear at {TOKEN_AUTOCLEAR // 1000}k — use +chat to "
+                 f"⚠️ This conversation is nearing the context limit — it will "
+                 f"auto-clear at ~{int(clear_at) // 1000}k tokens. Use +chat to "
                  "start fresh before then if needed.",
                  session_id)
             )
             con.execute("UPDATE chat_sessions SET token_warning_sent=1 WHERE chat_session_id=?", (session_id,))
 
-    if session_id and user_id and new_total >= TOKEN_AUTOCLEAR:
+    if session_id and user_id and call_tokens >= clear_at:
         # Over the limit — retire this session and open a fresh one so the
         # conversation has a live session to continue in; the next message
         # would otherwise land in a deactivated session. The replacement keeps
@@ -869,7 +885,7 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
             "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id) "
             "VALUES (?,?,?,?)",
             (shell_id, "outbound",
-             f"Session cleared — context limit reached ({TOKEN_AUTOCLEAR // 1000}k "
+             f"Session cleared — context limit reached (~{int(clear_at) // 1000}k "
              "tokens). Starting fresh.",
              new_session_id),
         )
@@ -880,7 +896,7 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
         "SELECT message_id, direction, user_id, body, sent_at, read_by_shell FROM chat_messages WHERE message_id=?",
         (reply_id,)
     ).fetchone())
-    return {**row, "session_total_tokens": new_total, "cleared": cleared,
+    return {**row, "session_total_tokens": call_tokens, "cleared": cleared,
             "new_session_id": new_session_id}
 
 
