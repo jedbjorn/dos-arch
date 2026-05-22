@@ -111,4 +111,6 @@ Not everything fits the convention — two domains stay off it on purpose:
 
 A post-seed step the generic seeder can't express — a template render, a
 boot-time id, skill attachment — stays as explicit code in the domain's
-wrapper; see `ensure_forge`.
+wrapper; see `ensure_forge`. A domain may also carry extra manifest tables
+its wrapper reads: `assets/tools/_seed.toml` has a `[skill_map]` the generic
+seeder ignores and `seed_tools` consumes to scope each tool to its skill.

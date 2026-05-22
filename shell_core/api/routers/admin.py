@@ -98,17 +98,17 @@ class ShellSkillBody(BaseModel):
     skill_id: int
 
 
-@router.post("/admin/shells/{shell_id}/skills", summary="Admin: assign a skill to a shell (live shells require common=1)")
+@router.post("/admin/shells/{shell_id}/skills", summary="Admin: assign a skill to a shell")
 def admin_add_shell_skill(request: Request, shell_id: int, body: ShellSkillBody, con = Depends(get_db)):
     _require_admin(request)
-    shell = con.execute("SELECT shell_id, browser_chat FROM shells WHERE shell_id=?", (shell_id,)).fetchone()
-    if not shell:
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
-    skill = con.execute("SELECT skill_id, common FROM skills WHERE skill_id=? AND is_deleted=0", (body.skill_id,)).fetchone()
-    if not skill:
+    if not con.execute("SELECT 1 FROM skills WHERE skill_id=? AND is_deleted=0",
+                        (body.skill_id,)).fetchone():
         raise HTTPException(404, "Skill not found")
-    if shell["browser_chat"] and not skill["common"]:
-        raise HTTPException(400, "Live (browser-chat) shells can only be assigned common=1 skills")
+    # Any skill is assignable to any shell. Skill-scoped tooling makes a
+    # shell's skill set per-shell by design — there is no common-only
+    # restriction; the boot document picks the change up on its next render.
     try:
         con.execute("INSERT INTO shell_skills (shell_id, skill_id) VALUES (?,?)", (shell_id, body.skill_id))
         con.commit()
