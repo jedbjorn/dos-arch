@@ -15,7 +15,7 @@ dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
     shell's tool set), not a hard-coded list.
   - No auth — dos-arch's API is open on localhost in alpha; the `X-API-Key`
     machinery is not ported. Required before any off-localhost exposure (CC-55).
-  - Tokens only, no cost — `chat_messages.tokens` carries the per-turn total;
+  - Tokens only, no cost — `chat_messages.tokens` carries the turn's context size;
     cost varies per provider and is meaningless for local models.
   - Context is the materialized boot document: one per-session `session-start`
     call returns `{boot_document, dynamic}` — Block 1-2 cached, Block 3 live.
@@ -361,8 +361,11 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
         {"text": render_dynamic(ss.get("dynamic", {})), "cache": False},
     ]
 
-    total_tokens = 0
-    final_text   = ""
+    # Each iteration's input re-includes the running transcript, so the last
+    # iteration's in+out is the conversation's context size after the turn —
+    # take that, not a sum across iterations (which would double-count).
+    context_tokens = 0
+    final_text     = ""
 
     try:
         for iteration in range(MAX_TOOL_ITER):
@@ -370,7 +373,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
             response = adapter.call(request)
             parsed   = adapter.parse_response(response)
             u = parsed.usage
-            total_tokens += (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+            context_tokens = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
             print(f"[{shell['display_name']}] iter={iteration} stop={parsed.stop_reason} "
                   f"in={u.get('input_tokens')} out={u.get('output_tokens')}", flush=True)
 
@@ -402,9 +405,9 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
 
     status, resp_body = post_reply(
         shell["shell_id"], final_text, msg["message_id"],
-        msg["chat_session_id"], msg["user_id"], total_tokens,
+        msg["chat_session_id"], msg["user_id"], context_tokens,
     )
-    print(f"[{shell['display_name']}] reply_status={status} tokens={total_tokens}", flush=True)
+    print(f"[{shell['display_name']}] reply_status={status} tokens={context_tokens}", flush=True)
     if status >= 400:
         # Persistent post_reply failure — raise so the caller marks the source
         # read and we don't infinite-loop the same expensive turn.
