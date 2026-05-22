@@ -1,6 +1,6 @@
 <script>
   // Browser-chat sidebar (CC-59) — an always-docked panel occupying the right
-  // third of the window. dos-arch is a chat-first interface; this is its
+  // half of the window. dos-arch is a chat-first interface; this is its
   // primary surface. Replaces the floating ChatPanel modal.
   //
   // Two inner columns (redline: chat sidebar.png):
@@ -409,7 +409,7 @@
 
 <style>
   .chat-sidebar {
-    width: 37.125vw;   /* 33vw +25% then -10% */
+    width: 50vw;   /* 1/2 window width — redline: chat redline.png */
     min-width: 518px;
     flex-shrink: 0;
     height: 100vh;
@@ -420,7 +420,7 @@
 
   /* ── Available Models column ──────────────────────────────────────────── */
   .models-col {
-    width: 135px;
+    width: 140px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
