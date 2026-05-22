@@ -184,15 +184,43 @@ class OllamaAdapter(ProviderAdapter):
         model: str,
         max_tokens: int,
     ) -> dict:
-        # system: the normalized {text, cache} blocks join into one system
-        # message. Ollama prefix-caches internally — `cache` needs no marker.
-        system_text = "\n\n".join(b["text"] for b in system_blocks)
+        # System blocks split by the normalized `cache` flag (base.py). The
+        # cacheable blocks (the boot document) lead as one system message — a
+        # stable prefix Ollama's runner reuses turn to turn. The volatile
+        # blocks (Block 3, the live tail) fold into the latest user turn
+        # instead: Ollama prefix-caches from token 0, so a block that changes
+        # every turn, sitting in the system prefix, would cap the reusable
+        # prefix at the boot document and re-prefill the whole conversation
+        # history every turn. Trailing it keeps boot + history cacheable.
+        cacheable = [b["text"] for b in system_blocks if b.get("cache")]
+        volatile = [b["text"] for b in system_blocks if not b.get("cache")]
+        cacheable_text = "\n\n".join(cacheable)
+        volatile_text = "\n\n".join(volatile)
         num_predict = min(max_tokens, self._num_ctx)
 
+        # Trim against the full system overhead — both parts occupy context
+        # even when placed in different positions.
+        parts = [p for p in (cacheable_text, volatile_text) if p]
+        system_text = "\n\n".join(parts)
+
         native: list[dict] = []
-        if system_text:
-            native.append({"role": "system", "content": system_text})
+        if cacheable_text:
+            native.append({"role": "system", "content": cacheable_text})
         native.extend(self._native_messages(self._trim(messages, system_text)))
+
+        # Fold the volatile tail into the last user turn — it still reaches
+        # the model this turn but stays out of the cached prefix. With no user
+        # turn (not a real conversation shape), fall back to the leading
+        # system block so the live state is never silently dropped.
+        if volatile_text:
+            last_user = next(
+                (m for m in reversed(native) if m["role"] == "user"), None)
+            if last_user is not None:
+                last_user["content"] = f"{volatile_text}\n\n{last_user['content']}"
+            elif native and native[0]["role"] == "system":
+                native[0]["content"] = f"{native[0]['content']}\n\n{volatile_text}"
+            else:
+                native.insert(0, {"role": "system", "content": volatile_text})
 
         request = {
             "model": model,
