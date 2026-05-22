@@ -45,8 +45,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# `providers/` is a sibling package; the script's own directory is on
-# sys.path[0], so the bare import resolves when run as `python3 dispatch_live.py`.
+# `providers/` and `tools/` are sibling packages; the script's own directory
+# is on sys.path[0], so the bare imports resolve when run as
+# `python3 dispatch_live.py`.
 from providers import (
     ProviderAdapter,
     ProviderError,
@@ -54,6 +55,7 @@ from providers import (
     get_adapter,
     tool_result_message,
 )
+from tools import run_tool
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -163,11 +165,13 @@ def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str, s
 def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
     """The shell's tool set — general tools (skill_id NULL) plus the tools of
     every skill the shell is granted, active only — as normalized tool dicts
-    {name, description, spec}. The same effective set render_tools() renders,
-    so prompt and runtime agree on what the shell can call. `spec` is the
-    parsed JSON-Schema parameter object; each adapter projects it."""
+    {name, description, spec, handler}. The same effective set render_tools()
+    renders, so prompt and runtime agree on what the shell can call. `spec` is
+    the parsed JSON-Schema parameter object; each adapter projects it.
+    `handler` is the executor key — execute_tool() routes the call by it."""
     rows = con.execute(
-        "SELECT t.name AS name, t.description AS description, t.spec AS spec "
+        "SELECT t.name AS name, t.description AS description, t.spec AS spec, "
+        "t.handler AS handler "
         "FROM tools t "
         "WHERE t.status='active' "
         "  AND (t.skill_id IS NULL "
@@ -180,6 +184,7 @@ def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
             "name": r["name"],
             "description": r["description"],
             "spec": json.loads(r["spec"]) if r["spec"] else {},
+            "handler": r["handler"],
         }
         for r in rows
     ]
@@ -270,18 +275,25 @@ def fetch_session_start(shell_id: int, chat_session_id) -> dict:
         return {"error": f"bad session-start payload: {e}"}
 
 
-def execute_tool(name: str, params: dict):
-    """Run one api_* tool call against the dos-arch API. Returns (text, is_error)."""
-    method = METHOD_MAP.get(name)
-    if not method:
-        return f"unknown tool: {name}", True
-    path = params.get("path")
-    if not isinstance(path, str) or not path:
-        return "missing or invalid path", True
-    body = params.get("body")
-    # Process-wide cap on concurrent tool calls — protects our own API.
-    with TOOL_SEMAPHORE:
-        return _request(method, path, body=body, timeout=30)
+def execute_tool(name: str, params: dict, handler: str | None):
+    """Run one tool call. Returns (text, is_error). A tool whose stored
+    `handler` is 'api' hits the dos-arch API — METHOD_MAP maps the tool name
+    to an HTTP verb; every other handler key routes to a shell_core.services
+    .tools handler via run_tool()."""
+    params = params or {}
+    if handler == "api":
+        method = METHOD_MAP.get(name)
+        if not method:
+            return f"unknown api tool: {name}", True
+        path = params.get("path")
+        if not isinstance(path, str) or not path:
+            return "missing or invalid path", True
+        # Process-wide cap on concurrent API calls — protects our own API.
+        with TOOL_SEMAPHORE:
+            return _request(method, path, body=params.get("body"), timeout=30)
+    if not handler:
+        return f"tool '{name}' has no handler registered", True
+    return run_tool(handler, params)
 
 
 def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id,
@@ -347,6 +359,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     model_name, provider, endpoint = resolve_model(con, msg["chat_session_id"])
     adapter = adapter_for(provider, endpoint)
     tools   = load_tools(con, shell["shell_id"])
+    tool_handlers = {t["name"]: t.get("handler") for t in tools}
     # Every provider — including local — gets the api_* tool surface. Tool
     # support varies model to model (gemma handles it, deepseek-r1 hard-400s
     # on tools); per-model capability gating lands with the tools/prompts pass.
@@ -402,7 +415,8 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
                 messages.append(assistant_message(parsed))
                 tool_results = []
                 for tc in parsed.tool_calls:
-                    result, is_error = execute_tool(tc["name"], tc["input"])
+                    result, is_error = execute_tool(
+                        tc["name"], tc["input"], tool_handlers.get(tc["name"]))
                     short_in  = json.dumps(tc["input"])[:140].replace("\n", " ")
                     short_out = result[:140].replace("\n", " ")
                     print(f"  tool={tc['name']} in={short_in} err={is_error} out={short_out}", flush=True)
