@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS "shells" (
     partner               TEXT,
     role                  TEXT,
     mandate               TEXT,
-    boot_document         TEXT,
+    boot_document         TEXT,    -- deprecated — moved to chat_sessions (migration 022); dropped in 023
     current_state         TEXT,
     connections           TEXT,
     api_endpoints         TEXT,
@@ -206,7 +206,8 @@ CREATE TABLE chat_sessions (
     total_tokens       INTEGER NOT NULL DEFAULT 0,
     token_warning_sent INTEGER NOT NULL DEFAULT 0,
     turn_in_flight_at         TIMESTAMP,
-    turn_in_flight_message_id INTEGER REFERENCES chat_messages(message_id)
+    turn_in_flight_message_id INTEGER REFERENCES chat_messages(message_id),
+    boot_document             TEXT
 );
 
 CREATE TABLE chat_messages (
