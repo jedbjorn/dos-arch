@@ -1,0 +1,23 @@
+-- 031 — shells.api_key (plaintext) alongside api_key_hash.
+--
+-- Per-shell Bearer auth is the substrate's one auth mechanism (api_key_hash
+-- + the auth_passthrough middleware). Until now, only API shells (api_auth=1)
+-- carried keys — the broker held the plaintext. Dispatcher-served browser
+-- shells were the keyless lane, and that meant the API never knew which
+-- shell was on the other end of a tool call. Symptom: a flag created via
+-- the dispatcher landed with shell_id=NULL because the model is the only
+-- party that could have filled it, and it forgot.
+--
+-- Alpha simplification (the substrate is single-operator, the DB is
+-- localhost-only): store the plaintext alongside the hash. The dispatcher
+-- reads `api_key` per turn, sets Authorization: Bearer, and the existing
+-- middleware resolves request.state.shell_id. Beta moves plaintext out of
+-- the DB (broker / host-side keystore); the hash stays here.
+--
+-- Backfill lives in scripts/backfill_shell_api_keys.py — keys are random
+-- 32-byte urlsafe tokens (matches gen_api_key.py / run.py), can't be
+-- generated in plain SQL.
+--
+-- Plain SQL: migrate.py owns the transaction and the schema_migrations row.
+
+ALTER TABLE shells ADD COLUMN api_key TEXT;

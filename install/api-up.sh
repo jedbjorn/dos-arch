@@ -47,6 +47,11 @@ docker rm -f "${NAME}" >/dev/null 2>&1 || true
 echo "==> [3/6] pending DB migrations"
 python3 "${CORE}/scripts/migrate.py"
 
+# Post-migration backfill: any shell row missing an api_key gets one. Pairs
+# with migration 031 (adds the column) — pure SQL can't generate tokens.
+# Idempotent — only fills NULLs.
+python3 "${CORE}/scripts/backfill_shell_api_keys.py"
+
 # Catalogue sync MUST run host-side: dr_repo needs `git` + the repo's .git,
 # dr_services needs `node` + ecosystem.config.cjs — none of which exist in
 # the dos-api image (python:3.12-slim, shell_core-only bind mount), so the
