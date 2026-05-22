@@ -700,8 +700,7 @@ is the canonical schema. Tables, grouped by purpose:
 - `shell_skills` — many-to-many: which skills are attached to which shell. Drives the `## SKILLS` block at boot.
 
 **Tools & models** (agnostic-runtime registry)
-- `tools` — provider-agnostic tool registry: `name`, `description`, `kind`, `spec` (JSON parameter schema), `handler`. The dispatcher loads tool definitions from here, not a hard-coded list.
-- `shell_tools` — many-to-many: which tools are granted to which shell. A shell's tool set is the join (mirrors `shell_skills`).
+- `tools` — provider-agnostic tool registry: `name`, `description`, `kind`, `spec` (JSON parameter schema), `handler`, `skill_id`. A tool is *general* (`skill_id` NULL — every shell gets it, e.g. the substrate `api_*` verbs) or *skill-bound* (`skill_id` set — rendered and callable only for shells granted that skill). The dispatcher loads tool definitions from here, not a hard-coded list.
 - `models` — every model the system *can* use: `provider`, `tool_dialect`, `endpoint`, `auth_ref`, plus cost and limit columns. The model-switch dropdown reads `status='active'` rows; `chat_sessions.model_id` points a conversation at one. Distinct from `installed_models` (the per-host Ollama install inventory).
 
 **Projects**

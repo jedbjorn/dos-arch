@@ -109,6 +109,6 @@ Not everything fits the convention — two domains stay off it on purpose:
   in `db_init.py`. If it grows or starts to churn, move it onto the
   convention — `assets/models/` + `_seed.toml`, no new seeder code.
 
-A post-seed step that the generic seeder can't express (e.g. tools
-granting every tool to every shell via `shell_tools`) stays as explicit
-code in the domain's wrapper — see `seed_tools`.
+A post-seed step the generic seeder can't express — a template render, a
+boot-time id, skill attachment — stays as explicit code in the domain's
+wrapper; see `ensure_forge`.
