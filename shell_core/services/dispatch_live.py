@@ -17,8 +17,8 @@ dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
     machinery is not ported. Required before any off-localhost exposure (CC-55).
   - Tokens only, no cost — `chat_messages.tokens` carries the per-turn total;
     cost varies per provider and is meaningless for local models.
-  - Context is the materialized boot document: one `GET /session-start` call
-    returns `{boot_document, dynamic}` — Block 1-2 cached, Block 3 live.
+  - Context is the materialized boot document: one per-session `session-start`
+    call returns `{boot_document, dynamic}` — Block 1-2 cached, Block 3 live.
 
 A shell joins the dispatcher by setting `shells.browser_chat = 1` and leaves
 by clearing it. A supervisor loop re-checks membership every RECONCILE_SEC,
@@ -248,10 +248,15 @@ def _request(method: str, path: str, body=None, timeout: int = 30):
     return "error: retries exhausted", True
 
 
-def fetch_session_start(shell_id: int) -> dict:
-    """GET the materialized boot document + live dynamic tail. Returns the
-    decoded payload, or {'error': ...} if the call fails."""
-    text, is_error = _request("GET", f"/shells/{shell_id}/session-start", timeout=15)
+def fetch_session_start(shell_id: int, chat_session_id) -> dict:
+    """GET the materialized boot document + live dynamic tail for a chat
+    session. Returns the decoded payload, or {'error': ...} if the call fails
+    or the inbound message carries no session."""
+    if not chat_session_id:
+        return {"error": "message has no chat session"}
+    text, is_error = _request(
+        "GET", f"/shells/{shell_id}/sessions/{chat_session_id}/session-start",
+        timeout=15)
     if is_error:
         return {"error": text}
     try:
@@ -341,7 +346,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
     print(f"[{shell['display_name']}] msg={msg['message_id']} model={model_name} "
           f"provider={provider}{ep} tools={len(tools)}", flush=True)
 
-    ss = fetch_session_start(shell["shell_id"])
+    ss = fetch_session_start(shell["shell_id"], msg["chat_session_id"])
     if "error" in ss:
         print(f"[{shell['display_name']}] session-start failed: {ss['error']}",
               file=sys.stderr, flush=True)

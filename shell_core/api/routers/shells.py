@@ -8,7 +8,7 @@ from datetime import date
 from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
-from api.services.boot_document import rerender_boot_document, session_start_payload
+from api.services.boot_document import rerender_boot_document, rerender_shell_sessions, session_start_payload
 
 router = APIRouter(tags=["shells"])
 
@@ -81,7 +81,6 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
         "SELECT ?, tool_id FROM tools WHERE status='active'",
         (new_id,),
     )
-    rerender_boot_document(con, new_id)
     con.commit()
     return {"shell_id": new_id, "shortname": short, "skills_attached": len(skill_ids)}
 
@@ -141,11 +140,14 @@ def get_shell(shell_id: int, con = Depends(get_db)):
     return dict(row)
 
 
-@router.get("/shells/{shell_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")
-def get_shell_session_start(shell_id: int, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
-    payload = session_start_payload(con, shell_id)
+@router.get("/shells/{shell_id}/sessions/{session_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")
+def get_shell_session_start(shell_id: int, session_id: str, con = Depends(get_db)):
+    if not con.execute(
+        "SELECT 1 FROM chat_sessions WHERE chat_session_id=? AND shell_id=?",
+        (session_id, shell_id),
+    ).fetchone():
+        raise HTTPException(404, "Session not found")
+    payload = session_start_payload(con, session_id)
     con.commit()  # persists a lazy first-time materialization, if one happened
     return payload
 
@@ -207,10 +209,11 @@ def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
     if fields:
         args.append(shell_id)
         con.execute(f"UPDATE shells SET {', '.join(fields)} WHERE shell_id = ?", args)
-        # Re-materialize the boot document when an identity surface changed.
+        # An identity-surface change touches every live session's boot
+        # document — re-materialize them all.
         if any(getattr(body, f) is not None for f in
                ("display_name", "shortname", "partner", "role", "mandate", "current_state")):
-            rerender_boot_document(con, shell_id)
+            rerender_shell_sessions(con, shell_id)
         con.commit()
     # Same column set as GET /shells/{id} — a PATCH round-trip is symmetric.
     row = con.execute("""
@@ -254,7 +257,7 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
             (body.source_tag or "").strip() or None,
             entry_body,
         ))
-        rerender_boot_document(con, shell_id)
+        rerender_shell_sessions(con, shell_id)
         con.commit()
     except Exception as e:
         con.rollback()
@@ -289,7 +292,7 @@ def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntr
         "UPDATE shell_identity_entries SET retired_at = datetime('now') WHERE entry_id = ?",
         (entry_id,)
     )
-    rerender_boot_document(con, shell_id)
+    rerender_shell_sessions(con, shell_id)
     con.commit()
     row = con.execute(
         "SELECT entry_id, shell_id, kind, entry_date, source_tag, body, created_at, retired_at FROM shell_identity_entries WHERE entry_id = ?",
@@ -670,6 +673,19 @@ def _check_model(con, model_id):
         raise HTTPException(422, "unknown or inactive model_id")
 
 
+def _model_switch_note(con, old_model_id, new_model_id) -> str:
+    """The marker-message body for a model switch — `model: <old> → <new>`,
+    using each model's display_name (falling back to its name)."""
+    def label(mid):
+        if mid is None:
+            return "none"
+        r = con.execute(
+            "SELECT display_name, name FROM models WHERE model_id=?", (mid,)
+        ).fetchone()
+        return (r["display_name"] or r["name"]) if r else f"model {mid}"
+    return f"model: {label(old_model_id)} → {label(new_model_id)}"
+
+
 @router.post("/shells/{shell_id}/chat/session", summary="Create a new chat session for this shell + user")
 def create_chat_session(shell_id: int, request: Request, body: dict | None = None, con = Depends(get_db)):
     user_id = getattr(request.state, 'user_id', 1)
@@ -683,9 +699,9 @@ def create_chat_session(shell_id: int, request: Request, body: dict | None = Non
         "INSERT INTO chat_sessions (chat_session_id, shell_id, user_id, model_id) VALUES (?,?,?,?)",
         (session_id, shell_id, user_id, model_id),
     )
-    # The new session's model sets the shell's tool dialect — re-materialize
-    # the boot document so its Tools / Output Shape sections match.
-    rerender_boot_document(con, shell_id)
+    # Render the new session's boot document — its model sets the tool
+    # dialect for the Tools / Output Shape sections.
+    rerender_boot_document(con, session_id)
     con.commit()
     row = dict(con.execute(
         "SELECT chat_session_id, started_at, last_active, is_active, model_id FROM chat_sessions WHERE chat_session_id=?",
@@ -707,26 +723,40 @@ def get_active_session(shell_id: int, user_id: int, con = Depends(get_db)):
     return {"session_id": row[0], "total_tokens": row[1], "token_warning_sent": bool(row[2])}
 
 
-@router.patch("/shells/{shell_id}/sessions/{session_id}", summary="Update session token counters and warning flags")
+@router.patch("/shells/{shell_id}/sessions/{session_id}", summary="Update session token counters, model, and warning flags")
 def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM chat_sessions WHERE chat_session_id=? AND shell_id=?", (session_id, shell_id)).fetchone():
+    existing = con.execute(
+        "SELECT model_id FROM chat_sessions WHERE chat_session_id=? AND shell_id=?",
+        (session_id, shell_id),
+    ).fetchone()
+    if not existing:
         raise HTTPException(404, "Session not found")
     fields, params = [], []
     if "total_tokens" in body:
         fields.append("total_tokens=?"); params.append(body["total_tokens"])
     if "token_warning_sent" in body:
         fields.append("token_warning_sent=?"); params.append(1 if body["token_warning_sent"] else 0)
+    model_changed = False
     if "model_id" in body:
         _check_model(con, body["model_id"])
         fields.append("model_id=?"); params.append(body["model_id"])
+        model_changed = body["model_id"] != existing["model_id"]
     if fields:
         params += [session_id, shell_id]
         con.execute(f"UPDATE chat_sessions SET last_active=CURRENT_TIMESTAMP,{','.join(fields)} WHERE chat_session_id=? AND shell_id=?", params)
-        # A model switch changes the shell's tool dialect — re-materialize the
-        # boot document. Token-counter updates don't carry model_id, so this
-        # fires only on an actual switch.
-        if "model_id" in body:
-            rerender_boot_document(con, shell_id)
+        # A real model switch changes this session's tool dialect — re-materialize
+        # its boot document in place, and post a marker message so the chat keeps
+        # a visible record of the switch (substrate decision #123). A PATCH with
+        # no model_id, or one setting it to its current value, does neither.
+        if model_changed:
+            rerender_boot_document(con, session_id)
+            con.execute(
+                "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id) "
+                "VALUES (?, 'outbound', ?, ?)",
+                (shell_id,
+                 _model_switch_note(con, existing["model_id"], body["model_id"]),
+                 session_id),
+            )
         con.commit()
     row = dict(con.execute("SELECT chat_session_id, total_tokens, token_warning_sent, is_active, model_id FROM chat_sessions WHERE chat_session_id=?", (session_id,)).fetchone())
     return row
