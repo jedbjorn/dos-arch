@@ -12,8 +12,8 @@ from api.services.boot_document import rerender_boot_document, rerender_shell_se
 
 router = APIRouter(tags=["shells"])
 
-TOKEN_WARN      = 140_000
-TOKEN_AUTOCLEAR = 150_000
+TOKEN_WARN      = 170_000
+TOKEN_AUTOCLEAR = 180_000
 
 
 # ── Shell creation ────────────────────────────────────────────────────────────
@@ -812,6 +812,7 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
 
     new_total = call_tokens
     cleared   = False
+    new_session_id = None
     if session_id and user_id:
         if is_new:
             con.execute("UPDATE chat_sessions SET is_active=0 WHERE shell_id=? AND user_id=? AND total_tokens=0", (shell_id, user_id))
@@ -840,17 +841,37 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
             con.execute(
                 "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id) VALUES (?,?,?,?)",
                 (shell_id, "outbound",
-                 "⚠️ This conversation is approaching 150,000 tokens. It will auto-clear at 150k — use Clear to start fresh before then if needed.",
+                 f"⚠️ This conversation is approaching {TOKEN_AUTOCLEAR:,} tokens. "
+                 f"It will auto-clear at {TOKEN_AUTOCLEAR // 1000}k — use +chat to "
+                 "start fresh before then if needed.",
                  session_id)
             )
             con.execute("UPDATE chat_sessions SET token_warning_sent=1 WHERE chat_session_id=?", (session_id,))
 
     if session_id and user_id and new_total >= TOKEN_AUTOCLEAR:
+        # Over the limit — retire this session and open a fresh one so the
+        # conversation has a live session to continue in; the next message
+        # would otherwise land in a deactivated session. The replacement keeps
+        # the retired session's model; its boot document renders now.
+        old = con.execute(
+            "SELECT model_id FROM chat_sessions WHERE chat_session_id=?", (session_id,)
+        ).fetchone()
         con.execute("UPDATE chat_sessions SET is_active=0 WHERE chat_session_id=?", (session_id,))
         con.execute("UPDATE chat_messages SET is_deleted=1 WHERE chat_session_id=?", (session_id,))
+        new_session_id = str(uuid.uuid4())
         con.execute(
-            "INSERT INTO chat_messages (shell_id, direction, body) VALUES (?,?,?)",
-            (shell_id, "outbound", "Session cleared — context limit reached (150k tokens). Starting fresh.")
+            "INSERT INTO chat_sessions (chat_session_id, shell_id, user_id, model_id) "
+            "VALUES (?,?,?,?)",
+            (new_session_id, shell_id, user_id, old["model_id"] if old else None),
+        )
+        rerender_boot_document(con, new_session_id)
+        con.execute(
+            "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id) "
+            "VALUES (?,?,?,?)",
+            (shell_id, "outbound",
+             f"Session cleared — context limit reached ({TOKEN_AUTOCLEAR // 1000}k "
+             "tokens). Starting fresh.",
+             new_session_id),
         )
         cleared = True
 
@@ -859,7 +880,8 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
         "SELECT message_id, direction, user_id, body, sent_at, read_by_shell FROM chat_messages WHERE message_id=?",
         (reply_id,)
     ).fetchone())
-    return {**row, "session_total_tokens": new_total, "cleared": cleared}
+    return {**row, "session_total_tokens": new_total, "cleared": cleared,
+            "new_session_id": new_session_id}
 
 
 @router.delete("/shells/{shell_id}/chat", summary="Soft-delete chat history for a shell (optionally before a message_id)")

@@ -5,7 +5,7 @@ A shell's boot prompt is rendered from live DB state by two paths:
   * ``shell_core/scripts/run.py`` — the CLI launcher. Writes the rendered
     prompt to ``shells/<shortname>/CLAUDE.md`` for an interactive ``claude``.
   * ``shell_core/api/services/boot_document.py`` — the API path. Materializes
-    ``shells.boot_document`` for the dispatcher (local / API-model shells).
+    ``chat_sessions.boot_document`` for the dispatcher (local / API-model shells).
 
 Both compose from the *same* DB state, and several sections — identity,
 seed, L&S, skills — were rendered by byte-identical copy-pasted functions in

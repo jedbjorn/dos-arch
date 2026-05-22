@@ -136,6 +136,10 @@
   async function load() {
     if (!SHELL_ID) return
     try {
+      // Follow a server-side session change — a token auto-clear retires the
+      // session and opens a fresh one; adopt whatever is active now.
+      const active = await getShellChatSession(SHELL_ID)
+      if (active && active.chat_session_id !== chatSessionId) adoptSession(active)
       const prev = messages
       const msgs = await getShellChat(SHELL_ID)
       messages = msgs.filter(m => m.message_id > clearedAt && m.chat_session_id === chatSessionId)

@@ -28,7 +28,6 @@ CREATE TABLE IF NOT EXISTS "shells" (
     partner               TEXT,
     role                  TEXT,
     mandate               TEXT,
-    boot_document         TEXT,    -- deprecated — moved to chat_sessions (migration 022); dropped in 023
     current_state         TEXT,
     connections           TEXT,
     api_endpoints         TEXT,
