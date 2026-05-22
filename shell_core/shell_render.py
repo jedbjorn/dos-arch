@@ -209,12 +209,12 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
     return f"{n} open. Invoke `--flag-triage` to surface."
 
 
-# Section E — the tools this shell can call. Read from the `tools` ⋈
-# `shell_tools` grant — the same source the dispatcher's `load_tools()` uses,
-# so the prompt and the runtime cannot disagree on what the shell can call.
-# The substrate API is the whole tool surface; these are generic HTTP verbs
-# against it. Which path is a seed / a decision / a flag — that map is in
-# MEMORY PROTOCOL (section G).
+# Section E — the tools this shell can call: general tools (skill_id NULL,
+# every shell) plus the tools of each skill the shell is granted. The same
+# effective set the dispatcher's `load_tools()` resolves, so the prompt and
+# the runtime cannot disagree on what the shell can call. The general tools
+# are generic HTTP verbs against the substrate API; which path is a seed / a
+# decision / a flag — that map is in MEMORY PROTOCOL (section G).
 
 
 def _spec_params(spec: str | None) -> list[str]:
@@ -236,19 +236,26 @@ def _spec_params(spec: str | None) -> list[str]:
 
 def render_tools(con: sqlite3.Connection, shell_id: int,
                  dialect: str = "anthropic") -> str:
-    """Section E — the shell's granted tools (`tools` ⋈ `shell_tools`), shaped
-    by tool dialect (spec §05). `anthropic` / `openai`: a name + description
-    roster — the provider applies each tool's schema. `parsed`: each tool with
-    its params and a worked `<tool:…>` invocation, for a local model that
-    forms the call as text."""
+    """Section E — the shell's tools, shaped by tool dialect (spec §05). A tool
+    is general (skill_id NULL — every shell) or skill-bound (rendered only for
+    shells granted the owning skill); skill-bound tools group under their
+    skill, general tools render first. `anthropic` / `openai`: a name +
+    description roster — the provider applies each tool's schema. `parsed`:
+    each tool with its params and a worked `<tool:…>` invocation, for a local
+    model that forms the call as text."""
     rows = con.execute(
-        "SELECT t.name, t.description, t.spec FROM tools t "
-        "JOIN shell_tools st ON st.tool_id = t.tool_id "
-        "WHERE st.shell_id=? AND t.status='active' ORDER BY t.tool_id",
+        "SELECT t.name, t.description, t.spec, t.skill_id, s.name AS skill_name "
+        "FROM tools t LEFT JOIN skills s ON s.skill_id = t.skill_id "
+        "WHERE t.status='active' "
+        "  AND (t.skill_id IS NULL "
+        "       OR t.skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)) "
+        "ORDER BY (t.skill_id IS NOT NULL), s.name, t.tool_id",
         (shell_id,),
     ).fetchall()
     if not rows:
         return "(none granted)"
+    general = [r for r in rows if r["skill_id"] is None]
+    skilled = [r for r in rows if r["skill_id"] is not None]
 
     if dialect == "parsed":
         out = [
@@ -257,7 +264,12 @@ def render_tools(con: sqlite3.Connection, shell_id: int,
             "# endpoint paths are in MEMORY PROTOCOL.",
             "",
         ]
+        last = None
         for r in rows:
+            group = r["skill_name"] or "general"
+            if group != last:
+                out.append(f"## {group}")
+                last = group
             out.append(f"**{r['name']}** — {r['description']}")
             params = _spec_params(r["spec"])
             if params:
@@ -277,10 +289,17 @@ def render_tools(con: sqlite3.Connection, shell_id: int,
         return "\n".join(out)
 
     # anthropic / openai — the provider applies each tool's schema; a roster
-    # is enough. The substrate API is the surface; paths are in MEMORY PROTOCOL.
-    out = ["# the provider applies each tool's schema — this is the roster.",
-           "# the substrate API is the surface; endpoint paths are in MEMORY PROTOCOL."]
-    out += [f"- **{r['name']}** — {r['description']}" for r in rows]
+    # is enough. General tools first, then each granted skill's own tools.
+    out = ["# the provider applies each tool's schema — this is the roster."]
+    if general:
+        out.append("# general — substrate API verbs; endpoint paths in MEMORY PROTOCOL.")
+        out += [f"- **{r['name']}** — {r['description']}" for r in general]
+    last = None
+    for r in skilled:
+        if r["skill_name"] != last:
+            out.append(f"# {r['skill_name']} (skill)")
+            last = r["skill_name"]
+        out.append(f"- **{r['name']}** — {r['description']}")
     return "\n".join(out)
 
 

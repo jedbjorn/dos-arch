@@ -11,8 +11,8 @@ dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
   - Model is resolved per turn from the `models` registry: a conversation's
     `chat_sessions.model_id` selects the model and provider; an unset session
     falls back to the `DISPATCH_MODEL` default. The provider's adapter follows.
-  - Tools are loaded per shell from `tools` / `shell_tools` (the join is the
-    shell's tool set), not a hard-coded list.
+  - Tools are loaded per shell from `tools` — general tools plus the tools of
+    the shell's granted skills (load_tools) — not a hard-coded list.
   - No auth — dos-arch's API is open on localhost in alpha; the `X-API-Key`
     machinery is not ported. Required before any off-localhost exposure (CC-55).
   - Tokens only, no cost — `chat_messages.tokens` carries the turn's context size;
@@ -76,9 +76,9 @@ RECONCILE_SEC          = 5           # supervisor: re-check browser_chat members
 # tool iterations could otherwise saturate our own API.
 TOOL_SEMAPHORE = threading.Semaphore(TOOL_CONCURRENCY)
 
-# The api_* tools are data now — loaded per shell from `tools` / `shell_tools`
-# (see load_tools). METHOD_MAP stays: it is the executor's name->verb mapping,
-# which is dispatcher-side, not part of a tool's stored definition.
+# The api_* tools are data now — loaded per shell from `tools` (general +
+# skill-bound; see load_tools). METHOD_MAP stays: it is the executor's
+# name->verb mapping, dispatcher-side, not part of a tool's stored definition.
 METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_delete": "DELETE"}
 
 # One cached adapter per (provider, endpoint) — adapters are thread-safe and
@@ -161,13 +161,18 @@ def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str, s
 
 
 def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
-    """The shell's tool set — the `tools` x `shell_tools` join, active only —
-    as normalized tool dicts {name, description, spec}. `spec` is the parsed
-    JSON-Schema parameter object; each adapter projects it onto its dialect."""
+    """The shell's tool set — general tools (skill_id NULL) plus the tools of
+    every skill the shell is granted, active only — as normalized tool dicts
+    {name, description, spec}. The same effective set render_tools() renders,
+    so prompt and runtime agree on what the shell can call. `spec` is the
+    parsed JSON-Schema parameter object; each adapter projects it."""
     rows = con.execute(
         "SELECT t.name AS name, t.description AS description, t.spec AS spec "
-        "FROM tools t JOIN shell_tools st ON st.tool_id = t.tool_id "
-        "WHERE st.shell_id=? AND t.status='active' ORDER BY t.tool_id",
+        "FROM tools t "
+        "WHERE t.status='active' "
+        "  AND (t.skill_id IS NULL "
+        "       OR t.skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)) "
+        "ORDER BY t.tool_id",
         (shell_id,),
     ).fetchall()
     return [

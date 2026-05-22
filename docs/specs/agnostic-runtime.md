@@ -206,22 +206,25 @@ A provider-agnostic registry of every model the system can use.
 `cost_*` columns must distinguish cache reads/writes — ExpLive's cost
 accounting already depends on that breakdown.
 
-## 4.2 tools and shell_tools ##
+## 4.2 tools and skill-scoped grants ##
 
-Tooling is data, mirroring `skills` / `shell_skills`.
+Tooling is data. A tool is either *general* or *skill-bound*.
 
 **`tools`** — the registry: `tool_id` PK, `name` UNIQUE (`bash`, `read`,
 `write`, `edit`, `git`, `api_get`, `spawn_agent`…), `description`, `kind`
 (`builtin`/`script`/`mcp`), `spec` (JSON parameter schema), `handler`,
-`status`.
+`status`, `skill_id`.
 
-**`shell_tools`** — per-shell grants: `(shell_id, tool_id)` PK. A shell's tool
-set is the join. Differentiated tooling per shell falls out for free.
+**`skill_id`** scopes the tool. NULL — *general*: every shell renders and can
+call it (the substrate `api_*` memory verbs). Set — *skill-bound*: rendered
+in the boot prompt and callable only for shells granted that skill. The skill
+is the unit of granting; attaching a skill brings its tools.
 
-> [!NOTE] Toolset bundles are deferred, the table is not
-> Predefined toolset *bundles* ("coding toolset", "git toolset") are deferred
-> until there is evidence of need. The `tools`/`shell_tools` tables themselves
-> are kept — they are the substrate that a bundle layer would later sit on.
+> [!NOTE] Superseded — `shell_tools` retired
+> Earlier drafts gave each shell explicit per-tool grants via a `shell_tools`
+> join. Migration 025 drops it: the toolset *bundle* is the skill, so the
+> skill grant (`shell_skills`) plus the universal general tools are the whole
+> tool set. See the cache+tooling reconciliation decision.
 
 ## 4.3 chat_sessions and chat_messages ##
 

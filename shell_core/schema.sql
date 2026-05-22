@@ -132,9 +132,12 @@ CREATE TABLE shell_skills (
 );
 
 -- ── Tools (provider-agnostic tooling-as-data) ─────────────────────────────────
--- The tool registry + per-shell grants, mirroring skills / shell_skills. A
--- shell's tool set is the shell_tools join; the dispatcher loads tool
--- definitions from here, not a hard-coded list (agnostic-runtime §4.2).
+-- The tool registry. A tool is general (skill_id NULL — every shell renders
+-- and can call it, e.g. the substrate api_* verbs) or skill-bound (skill_id
+-- set — rendered and callable only for shells granted that skill). The skill
+-- is the unit of granting; there is no per-shell tool grant table. The
+-- dispatcher loads tool definitions from here, not a hard-coded list.
+-- (agnostic-runtime §4.2; skill scoping + shell_tools drop — migration 025.)
 
 CREATE TABLE tools (
     tool_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,16 +147,10 @@ CREATE TABLE tools (
                 CHECK (kind IN ('builtin','script','mcp')),
     spec        TEXT,                       -- JSON parameter schema
     handler     TEXT,                       -- executor key (e.g. 'api')
+    skill_id    INTEGER REFERENCES skills(skill_id),  -- NULL = general; else skill-bound
     status      TEXT    NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','inactive')),
     parsed_example TEXT                      -- parsed-dialect invocation example (spec §05)
-);
-
-CREATE TABLE shell_tools (
-    shell_tool_id INTEGER PRIMARY KEY,
-    shell_id      INTEGER NOT NULL REFERENCES shells(shell_id),
-    tool_id       INTEGER NOT NULL REFERENCES tools(tool_id),
-    UNIQUE (shell_id, tool_id)
 );
 
 -- ── Models (the agnostic-runtime registry) ────────────────────────────────────

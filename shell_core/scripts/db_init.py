@@ -216,17 +216,11 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
 
 
 def seed_tools(con: sqlite3.Connection) -> list[str]:
-    """INSERT every tool in `assets/tools/` not already present, then grant
-    every active tool to every shell (a shell's tool set is the shell_tools
-    join). Returns the names newly seeded. Caller commits."""
-    seeded = seed_from_assets(con, "tools")
-    # Grant every active tool to every shell — INSERT OR IGNORE dedups.
-    con.execute(
-        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
-        "SELECT s.shell_id, t.tool_id FROM shells s CROSS JOIN tools t "
-        "WHERE t.status='active'"
-    )
-    return seeded
+    """INSERT every tool in `assets/tools/` not already present. Returns the
+    names newly seeded. Caller commits. Tools need no per-shell grant — a
+    general tool (skill_id NULL) is universal, a skill-bound tool comes with
+    its skill — so this is now a plain asset seed."""
+    return seed_from_assets(con, "tools")
 
 
 def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
