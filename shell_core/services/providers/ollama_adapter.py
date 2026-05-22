@@ -21,6 +21,14 @@ across every local model. The adapter then trims message history so
 `system + history + reply reserve` fits inside `num_ctx`, so Ollama itself
 never has to truncate.
 
+── Model residency — `OLLAMA_KEEP_ALIVE` ──────────────────────────────────
+`keep_alive` is read once from `OLLAMA_KEEP_ALIVE` (default `1h`) and sent on
+every request. It controls how long Ollama keeps the model — and its KV
+cache — resident in VRAM after a turn. Ollama's own default is 5 minutes,
+which any user pause exceeds: the model unloads and the next turn pays a
+cold reload plus a full prefill. A longer value keeps the warm prefix cache
+alive between turns; `-1` pins the model indefinitely on a big-VRAM host.
+
 ── Wire format ─────────────────────────────────────────────────────────────
 Native `/api/chat` differs structurally from the normalized (Anthropic-
 shaped) contract in `base.py`:
@@ -47,11 +55,12 @@ import uuid
 
 from .base import ParsedResponse, ProviderAdapter, ProviderError
 
-_DEFAULT_BASE    = "http://localhost:11434"
-_DEFAULT_NUM_CTX = 16384
-_CHARS_PER_TOKEN = 4       # rough token estimate, used only for history trimming
-_OUTPUT_RESERVE  = 2048    # tokens kept free inside num_ctx for the reply
-_TIMEOUT         = 600     # seconds — local generation can be slow
+_DEFAULT_BASE       = "http://localhost:11434"
+_DEFAULT_NUM_CTX    = 16384
+_DEFAULT_KEEP_ALIVE = "1h"   # how long Ollama keeps the model resident in VRAM
+_CHARS_PER_TOKEN    = 4      # rough token estimate, used only for history trimming
+_OUTPUT_RESERVE     = 2048   # tokens kept free inside num_ctx for the reply
+_TIMEOUT            = 600    # seconds — local generation can be slow
 
 # Ollama `done_reason` -> normalized stop_reason (see base.py vocabulary). A
 # tool-call turn also reports "stop", so tool_calls presence is checked first
@@ -76,6 +85,7 @@ class OllamaAdapter(ProviderAdapter):
             self._num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", _DEFAULT_NUM_CTX))
         except ValueError:
             self._num_ctx = _DEFAULT_NUM_CTX
+        self._keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", _DEFAULT_KEEP_ALIVE)
 
     # ── token estimation + history trimming ──────────────────────────────────
 
@@ -188,6 +198,7 @@ class OllamaAdapter(ProviderAdapter):
             "model": model,
             "messages": native,
             "stream": False,
+            "keep_alive": self._keep_alive,
             "options": {"num_ctx": self._num_ctx, "num_predict": num_predict},
         }
         if tools:

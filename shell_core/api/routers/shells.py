@@ -809,6 +809,8 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
     session_id = body.get("session_id")
     user_id    = body.get("user_id")
     call_tokens = int(body.get("tokens") or 0)
+    cache_hit   = body.get("cache_hit_tokens")
+    cache_miss  = body.get("cache_miss_tokens")
     is_new     = bool(body.get("is_new_session", False))
 
     if source_id:
@@ -832,8 +834,10 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
             )
 
     cur = con.execute(
-        "INSERT INTO chat_messages (shell_id, direction, body, chat_session_id, tokens) VALUES (?,?,?,?,?)",
-        (shell_id, "outbound", text, session_id, call_tokens)
+        "INSERT INTO chat_messages "
+        "(shell_id, direction, body, chat_session_id, tokens, "
+        "cache_hit_tokens, cache_miss_tokens) VALUES (?,?,?,?,?,?,?)",
+        (shell_id, "outbound", text, session_id, call_tokens, cache_hit, cache_miss)
     )
     reply_id = cur.lastrowid
 
