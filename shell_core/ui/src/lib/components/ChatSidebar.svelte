@@ -40,6 +40,7 @@
   let sending       = $state(false)
   let waiting       = $state(false)
   let listEl        = $state(null)
+  let atBottom      = $state(true)   // view parked at latest message?
   let clearedAt     = $state(0)
   let showSkills    = $state(false)
   let skills        = $state([])
@@ -204,6 +205,7 @@
     const ids = messages.map(m => m.message_id)
     clearedAt = ids.length ? Math.max(...ids) : clearedAt
     messages = []; waiting = false; sendError = false; retryText = ''; chatSessionId = null
+    atBottom = true
     await startNewSession()
   }
 
@@ -230,11 +232,24 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
-  function scrollBottom() { if (listEl) listEl.scrollTop = listEl.scrollHeight }
+  function scrollBottom() {
+    if (listEl) listEl.scrollTop = listEl.scrollHeight
+    atBottom = true
+  }
+
+  // Track whether the view is parked at the latest message. Drives both the
+  // jump-to-bottom button and whether a poll may follow new content — a reader
+  // scrolled up into backscroll must not get yanked down on the next poll.
+  function onScroll() {
+    if (!listEl) return
+    atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 60
+  }
 
   const timer = setInterval(async () => {
     await load()
-    await tick(); scrollBottom()
+    // Only follow new content while parked at the bottom (e.g. a reply landing
+    // mid-conversation). Scrolled-up readers are left exactly where they are.
+    await tick(); if (atBottom) scrollBottom()
   }, POLL_MS)
 
   onDestroy(() => {
@@ -330,7 +345,7 @@
       {/if}
     </div>
 
-    <div class="messages" bind:this={listEl}>
+    <div class="messages" bind:this={listEl} onscroll={onScroll}>
       {#if messages.length === 0}
         <div class="empty">No messages yet.</div>
       {:else}
@@ -363,6 +378,15 @@
 
       {/if}
     </div>
+
+    {#if !atBottom}
+      <button class="jump-btn" onclick={scrollBottom} title="Jump to latest" aria-label="Jump to latest">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 9l7 7 7-7" />
+        </svg>
+      </button>
+    {/if}
 
     <div class="compose">
       <textarea
@@ -481,7 +505,29 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    position: relative;   /* anchor for the jump-to-bottom button */
   }
+
+  .jump-btn {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 112px;        /* floats just above the compose area */
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #fff;
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.55);
+    z-index: 5;
+  }
+  .jump-btn svg { width: 20px; height: 20px; display: block; }
+  .jump-btn:hover { background: var(--color-surface-2); }
 
   .chat-header {
     position: relative;
