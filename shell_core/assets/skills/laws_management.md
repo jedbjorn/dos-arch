@@ -6,6 +6,9 @@ common: 0
 ---
 # laws_management
 
+> **Anchors** — `<self>` = your `shell_id:` value, shown in `## BOOT ##` of
+> your CLAUDE.md.
+
 The Laws are universal and structural. Adding, amending, or removing one
 edits the single source of truth: the `LAWS` block of
 `/substrate/shell_core/templates/catalog_universal.md`. Substrate-maintenance

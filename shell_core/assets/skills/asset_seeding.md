@@ -76,6 +76,33 @@ It is **INSERT-missing-only** — it never UPDATEs. A local edit to a live
 row survives a re-run; propagating a *change* to an existing row is a
 migration's job, not the seeder's.
 
+## Propagating asset changes to existing DBs
+
+When you edit `assets/<domain>/<name>.md`:
+
+- **fresh installs** pick it up automatically — `bootstrap.py` reads the
+  asset at install time.
+- **already-bootstrapped substrates** keep the old row — `seed_from_assets`
+  is INSERT-missing-only.
+
+To carry the change to existing DBs, generate a reseed migration:
+
+```
+python3 shell_core/scripts/regen_seed_migration.py NAME [NAME...]
+python3 shell_core/scripts/regen_seed_migration.py --domain tools NAME
+python3 shell_core/scripts/regen_seed_migration.py --label gap_x decision
+python3 shell_core/scripts/regen_seed_migration.py --dry-run surface_flags
+```
+
+The script reuses `parse_frontmatter` from the seeder, so the body it writes
+into the migration is identical to what `seed_from_assets` would insert.
+Only the `body` column is updated; frontmatter-column changes still want
+a hand-written migration (rare).
+
+**Rule of thumb:** if you edited a `*.md` file under `assets/skills/` or
+`assets/tools/`, run the script before opening the PR. `templates/` and
+`shell_render.py` changes do *not* need this — those are read live.
+
 Anything that doesn't line up is a **hard error**, by file and key:
 
 | Failure | Cause |
@@ -96,6 +123,38 @@ Anything that doesn't line up is a **hard error**, by file and key:
    (or a thin named wrapper, as `seed_skills` / `seed_tools` are).
 5. Run the seeder against a throwaway DB built from `schema.sql` and
    confirm the row count before committing.
+
+## Anchors — placeholders in skill bodies
+
+A skill body is one row, shared across every shell granted that skill —
+so per-shell values (this shell's id, its active archive id) cannot be
+baked into the body. They appear as placeholders: `<self>`, `{archive_id}`.
+
+The boot prompt's `## BOOT ##` section is the source of those values,
+rendered per shell:
+
+```
+session: 0071 · archive: 77 · date: 2026-05-23 (Saturday) · 14:02 local
+shell_id: 1 · model: claude-sonnet-4-6
+```
+
+**Convention:** a skill that uses any placeholder opens with an Anchors
+callout on its first line, listing each placeholder and its source field
+in BOOT. Even a small local model can follow the arrow:
+
+```markdown
+# decision
+
+> **Anchors** — `<self>` = your `shell_id:` value · `{archive_id}` = your
+> `archive:` value. Both shown in `## BOOT ##` of your CLAUDE.md.
+```
+
+One line, ~20 tokens, zero infrastructure. A skill that uses a placeholder
+without an Anchors line is a bug — find them with:
+
+```
+grep -l '<self>\|{archive_id}' assets/skills/*.md | xargs grep -L '\*\*Anchors\*\*'
+```
 
 ## Documented exceptions
 

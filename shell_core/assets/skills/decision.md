@@ -12,6 +12,9 @@ extended from the repo, never worked around.
 
 # decision
 
+> **Anchors** — `<self>` = your `shell_id:` value · `{archive_id}` = your
+> `archive:` value. Both shown in `## BOOT ##` of your CLAUDE.md.
+
 - **Trigger:** `--decision`
 - **Args:** `[decision] [context]` — interviewed if not provided inline
 
@@ -32,9 +35,7 @@ canonical; repo files link to it, never the reverse.
 
 ## Steps
 
-`$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment;
-`<self>` is your `shell_id:` and `{archive_id}` is your `archive:` — both
-in `## BOOT ##` of your CLAUDE.md.
+`$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment.
 
 1. **Resolve args.** If decision or context were not provided inline,
    interview — "What is the decision?", "What is the context — why does this

@@ -7,11 +7,13 @@ command: --flags
 ---
 # surface_flags
 
+> **Anchors** — `<self>` = your `shell_id:` value, shown in `## BOOT ##` of
+> your CLAUDE.md.
+
 Surface this shell's open flags. Run on demand with `--flags`.
 
 Memory is read over the substrate API — no DB file (see MEMORY PROTOCOL
-in your system prompt). `<self>` is your `shell_id:`, in `## BOOT ##` of
-your CLAUDE.md.
+in your system prompt).
 
 `resolved` is tri-state: `0` = Open, `1` = Resolved, `2` = Tracking.
 Unresolved work is **`0` and `2`** — Open flags are active blockers;
