@@ -120,7 +120,8 @@
       // Re-target: the picked shell becomes this user's browser_chat shell,
       // so the dispatcher follows the switch (it re-discovers browser_chat=1).
       try { await activateShell(id) } catch {}
-      await ensureSession()
+      // A shell switch begins a fresh chat — new session, fresh BOOT (decision #123).
+      await startNewSession()
       await load()
       await tick(); scrollBottom()
     } catch {}
@@ -146,19 +147,31 @@
     } catch {}
   }
 
+  function adoptSession(session) {
+    // Sync the local view to a session row — its id and pinned model.
+    chatSessionId = session?.chat_session_id ?? null
+    selectedModel = session?.model_id != null ? String(session.model_id) : ''
+    return chatSessionId
+  }
+
+  function defaultModelId() {
+    const def = models.find(m => m.name === 'claude-sonnet-4-6') ?? models[0]
+    return def ? def.model_id : null
+  }
+
+  async function startNewSession() {
+    // A new session is born with the default model — it has a dialect from
+    // turn one, and there is no follow-up PATCH (which would post a spurious
+    // model-switch marker into a brand-new chat).
+    return adoptSession(await createShellChatSession(SHELL_ID, defaultModelId()))
+  }
+
   async function ensureSession() {
     if (chatSessionId) return chatSessionId
     if (!SHELL_ID) return null
     try {
-      const session = await getShellChatSession(SHELL_ID) ?? await createShellChatSession(SHELL_ID)
-      chatSessionId = session?.chat_session_id ?? null
-      selectedModel = session?.model_id != null ? String(session.model_id) : ''
-      // A fresh conversation with no model pinned defaults to Claude Sonnet —
-      // so the models column always shows a concrete active selection.
-      if (chatSessionId && selectedModel === '' && models.length) {
-        const def = models.find(m => m.name === 'claude-sonnet-4-6') ?? models[0]
-        if (def) await changeModel(String(def.model_id))
-      }
+      const existing = await getShellChatSession(SHELL_ID)
+      return existing ? adoptSession(existing) : await startNewSession()
     } catch {}
     return chatSessionId
   }
@@ -167,16 +180,19 @@
     selectedModel = value
     const sid = await ensureSession()
     if (!sid) return
-    try { await setSessionModel(SHELL_ID, sid, value === '' ? null : Number(value)) } catch {}
+    try {
+      await setSessionModel(SHELL_ID, sid, value === '' ? null : Number(value))
+      await load()  // surface the model-switch marker message immediately
+    } catch {}
   }
 
-  async function clearChat() {
+  async function newChat() {
     clearConfirm = false
     if (chatSessionId) { try { await clearShellSession(SHELL_ID, chatSessionId) } catch {} }
     const ids = messages.map(m => m.message_id)
     clearedAt = ids.length ? Math.max(...ids) : clearedAt
     messages = []; waiting = false; sendError = false; retryText = ''; chatSessionId = null
-    await ensureSession()
+    await startNewSession()
   }
 
   async function send() {
@@ -351,14 +367,14 @@
         <button class="cbtn stop" disabled
           title="Stop an in-flight turn — backend not wired yet (CC-60)">stop</button>
         {#if clearConfirm}
-          <!-- Inline confirm — expands left in the button column, not into chat. -->
+          <!-- Inline confirm — +chat ends the current conversation. -->
           <div class="clear-inline">
-            <button class="cbtn confirm-clear" onclick={clearChat}>confirm</button>
+            <button class="cbtn confirm-clear" onclick={newChat}>confirm</button>
             <button class="cbtn cancel-clear" onclick={() => clearConfirm = false}>✕</button>
           </div>
         {:else}
           <button class="cbtn clear" onclick={() => clearConfirm = true}
-            disabled={!messages.length}>clear</button>
+            disabled={!messages.length}>+chat</button>
         {/if}
         <button class="cbtn send" onclick={send}
           disabled={sending || !SHELL_ID || !draft.trim()}>send</button>
