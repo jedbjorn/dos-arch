@@ -93,16 +93,16 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
 # ── Typed section catalog (shell-prompt-renderer spec §02) ────────────────────
 #
 # The catalog is the ordered set of sections every rendered boot prompt is
-# built from — identity frames first, constraints (Laws, Communication) sit
-# last where recency keeps them honoured. `assemble_catalog` composes all
-# sixteen; the per-section renderers above and below it are the building
-# blocks.
+# built from — identity frames first, constraints (Prohibitions, Laws,
+# Communication) sit last where recency keeps them honoured.
+# `assemble_catalog` composes all seventeen; the per-section renderers above
+# and below it are the building blocks.
 #
 # The DB-driven sections render from live shell state. The baked universal
-# sections — Definitions, Memory protocol, Laws, Communication — come from
-# templates/catalog_universal.md via `render_universal`. The Tools and Output
-# Shape sections are dialect-shaped (spec §05) — `render_tools` /
-# `render_output_shape`.
+# sections — Definitions, Memory protocol, Prohibitions, Laws, Communication
+# — come from templates/catalog_universal.md via `render_universal`. The
+# Tools and Output Shape sections are dialect-shaped (spec §05) —
+# `render_tools` / `render_output_shape`.
 
 RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
 
@@ -114,8 +114,9 @@ _UNIVERSAL_MARKER = re.compile(r"^<!-- @@ (\w+) @@ -->$")
 def render_universal() -> dict[str, str]:
     """Parse the baked universal layer (`templates/catalog_universal.md`) into
     its section bodies, keyed by marker: SYSTEM_OVERRIDE, DEFINITIONS,
-    MEMORY_PROTOCOL, LAWS, COMMUNICATION. These sections are identical for
-    every shell (spec §02); the file is their single source of truth."""
+    MEMORY_PROTOCOL, PROHIBITIONS, LAWS, COMMUNICATION. These sections are
+    identical for every shell (spec §02); the file is their single source of
+    truth."""
     blocks: dict[str, list[str]] = {}
     key: str | None = None
     for line in _UNIVERSAL_PATH.read_text().splitlines():
@@ -317,7 +318,8 @@ def assemble_catalog(
     runtime_ctx: dict,
 ) -> str:
     """Compose the full typed boot-prompt catalog (spec §02) for a shell — a
-    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections. Pure read.
+    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections, with Prohibitions
+    rendered just before Laws. Pure read.
 
     `runtime_ctx` carries the render-time values a DB query cannot give —
     wall-clock, session ids; see `render_boot_context`. The baked universal
@@ -350,6 +352,7 @@ def assemble_catalog(
         ("LESSONS & STANCES", render_lns(con, shell_id)),
         ("RECENT DECISIONS",  render_recent_decisions(con, shell_id)),
         ("OPEN FLAGS",        render_flags_pointer(con, shell_id)),
+        ("PROHIBITIONS",      universal["PROHIBITIONS"]),
         ("LAWS",              universal["LAWS"]),
         ("COMMUNICATION",     universal["COMMUNICATION"]),
         ("OUTPUT SHAPE",      render_output_shape(dialect)),
