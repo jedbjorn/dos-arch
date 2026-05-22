@@ -206,7 +206,7 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
     ).fetchone()[0]
     if not n:
         return "0 open."
-    return f"{n} open. Invoke `--flag-triage` to surface."
+    return f"{n} open. Invoke `--flags` to surface."
 
 
 # Section E — the tools this shell can call: general tools (skill_id NULL,

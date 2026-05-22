@@ -6,9 +6,9 @@ common: 1
 ---
 # bootstrap_interview
 
-- **category:** workflow
-- **common:** 0
-- **description:** Run once, on the first session of a fresh shell. Identity, system_prompt, connections, and skills are already set by Forge's `create_shell` interview — this skill is the new shell's own first act: plant its first seed entry and set a starter `current_state`. Not an interview.
+> Frontmatter (`category`, `common`, `description`) is the source of
+> truth — see the YAML block above. Don't re-state it in the body; it
+> drifts.
 
 ---
 
@@ -48,15 +48,17 @@ need it for `current_state`. Keep it short.
 ---
 
 Memory is written over the **substrate API** — never a DB file; this shell
-runs in a container with no `sqlite3` (see MEMORY ARCHITECTURE in your
-system prompt). `$DOS_API_URL` and `$DOS_API_TOKEN` are in your container
-environment; `<self>` is your shell_id, shown in `## ACTIVE SESSION` of
-your CLAUDE.md.
+runs in a container with no `sqlite3` (see MEMORY PROTOCOL in your system
+prompt). `$DOS_API_URL` and `$DOS_API_TOKEN` are in your container
+environment; `<self>` is your `shell_id:`, shown in `## BOOT ##` of your
+CLAUDE.md.
 
 ## 2. Set current_state
 
-A tight rolling status — **280 characters max**, enforced server-side. Not
-a log. Just: who you are now, and the first task.
+A tight rolling status — aim ~280 chars (soft cap, as of migration 020).
+Not a log. Just: who you are now, and the first task. After this first
+write, `current_state` is yours to maintain as work moves (see MEMORY
+PROTOCOL → CURRENT STATE).
 
 ```bash
 curl -fsS -X PATCH "$DOS_API_URL/shells/<self>" \
