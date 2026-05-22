@@ -56,6 +56,7 @@ from providers import (
     tool_result_message,
 )
 from tools import run_tool
+from local_model_reaper import reaper_loop
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ POOL_WORKERS           = int(os.environ.get("DISPATCH_POOL_WORKERS", "5"))
 TOOL_CONCURRENCY       = int(os.environ.get("DISPATCH_TOOL_CONCURRENCY", "20"))
 STUCK_SESSION_SEC      = 300         # warn if a session is in-flight this long
 RECONCILE_SEC          = 5           # supervisor: re-check browser_chat membership
+LOCAL_UNLOAD_SWEEP_SEC = int(os.environ.get("LOCAL_UNLOAD_SWEEP_SEC", "30"))
 
 # Process-wide cap on in-flight API calls from execute_tool — N workers × 20
 # tool iterations could otherwise saturate our own API.
@@ -599,8 +601,19 @@ def main() -> None:
     running: dict[int, tuple[threading.Thread, threading.Event]] = {}
     draining: list[tuple[int, threading.Thread]] = []
 
+    # Sweep orphaned local models out of Ollama. Host-side because the
+    # substrate API runs in a container with no route to host Ollama —
+    # the in-API unload path silently no-ops there.
+    reaper_stop = threading.Event()
+    reaper_thread = threading.Thread(
+        target=reaper_loop, args=(db, reaper_stop, LOCAL_UNLOAD_SWEEP_SEC),
+        name="local-model-reaper", daemon=True,
+    )
+    reaper_thread.start()
+
     def _on_sigterm(signum, frame):
         print("dispatch_live SIGTERM — stopping shell loops + flushing markers", flush=True)
+        reaper_stop.set()
         for _t, ev in running.values():
             ev.set()
         try:
@@ -620,8 +633,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, _on_sigterm)
 
     print(f"dispatch_live started — model={MODEL} api={API_BASE} poll={POLL_MS}ms "
-          f"reconcile={RECONCILE_SEC}s pool={POOL_WORKERS} journal={journal_mode} "
-          f"pid={os.getpid()}", flush=True)
+          f"reconcile={RECONCILE_SEC}s reap={LOCAL_UNLOAD_SWEEP_SEC}s "
+          f"pool={POOL_WORKERS} journal={journal_mode} pid={os.getpid()}", flush=True)
 
     # Supervisor: spawn a shell_loop for every shell that gains browser_chat=1,
     # stop the loop for every shell that loses it. A re-activated shell waits
