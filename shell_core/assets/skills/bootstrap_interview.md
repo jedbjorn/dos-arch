@@ -6,6 +6,9 @@ common: 1
 ---
 # bootstrap_interview
 
+> **Anchors** — `<self>` = your `shell_id:` value, shown in `## BOOT ##` of
+> your CLAUDE.md.
+>
 > Frontmatter (`category`, `common`, `description`) is the source of
 > truth — see the YAML block above. Don't re-state it in the body; it
 > drifts.
@@ -50,8 +53,7 @@ need it for `current_state`. Keep it short.
 Memory is written over the **substrate API** — never a DB file; this shell
 runs in a container with no `sqlite3` (see MEMORY PROTOCOL in your system
 prompt). `$DOS_API_URL` and `$DOS_API_TOKEN` are in your container
-environment; `<self>` is your `shell_id:`, shown in `## BOOT ##` of your
-CLAUDE.md.
+environment.
 
 ## 2. Set current_state
 
