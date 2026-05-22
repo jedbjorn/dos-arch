@@ -56,6 +56,19 @@ def _homerel(p) -> str:
         return str(p)
 
 
+def _catalog_path(p) -> str:
+    """Catalogue path string: repo-relative for files inside the repo, so the
+    row is identical whether the sync runs from the host checkout (~/dos-arch)
+    or the /substrate container mount. Home-relative for paths outside the
+    repo. Absolute Path objects stay for on-disk checks — only the stored
+    string is canonicalised."""
+    p = Path(p)
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return _homerel(p)
+
+
 def _module_docstring_first_line(path: Path) -> str | None:
     """Parse the module's top-of-file docstring, return the first line."""
     try:
@@ -66,6 +79,24 @@ def _module_docstring_first_line(path: Path) -> str | None:
     if not doc:
         return None
     return doc.strip().split("\n", 1)[0].strip()
+
+
+def _reap(conn: sqlite3.Connection, table: str, id_col: str, seen_ids) -> int:
+    """Retire active rows of a fully-rescanned surface whose row wasn't seen
+    this run — the source entry is gone. Returns the count retired.
+
+    A run that saw nothing reaps nothing: an empty scan is treated as a failed
+    scan, not as 'every row was deleted'."""
+    seen = list(seen_ids)
+    if not seen:
+        return 0
+    placeholders = ",".join("?" * len(seen))
+    cur = conn.execute(
+        f"UPDATE {table} SET status = 'retired' "
+        f"WHERE status = 'active' AND {id_col} NOT IN ({placeholders})",
+        seen,
+    )
+    return cur.rowcount
 
 
 def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
@@ -83,9 +114,11 @@ def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
             sys.path.pop(0)
 
     counts = {
-        "routers": {"insert": 0, "update": 0},
-        "apis":    {"insert": 0, "update": 0},
+        "routers": {"insert": 0, "update": 0, "retire": 0},
+        "apis":    {"insert": 0, "update": 0, "retire": 0},
     }
+    seen_router_ids: list[int] = []
+    seen_api_ids:    list[int] = []
 
     # ── dr_router rows ─────────────────────────────────────────────────────
     file_to_router_id: dict[str, int] = {}
@@ -115,6 +148,7 @@ def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
             )
             counts["routers"]["insert"] += 1
             file_to_router_id[name] = cur.lastrowid
+        seen_router_ids.append(file_to_router_id[name])
 
     # ── dr_api rows from OpenAPI spec ──────────────────────────────────────
     spec = app.openapi()
@@ -144,14 +178,18 @@ def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
                     (name, summary, description, router_id, existing[0])
                 )
                 counts["apis"]["update"] += 1
+                seen_api_ids.append(existing[0])
             else:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO dr_api (router_id, name, description_short, path, method, "
                     "purpose, last_verified) VALUES (?, ?, ?, ?, ?, ?, date('now'))",
                     (router_id, name, summary, path, method_u, description)
                 )
                 counts["apis"]["insert"] += 1
+                seen_api_ids.append(cur.lastrowid)
 
+    counts["routers"]["retire"] = _reap(conn, "dr_router", "router_id", seen_router_ids)
+    counts["apis"]["retire"]    = _reap(conn, "dr_api", "api_id", seen_api_ids)
     return counts
 
 
@@ -442,11 +480,12 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
     disk are skipped — they may be on a host that doesn't have them (e.g.
     ~/shared on machines without the VM mount).
     """
-    counts = {"filepaths": {"insert": 0, "update": 0}}
+    counts = {"filepaths": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
     for name, path, kind, desc in _FILEPATH_ENTRIES:
         if not path.exists():
             continue
-        path_str = _homerel(path)
+        path_str = _catalog_path(path)
         existing = conn.execute(
             "SELECT filepath_id FROM dr_filepath WHERE path = ?", (path_str,)
         ).fetchone()
@@ -457,13 +496,16 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
                 (name, _truncate(desc), kind, existing[0])
             )
             counts["filepaths"]["update"] += 1
+            seen_ids.append(existing[0])
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO dr_filepath (name, description_short, path, kind, last_verified) "
                 "VALUES (?, ?, ?, ?, date('now'))",
                 (name, _truncate(desc), path_str, kind)
             )
             counts["filepaths"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
+    counts["filepaths"]["retire"] = _reap(conn, "dr_filepath", "filepath_id", seen_ids)
     return counts
 
 
@@ -627,7 +669,7 @@ def main() -> int:
                         print(f"  {surface}: ERROR {c['error']}")
                         rc = 1
                     else:
-                        print(f"  {surface}: {c['insert']} inserted, {c['update']} updated")
+                        print(f"  {surface}: {c['insert']} inserted, {c['update']} updated, {c.get('retire', 0)} retired")
         _record_run(conn, trigger_kind, results)
         conn.commit()
     except Exception as e:
