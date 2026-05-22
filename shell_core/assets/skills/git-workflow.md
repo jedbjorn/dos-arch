@@ -3,6 +3,8 @@ name: git-workflow
 description: Identity-prefix env vars, stacked-PR retarget rule, squash-merge default, cleanup pattern. Self-bootstraps creds (Name, Email, auth) into shells.connections on first invocation.
 category: workflow
 common: 1
+trigger_keywords: commit, branch, PR, stacked, rebase, push, diff, log
+trigger_use_when: committing, branching, inspecting, or pushing a git repository
 ---
 # git-workflow
 
