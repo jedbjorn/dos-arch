@@ -1,4 +1,5 @@
 <script>
+  // Renders Markdown text to sanitized HTML via marked + DOMPurify.
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
 

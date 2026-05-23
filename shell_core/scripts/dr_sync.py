@@ -14,11 +14,12 @@ Wired syncs:
              (→ dr_dependencies, kind='pip', project='substrate')
     Idempotent: UPSERT keyed on dr_dependencies(project, name).
 
-Future syncs (stubs to fill in as conventions land):
-  sync_services()      — ecosystem.config.cjs → dr_services
-  sync_repos()         — `gh repo view` for each known remote → dr_repo
-  sync_ui_lib()        — package.json#description → dr_lib (kind=frontend)
-  sync_backend_lib()   — module docstrings under api/common/ → dr_lib (kind=backend)
+Header-comment conventions (frontend):
+  - `.js` files under `ui/src/lib/`: first `//` line at the top of the file
+    is the summary. Recursive scan, so `lib/<subdir>/*.js` is in scope.
+  - `.svelte` files under `ui/src/lib/components/`: first `//` line in the
+    `<script>` block is the summary. Recursive scan; the file's location
+    (path-relative-to-lib) is the dr_lib unique key.
 
 Usage:
     python3 shell_core/scripts/dr_sync.py            # all syncs
@@ -324,26 +325,62 @@ def sync_services(conn: sqlite3.Connection) -> dict:
     return counts
 
 
-def _first_js_comment(text: str) -> str | None:
-    """Extract the first `//` line at the top of a JS file (before any code)."""
-    for line in text.splitlines():
-        s = line.strip()
+def _join_comment_block(lines) -> str | None:
+    """Collect contiguous `//` lines from `lines` (each already stripped),
+    joining them with single spaces so a multi-line leading comment reads as
+    one sentence. Blank lines before the first `//` are skipped; the block
+    ends at the first non-comment line. Returns None if no `//` line was
+    seen."""
+    captured = []
+    for s in lines:
         if not s:
+            if captured:
+                break  # blank line ends the block
             continue
         if s.startswith("//"):
-            return s.lstrip("/").strip()
-        return None  # hit non-comment code; abort
-    return None
+            captured.append(s.lstrip("/").strip())
+            continue
+        break  # hit non-comment code
+    if not captured:
+        return None
+    return " ".join(c for c in captured if c)
+
+
+def _first_js_comment(text: str) -> str | None:
+    """Leading `//` block at the top of a JS source. Multi-line comments are
+    joined into one string."""
+    return _join_comment_block(line.strip() for line in text.splitlines())
+
+
+def _first_svelte_comment(text: str) -> str | None:
+    """Leading `//` block inside the opening `<script>` of a .svelte file.
+    Skips the `<script ...>` tag and any blank lines; joins multi-line
+    comments."""
+    inner = []
+    in_script = False
+    for line in text.splitlines():
+        s = line.strip()
+        if not in_script:
+            if s.startswith("<script"):
+                in_script = True
+            continue
+        inner.append(s)
+    return _join_comment_block(inner) if inner else None
 
 
 def sync_libs(conn: sqlite3.Connection) -> dict:
-    """Sync dr_lib from backend (api/common/*.py) and frontend (ui/src/lib/*.js).
+    """Sync dr_lib from backend (api/common/*.py) and frontend (ui/src/lib/
+    recursive — .js helpers + .svelte components).
 
     Backend convention: top-of-file Python docstring, first line is the summary.
-    Frontend convention: top-of-file `//` comment, first line is the summary.
+    Frontend convention: first `//` line at the top of the file (or inside the
+    leading `<script>` block for .svelte). `name` is the path relative to the
+    scan root, sans extension — so a top-level helper stays `api`, a sub-folder
+    helper becomes `chat/models`, a component is `components/chat/ChatSidebar`.
     Idempotent: UPSERT keyed on (kind, location).
     """
-    counts = {"libs": {"insert": 0, "update": 0}}
+    counts = {"libs": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
 
     def _upsert(kind: str, name: str, location_path: Path, desc: str):
         rel = str(location_path.relative_to(ROOT))
@@ -357,14 +394,17 @@ def sync_libs(conn: sqlite3.Connection) -> dict:
                 (name, desc, existing[0])
             )
             counts["libs"]["update"] += 1
+            seen_ids.append(existing[0])
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO dr_lib (kind, name, location, description_short, last_verified) "
                 "VALUES (?, ?, ?, ?, date('now'))",
                 (kind, name, rel, desc)
             )
             counts["libs"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
 
+    # ── Backend modules ────────────────────────────────────────────────────
     backend_dir = ROOT / "shell_core" / "api" / "common"
     if backend_dir.exists():
         for f in sorted(backend_dir.glob("*.py")):
@@ -374,13 +414,25 @@ def sync_libs(conn: sqlite3.Connection) -> dict:
             desc = _truncate(doc or f"backend module: {f.stem}")
             _upsert("backend", f.stem, f, desc)
 
+    # ── Frontend: recursive .js + .svelte ──────────────────────────────────
     ui_lib_dir = ROOT / "shell_core" / "ui" / "src" / "lib"
     if ui_lib_dir.exists():
-        for f in sorted(ui_lib_dir.glob("*.js")):
-            comment = _first_js_comment(f.read_text())
-            desc = _truncate(comment or f"frontend module: {f.stem}")
-            _upsert("frontend", f.stem, f, desc)
+        def _name_from(f: Path) -> str:
+            # path-relative-to-lib without extension — keeps subfolder helpers
+            # unique (e.g. chat/models) and components disambiguated by path.
+            return str(f.relative_to(ui_lib_dir).with_suffix(""))
 
+        for f in sorted(ui_lib_dir.rglob("*.js")):
+            comment = _first_js_comment(f.read_text())
+            desc = _truncate(comment or f"frontend module: {_name_from(f)}")
+            _upsert("frontend", _name_from(f), f, desc)
+
+        for f in sorted(ui_lib_dir.rglob("*.svelte")):
+            comment = _first_svelte_comment(f.read_text())
+            desc = _truncate(comment or f"svelte component: {_name_from(f)}")
+            _upsert("frontend", _name_from(f), f, desc)
+
+    counts["libs"]["retire"] = _reap(conn, "dr_lib", "lib_id", seen_ids)
     return counts
 
 

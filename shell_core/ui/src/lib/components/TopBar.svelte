@@ -1,4 +1,5 @@
 <script>
+  // App header — route tabs + theme picker; sits above page content.
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
 
