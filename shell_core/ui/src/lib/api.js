@@ -24,6 +24,7 @@ async function request(method, path, body) {
 
 const get   = (p)    => request('GET',    p)
 const post  = (p, b) => request('POST',   p, b ?? {})
+const put   = (p, b) => request('PUT',    p, b ?? {})
 const patch = (p, b) => request('PATCH',  p, b ?? {})
 const del_  = (p, b) => request('DELETE', p, b)
 
@@ -37,8 +38,11 @@ export const getShells          = ()                   => get('/admin/shells')
 export const getShell           = (shell_id)           => get(`/shells/${shell_id}`)
 export const getShellSkills     = (shell_id)           => get(`/shells/${shell_id}/skills`)
 export const getShellPromptSections = (shell_id)       => get(`/shells/${shell_id}/prompt-sections`)
+export const putShellPromptSection  = (shell_id, label, body) =>
+  put(`/shells/${shell_id}/prompt-sections/${encodeURIComponent(label)}`, { body })
 export const getAvailableSkills = ()                   => get('/admin/skills/available')
 export const getSkill           = (skill_id)           => get(`/admin/skills/${skill_id}`)
+export const updateSkill        = (skill_id, patch)    => request('PATCH', `/admin/skills/${skill_id}`, patch)
 export const addShellSkill      = (shell_id, skill_id) => post(`/admin/shells/${shell_id}/skills`, { skill_id })
 export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${shell_id}/skills/${skill_id}`)
 

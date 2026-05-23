@@ -188,7 +188,7 @@
   init()
 </script>
 
-<aside class="chat-sidebar relative z-10 flex h-screen shrink-0 border-l border-white/[0.08]">
+<aside class="chat-sidebar relative z-10 flex shrink-0 mt-[14px] mr-[14px] mb-[14px] ml-[10px] rounded-2xl border border-white/[0.10] overflow-hidden">
   <ModelPicker
     {models}
     {selectedModel}
