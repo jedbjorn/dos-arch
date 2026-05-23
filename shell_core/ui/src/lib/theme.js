@@ -70,6 +70,14 @@ export function applyTheme(bg, accent) {
   const pillGlow = washFrom(accent,   0, 0.25)
   const activePill = `linear-gradient(135deg, ${pillA}, ${pillB})`
 
+  // Avatar orb — same hue pair but fully saturated, with a stronger glow.
+  // Drives the small gradient circle in the chat header (and any other
+  // identity orbs we add later).
+  const orbA   = washFrom(accent,   0, 1)
+  const orbB   = washFrom(accent,  90, 1)
+  const orbGlow = washFrom(accent,  0, 0.4)
+  const orbGrad = `linear-gradient(135deg, ${orbA}, ${orbB})`
+
   el.textContent = `
     :root, html, body {
       --color-surface-1: ${bg};
@@ -81,6 +89,8 @@ export function applyTheme(bg, accent) {
       --app-gradient:    ${gradient};
       --active-pill-grad: ${activePill};
       --active-pill-glow: ${pillGlow};
+      --orb-grad:         ${orbGrad};
+      --orb-glow:         ${orbGlow};
       background-color:  ${bg};
     }
   `

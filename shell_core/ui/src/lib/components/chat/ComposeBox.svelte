@@ -1,11 +1,12 @@
 <script>
-  // Compose area — textarea + stop/clear/send buttons + token/char counters.
+  // Compose area — textarea + send/stop/+chat buttons + token/char counters.
   // `draft` and `inputEl` are bindable so the parent (or the skills popover,
   // through the parent's onCommand handler) can prepend a slash command and
   // focus the textarea.
   //
-  // Stop button is intentionally disabled — aborting an in-flight turn
-  // needs dispatcher support (flag CC-60).
+  // +chat is a two-step destructive action: first click arms (amber glow),
+  // second click commits. Stop is intentionally disabled — aborting an
+  // in-flight turn needs dispatcher support (flag CC-60).
   import { MAX_INBOUND_CHARS } from '$lib/chat/tokens.js'
 
   let {
@@ -21,112 +22,125 @@
     inputEl = $bindable(null),
   } = $props()
 
-  let clearConfirm = $state(false)
+  let clearArmed = $state(false)
 
   function onKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend?.() }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend() }
   }
 
-  function confirmClear() { clearConfirm = false; onClear?.() }
+  function doSend() {
+    if (sending || !shellId || !draft.trim()) return
+    onSend?.()
+  }
+
+  function handleClearClick() {
+    if (!hasMessages) return
+    if (clearArmed) { clearArmed = false; onClear?.() }
+    else            { clearArmed = true }
+  }
+
+  const sendDisabled  = $derived(sending || !shellId || !draft.trim())
+  const nearTokenCap  = $derived(contextWindow && chatTokens > contextWindow * 0.9)
+  const charNearCap   = $derived(draft.length > MAX_INBOUND_CHARS * 0.8)
+  const charAtCap     = $derived(draft.length >= MAX_INBOUND_CHARS)
 </script>
 
-<div class="compose">
-  <textarea
-    class="input"
-    bind:this={inputEl}
-    placeholder={shellId ? `Message ${shellName}…` : 'No shell assigned'}
-    rows="3"
-    bind:value={draft}
-    onkeydown={onKey}
-    maxlength={MAX_INBOUND_CHARS}
-    disabled={!shellId}
-  ></textarea>
-  <div class="compose-btns">
-    <button class="cbtn stop" disabled
-      title="Stop an in-flight turn — backend not wired yet (CC-60)">stop</button>
-    {#if clearConfirm}
-      <!-- Inline confirm — +chat ends the current conversation. -->
-      <div class="clear-inline">
-        <button class="cbtn confirm-clear" onclick={confirmClear}>confirm</button>
-        <button class="cbtn cancel-clear" onclick={() => clearConfirm = false}>✕</button>
-      </div>
-    {:else}
-      <button class="cbtn clear" onclick={() => clearConfirm = true}
-        disabled={!hasMessages}>+chat</button>
+<div class="px-4 pt-3 pb-4">
+  <!-- caption row — token & char counts -->
+  <div class="flex items-center px-2 mb-2 gap-3">
+    <span
+      class="text-[10px] tabular-nums font-mono {nearTokenCap ? 'text-amber' : 'text-white/40'}"
+    >
+      {chatTokens.toLocaleString()}{#if contextWindow} / {contextWindow.toLocaleString()}{/if} tok
+    </span>
+    {#if charNearCap}
+      <span
+        class="text-[10px] tabular-nums font-mono ml-auto {charAtCap ? 'text-red' : 'text-white/40'}"
+      >
+        {draft.length.toLocaleString()} / {MAX_INBOUND_CHARS.toLocaleString()}
+      </span>
     {/if}
-    <button class="cbtn send" onclick={() => onSend?.()}
-      disabled={sending || !shellId || !draft.trim()}>send</button>
+  </div>
+
+  <!-- input pill + vertical action column -->
+  <div class="flex items-stretch gap-2">
+    <div
+      class="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 flex items-end gap-3"
+      style="background: var(--glass-bg-strong);
+             backdrop-filter: blur(var(--glass-blur-soft));
+             -webkit-backdrop-filter: blur(var(--glass-blur-soft));"
+    >
+      <textarea
+        bind:this={inputEl}
+        bind:value={draft}
+        onkeydown={onKey}
+        placeholder={shellId ? `Message ${shellName}…` : 'No shell assigned'}
+        rows="3"
+        maxlength={MAX_INBOUND_CHARS}
+        disabled={!shellId}
+        class="flex-1 bg-transparent border-0 outline-none resize-none
+               font-mono text-[12px] leading-snug text-white/90
+               placeholder:text-white/40
+               disabled:opacity-50"
+      ></textarea>
+      <button
+        onclick={doSend}
+        disabled={sendDisabled}
+        aria-label="send"
+        title="send"
+        class="w-8 h-8 rounded-full flex items-center justify-center shrink-0
+               text-white/70 hover:text-white hover:bg-white/[0.08] transition
+               disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="7" y1="11.5" x2="7" y2="2.5" />
+          <polyline points="3,6.5 7,2.5 11,6.5" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- vertical action column -->
+    <div class="flex flex-col gap-2 justify-between items-end shrink-0">
+      <!-- +chat: two-step confirm. Armed state shows amber glow. -->
+      <button
+        onclick={handleClearClick}
+        disabled={!hasMessages}
+        aria-label={clearArmed ? 'click again to confirm new chat' : 'new chat'}
+        title={clearArmed ? 'click again to confirm' : 'new chat'}
+        class="w-7 h-7 rounded-full border flex items-center justify-center transition-colors duration-200
+               disabled:opacity-30
+               {clearArmed
+                  ? 'border-amber-300/60 text-amber-100'
+                  : 'border-white/[0.10] text-white/70'}"
+        style="background: {clearArmed ? 'rgba(251,191,36,0.10)' : 'rgba(255,255,255,0.04)'};
+               backdrop-filter: blur(var(--glass-blur-soft));
+               -webkit-backdrop-filter: blur(var(--glass-blur-soft));
+               {clearArmed ? 'box-shadow: 0 0 16px rgba(251,191,36,0.35);' : ''}"
+      >
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round">
+          <line x1="5.5" y1="2" x2="5.5" y2="9" />
+          <line x1="2" y1="5.5" x2="9" y2="5.5" />
+        </svg>
+      </button>
+      <!-- stop: disabled until dispatcher support lands (CC-60). -->
+      <button
+        disabled
+        aria-label="stop"
+        title="Stop an in-flight turn — backend not wired yet (CC-60)"
+        class="w-7 h-7 rounded-full border border-white/[0.10] text-white/40 flex items-center justify-center
+               opacity-40 cursor-default"
+        style="background: rgba(255,255,255,0.04);
+               backdrop-filter: blur(var(--glass-blur-soft));
+               -webkit-backdrop-filter: blur(var(--glass-blur-soft));"
+      >
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor"
+          stroke-width="1.6" stroke-linecap="round">
+          <line x1="2.8" y1="2.8" x2="8.2" y2="8.2" />
+          <line x1="8.2" y1="2.8" x2="2.8" y2="8.2" />
+        </svg>
+      </button>
+    </div>
   </div>
 </div>
-<div class="compose-meta">
-  <span class="token-count"
-    class:near-cap={contextWindow && chatTokens > contextWindow * 0.9}>
-    {chatTokens.toLocaleString()}{#if contextWindow} / {contextWindow.toLocaleString()}{/if} tok
-  </span>
-  {#if draft.length > MAX_INBOUND_CHARS * 0.8}
-    <span class="char-count" class:at-cap={draft.length >= MAX_INBOUND_CHARS}>
-      {draft.length.toLocaleString()} / {MAX_INBOUND_CHARS.toLocaleString()}
-    </span>
-  {/if}
-</div>
-
-<style>
-  .compose {
-    display: flex;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--color-surface-2);
-    border-top: 1px solid var(--color-border);
-  }
-  .input {
-    flex: 1;
-    background: var(--color-surface-1);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 6px 8px;
-    resize: none;
-    line-height: 1.4;
-  }
-  .input:focus { outline: none; border-color: var(--color-accent); }
-
-  .compose-btns {
-    display: flex; flex-direction: column;
-    gap: 4px;
-    justify-content: flex-end; align-items: flex-end;
-  }
-  .cbtn {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    border-radius: 4px;
-    padding: 3px 10px;
-    cursor: pointer;
-    border: 1px solid var(--color-border);
-    background: var(--color-surface-1);
-    color: var(--color-text-dim);
-  }
-  .cbtn:disabled { opacity: 0.4; cursor: default; }
-  .cbtn.send:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
-  .cbtn.send:not(:disabled):hover { background: rgba(0,114,255,0.08); }
-  .cbtn.clear:not(:disabled):hover { border-color: var(--color-red); color: var(--color-red); }
-
-  .clear-inline { display: flex; gap: 4px; justify-content: flex-end; }
-  .cbtn.confirm-clear { border-color: var(--color-red); color: var(--color-red); }
-  .cbtn.confirm-clear:hover { background: rgba(224,85,85,0.12); }
-  .cbtn.cancel-clear { padding: 3px 8px; }
-
-  .compose-meta {
-    display: flex;
-    justify-content: space-between; gap: 8px;
-    padding: 2px 12px 6px;
-    background: var(--color-surface-2);
-  }
-  .token-count { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-dim); }
-  .token-count.near-cap { color: var(--color-amber); }
-  .char-count { font-family: var(--font-mono); font-size: 9px; color: var(--color-text-dim); margin-left: auto; }
-  .char-count.at-cap { color: var(--color-red); }
-</style>

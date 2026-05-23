@@ -187,11 +187,11 @@
   init()
 </script>
 
-<aside class="chat-sidebar">
+<aside class="chat-sidebar relative z-10 flex h-screen shrink-0 border-l border-white/[0.08]">
   <ModelPicker {models} {selectedModel} onChange={changeModel} />
 
-  <div class="chat-col">
-    <div class="chat-header">
+  <div class="flex-1 min-w-0 flex flex-col">
+    <div class="relative flex items-center gap-2 h-[52px] px-3 border-b border-white/[0.06]">
       <ShellSwitcher {myShells} shellId={SHELL_ID} disabled={switching} onSwitch={switchShell} />
       <SkillsPopover shellId={SHELL_ID} onCommand={onSkillCommand} />
     </div>
@@ -215,31 +215,15 @@
 </aside>
 
 <style>
+  /* Width-only rule kept in scoped CSS — Tailwind v4 supports arbitrary
+     values but vw + min-width + shrink-0 reads more clearly here.
+     The glass surface is composed via Tailwind utilities above plus
+     these two style props that don't translate cleanly to utilities. */
   .chat-sidebar {
-    width: 50vw;   /* 1/2 window width — redline: chat redline.png */
+    width: 50vw;        /* 1/2 window width — redline: chat redline.png */
     min-width: 518px;
-    flex-shrink: 0;
-    height: 100vh;
-    display: flex;
-    border-left: 1px solid var(--color-border);
-    background: var(--color-surface-1);
-  }
-
-  .chat-col {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .chat-header {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 52px;
-    padding: 0 12px;
-    border-bottom: 1px solid var(--color-border);
-    background: var(--color-surface-2);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
   }
 </style>

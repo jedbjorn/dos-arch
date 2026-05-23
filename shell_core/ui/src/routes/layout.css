@@ -44,6 +44,11 @@
      SSR renders coherently before theme.js runs in the browser. */
   --active-pill-grad: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(236, 72, 153, 0.10));
   --active-pill-glow: rgba(99, 102, 241, 0.25);
+
+  /* Avatar orb — saturated accent gradient + soft glow.
+     Also overridden by lib/theme.js. */
+  --orb-grad: linear-gradient(135deg, #818cf8, #f472b6);
+  --orb-glow: rgba(99, 102, 241, 0.4);
 }
 
 html, body {

@@ -1,5 +1,5 @@
 <script>
-  // "Skills ▾" header button + popover. Lazy-loads the shell's skills on
+  // "Skills" header button + popover. Lazy-loads the shell's skills on
   // first open. Hovered rows raise a tooltip with the full description
   // (600ms delay). Clicking a row with a slash command fires onCommand with
   // the command string — the parent decides what to do with it (typically:
@@ -62,90 +62,63 @@
 
 <svelte:window onclick={onWindowClick} />
 
-<div class="skills-wrap" bind:this={popoverEl}>
-  <button class="skills-btn" class:active={showSkills}
-    onclick={e => { e.stopPropagation(); toggle() }}>Skills ▾</button>
+<div class="ml-auto relative" bind:this={popoverEl}>
+  <button
+    onclick={e => { e.stopPropagation(); toggle() }}
+    class="px-3 py-1.5 rounded-full text-xs border transition
+           {showSkills
+              ? 'text-white border-white/20 bg-white/[0.04]'
+              : 'text-white/60 hover:text-white/90 border-white/10 hover:border-white/20'}"
+  >
+    Skills
+  </button>
 
   {#if showSkills}
-    <div class="skills-popover">
+    <!-- Popover: glass card hanging off the right edge of the header. -->
+    <div
+      class="absolute top-full right-0 mt-2 w-[280px] max-h-[420px] overflow-y-auto glass-scroll
+             rounded-2xl border border-white/[0.10] py-2 z-10"
+      style="background: rgba(20, 20, 30, 0.85);
+             backdrop-filter: blur(24px);
+             -webkit-backdrop-filter: blur(24px);
+             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);"
+    >
       {#if skills.length === 0}
-        <div class="skills-empty">No skills assigned.</div>
+        <div class="px-4 py-2.5 text-[11px] text-white/40">No skills assigned.</div>
       {:else}
         {#each skills as skill}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <div class="skill-row" class:clickable={!!skill.command}
+          <div
+            role="button"
+            tabindex={skill.command ? 0 : -1}
+            class="flex flex-col gap-1 px-4 py-2 transition
+                   {skill.command ? 'cursor-pointer hover:bg-white/[0.04]' : 'cursor-default'}"
             onmouseenter={e => onEnter(e, skill)}
             onmouseleave={onLeave}
-            onclick={skill.command ? () => pick(skill) : null}>
-            <span class="skill-name">{skill.name}</span>
-            <span class="skill-args">{parseArgs(skill.description) || skill.command || ''}</span>
+            onclick={skill.command ? () => pick(skill) : null}
+          >
+            <span class="text-[12px] font-mono font-semibold text-white break-words">{skill.name}</span>
+            <span class="text-[10px] font-mono text-white/40 break-words">
+              {parseArgs(skill.description) || skill.command || ''}
+            </span>
             {#if parseRequires(skill.description)}
-              <span class="skill-hint">{parseRequires(skill.description)}</span>
+              <span class="text-[10px] italic text-amber break-words">{parseRequires(skill.description)}</span>
             {/if}
           </div>
         {/each}
       {/if}
     </div>
     {#if hoveredDesc}
-      <div class="skill-tip" style="top:{hoveredTop}px;left:{hoveredLeft - 8}px">{hoveredDesc}</div>
+      <div
+        class="fixed -translate-x-full max-w-[320px] px-3 py-2.5 rounded-lg border border-white/[0.10] text-[11px] text-white/90 leading-relaxed z-20 pointer-events-none"
+        style="top: {hoveredTop}px;
+               left: {hoveredLeft - 8}px;
+               margin-left: -8px;
+               background: rgba(20, 20, 30, 0.92);
+               backdrop-filter: blur(24px);
+               -webkit-backdrop-filter: blur(24px);
+               box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);"
+      >{hoveredDesc}</div>
     {/if}
   {/if}
 </div>
-
-<style>
-  /* The wrap stays inline so the button sits in the header flow; the popover
-     anchors absolutely off the wrap and the surrounding `.chat-header`. */
-  .skills-wrap { margin-left: auto; position: relative; }
-
-  .skills-btn {
-    background: none;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    color: var(--color-text-dim);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    cursor: pointer;
-    padding: 2px 7px;
-    letter-spacing: 0.04em;
-  }
-  .skills-btn:hover, .skills-btn.active { color: var(--color-accent); border-color: var(--color-accent); }
-
-  .skills-popover {
-    position: absolute;
-    top: 100%; right: 0;
-    width: 250px;
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    border-top: none;
-    border-radius: 0 0 8px 8px;
-    z-index: 10;
-    max-height: 420px;
-    overflow-y: auto;
-    padding: 6px 0;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  }
-  .skill-row { display: flex; flex-direction: column; padding: 8px 14px; gap: 3px; cursor: default; }
-  .skill-row.clickable { cursor: pointer; }
-  .skill-row:hover { background: var(--color-surface-3); }
-  .skill-name { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: #fff; word-break: break-word; }
-  .skill-args { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); word-break: break-word; }
-  .skill-hint { font-family: var(--font-mono); font-size: 10px; font-style: italic; color: var(--color-amber); word-break: break-word; margin-top: 2px; }
-  .skills-empty { padding: 10px 14px; font-family: var(--font-mono); font-size: 11px; color: var(--color-text-dim); }
-
-  .skill-tip {
-    position: fixed;
-    transform: translateX(-100%);
-    margin-left: -8px;
-    max-width: 320px;
-    padding: 10px 12px;
-    background: var(--color-surface-2);
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    font-size: 11px;
-    line-height: 1.45;
-    z-index: 20;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-    pointer-events: none;
-  }
-</style>
