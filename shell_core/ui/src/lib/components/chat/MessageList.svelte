@@ -41,7 +41,19 @@
     class="flex-1 overflow-y-auto glass-scroll p-3 flex flex-col gap-2.5 min-h-0"
   >
     {#if messages.length === 0}
-      <div class="text-white/40 text-xs text-center mt-10">No messages yet.</div>
+      <!-- "ready" empty state — soft accent orb + caption. Mirrors the
+           spatial-glass JSX reference's ready-to-chat moment. -->
+      <div class="flex-1 flex flex-col items-center justify-center">
+        <div
+          class="w-16 h-16 rounded-full flex items-center justify-center"
+          style="background: var(--orb-soft-grad);
+                 box-shadow: 0 0 40px var(--orb-soft-glow);"
+        >
+          <div class="w-3 h-3 rounded-full bg-white/80"></div>
+        </div>
+        <div class="text-sm text-white/60 mt-4">ready</div>
+        <div class="text-[10px] text-white/30 mt-1">say something to begin</div>
+      </div>
     {:else}
       {#each messages as msg (msg.message_id)}
         <div class="flex flex-col gap-0.5 {msg.direction === 'outbound' ? 'items-end' : 'items-start'}">

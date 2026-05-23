@@ -10,13 +10,6 @@ const STORAGE_KEY = 'dos_theme'
 export const BG_PRESETS     = ['#0f1117', '#0f172a', '#1c1412', '#0d1f17', '#1a0a0e', '#170f2e']
 export const ACCENT_PRESETS = ['#0072FF', '#3b82f6', '#d97706', '#10b981', '#e11d48', '#8b5cf6']
 
-function lighten(hex, amt) {
-  const r = Math.min(255, parseInt(hex.slice(1,3),16) + Math.round(255*amt))
-  const g = Math.min(255, parseInt(hex.slice(3,5),16) + Math.round(255*amt))
-  const b = Math.min(255, parseInt(hex.slice(5,7),16) + Math.round(255*amt))
-  return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('')
-}
-
 function hexToHsl(hex) {
   const r = parseInt(hex.slice(1,3),16) / 255
   const g = parseInt(hex.slice(3,5),16) / 255
@@ -78,20 +71,25 @@ export function applyTheme(bg, accent) {
   const orbGlow = washFrom(accent,  0, 0.4)
   const orbGrad = `linear-gradient(135deg, ${orbA}, ${orbB})`
 
+  // Soft orb — the canvas-toned variant. Used for empty-state "ready"
+  // moments where the orb is decorative rather than identity-bearing.
+  const orbSoftA    = washFrom(accent,   0, 0.30)
+  const orbSoftB    = washFrom(accent,  90, 0.20)
+  const orbSoftGlow = washFrom(accent,   0, 0.40)
+  const orbSoftGrad = `linear-gradient(135deg, ${orbSoftA}, ${orbSoftB})`
+
   el.textContent = `
     :root, html, body {
-      --color-surface-1: ${bg};
-      --color-surface-2: ${lighten(bg, 0.04)};
-      --color-surface-3: ${lighten(bg, 0.08)};
-      --color-border:    ${lighten(bg, 0.10)};
-      --color-accent:    ${accent};
-      --app-base:        ${bg};
-      --app-gradient:    ${gradient};
+      --color-accent:     ${accent};
+      --app-base:         ${bg};
+      --app-gradient:     ${gradient};
       --active-pill-grad: ${activePill};
       --active-pill-glow: ${pillGlow};
       --orb-grad:         ${orbGrad};
       --orb-glow:         ${orbGlow};
-      background-color:  ${bg};
+      --orb-soft-grad:    ${orbSoftGrad};
+      --orb-soft-glow:    ${orbSoftGlow};
+      background-color:   ${bg};
     }
   `
 }

@@ -24,7 +24,7 @@
      dos-arch is a chat-first interface — the sidebar is always present.
      Background gradient + grain live on body via layout.css; this root
      stays transparent so the canvas shows through. -->
-<div class="flex h-screen overflow-hidden text-text relative">
+<div class="flex h-screen overflow-hidden relative">
   <!-- Grain overlay — fixed so it stays put while panels scroll. -->
   <div
     class="fixed inset-0 opacity-[0.05] pointer-events-none mix-blend-overlay z-0"
