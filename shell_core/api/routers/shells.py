@@ -5,12 +5,13 @@ import hashlib
 import re
 import secrets
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import rerender_boot_document, rerender_shell_sessions, session_start_payload
+from shell_render import prompt_sections
 
 router = APIRouter(tags=["shells"])
 
@@ -93,11 +94,13 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
 
 # ── Shell directory / activation ──────────────────────────────────────────────
 
-@router.get("/shells/mine", summary="List shells assigned to the authenticated user")
+@router.get("/shells/mine", summary="List shells visible to the authenticated user — owned ∪ shared")
 def get_my_shells(request: Request, con = Depends(get_db)):
     user_id = getattr(request.state, "user_id", 1)
     rows = con.execute(
-        "SELECT shell_id, display_name, shortname, browser_chat FROM shells WHERE user_id=? AND shell_id > 0 ORDER BY shell_id",
+        "SELECT shell_id, display_name, shortname, browser_chat, is_shared "
+        "FROM shells WHERE shell_id > 0 AND (user_id=? OR is_shared=1) "
+        "ORDER BY shell_id",
         (user_id,)
     ).fetchall()
     return [dict(r) for r in rows]
@@ -144,6 +147,33 @@ def get_shell(shell_id: int, con = Depends(get_db)):
     if not row:
         raise HTTPException(404, "Shell not found")
     return dict(row)
+
+
+@router.get("/shells/{shell_id}/prompt-sections", summary="Typed (label, body) catalog of the shell's boot prompt — viewer read")
+def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    # Mirror runtime_ctx using the shell's most-recent active session if any —
+    # gives the viewer an honest snapshot of what would actually render. No
+    # session yet → placeholders and the default anthropic dialect.
+    sess = con.execute(
+        "SELECT cs.chat_session_id, s.active_archive_id, m.name AS model_name, m.tool_dialect "
+        "FROM chat_sessions cs JOIN shells s ON s.shell_id = cs.shell_id "
+        "LEFT JOIN models m ON m.model_id = cs.model_id "
+        "WHERE cs.shell_id=? AND cs.is_active=1 "
+        "ORDER BY cs.started_at DESC LIMIT 1",
+        (shell_id,),
+    ).fetchone()
+    runtime_ctx = {
+        "datetime":   datetime.now(),
+        "session_id": sess["chat_session_id"] if sess else "—",
+        "archive_id": (sess["active_archive_id"] if sess else None) or "—",
+        "shell_id":   shell_id,
+        "model":      (sess["model_name"] if sess else None),
+    }
+    dialect = (sess["tool_dialect"] if sess else None) or "anthropic"
+    sections = prompt_sections(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
+    return [{"label": label, "body": body} for label, body in sections]
 
 
 @router.get("/shells/{shell_id}/sessions/{session_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")

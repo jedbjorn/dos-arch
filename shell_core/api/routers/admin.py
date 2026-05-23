@@ -85,6 +85,19 @@ def admin_available_skills(request: Request, con = Depends(get_db)):
     return [dict(r) for r in rows]
 
 
+@router.get("/admin/skills/{skill_id}", summary="Admin: fetch one skill (incl. content) for preview")
+def admin_get_skill(request: Request, skill_id: int, con = Depends(get_db)):
+    _require_admin(request)
+    row = con.execute(
+        "SELECT skill_id, name, description, category, common, content "
+        "FROM skills WHERE skill_id=? AND is_deleted=0",
+        (skill_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Skill not found")
+    return dict(row)
+
+
 @router.get("/admin/tokens/available", summary="Admin: list available token-category skills")
 def admin_available_tokens(request: Request, con = Depends(get_db)):
     _require_admin(request)
