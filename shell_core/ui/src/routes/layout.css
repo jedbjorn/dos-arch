@@ -38,6 +38,12 @@
     radial-gradient(ellipse 80% 60% at 20% 0%,    rgba(99, 102, 241, 0.28), transparent),
     radial-gradient(ellipse 60% 80% at 100% 100%, rgba(236, 72, 153, 0.20), transparent),
     radial-gradient(ellipse 50% 50% at 60% 50%,   rgba(56, 189, 248, 0.14), transparent);
+
+  /* Active-pill highlight — also overridden by lib/theme.js to track
+     the selected accent. These defaults match the JSX reference so
+     SSR renders coherently before theme.js runs in the browser. */
+  --active-pill-grad: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(236, 72, 153, 0.10));
+  --active-pill-glow: rgba(99, 102, 241, 0.25);
 }
 
 html, body {
@@ -63,3 +69,14 @@ html, body {
 }
 .glass-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
 .glass-scroll::-webkit-scrollbar-corner { background: transparent; }
+
+/* Active-state pill — accent gradient + inset hairline ring + soft glow.
+   Reusable across tabs, picker rows, anything that needs a "selected" state
+   in the spatial-glass look. */
+.active-pill {
+  background: var(--active-pill-grad);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 24px var(--active-pill-glow);
+  color: white;
+}
