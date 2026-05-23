@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
+  --font-sans: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Mono', 'Menlo', monospace;
 
   --color-accent:  #0072FF;
@@ -12,6 +13,8 @@
   --color-priority-medium: #d4914a;
   --color-priority-low:    #4caf7d;
 
+  /* Legacy flat surfaces — kept for back-compat through the reskin waves.
+     Components migrate to the glass primitives below as each wave lands. */
   --color-surface-1:  #0f1117;
   --color-surface-2:  #161b24;
   --color-surface-3:  #1e2533;
@@ -19,10 +22,44 @@
   --color-text:       #e2e8f0;
   --color-text-dim:   #6b7080;
   --color-text-muted: #4a5260;
+
+  /* Spatial-glass primitives. */
+  --glass-bg:        rgba(255, 255, 255, 0.03);
+  --glass-bg-strong: rgba(255, 255, 255, 0.04);
+  --glass-blur:      24px;
+  --glass-blur-soft: 12px;
+  --hairline:        rgba(255, 255, 255, 0.08);
+  --hairline-soft:   rgba(255, 255, 255, 0.06);
+
+  /* Background canvas — runtime-overridden by lib/theme.js from
+     (bg, accent) so the gradient tracks the selected accent. */
+  --app-base:     #0a0a14;
+  --app-gradient:
+    radial-gradient(ellipse 80% 60% at 20% 0%,    rgba(99, 102, 241, 0.28), transparent),
+    radial-gradient(ellipse 60% 80% at 100% 100%, rgba(236, 72, 153, 0.20), transparent),
+    radial-gradient(ellipse 50% 50% at 60% 50%,   rgba(56, 189, 248, 0.14), transparent);
 }
 
 html, body {
-  background-color: var(--color-surface-1);
+  background-color: var(--app-base);
+  background-image: var(--app-gradient);
+  background-attachment: fixed;
   color: var(--color-text);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
 }
+
+/* Thin scrollbar that reads as part of the glass surface.
+   Apply `class="glass-scroll"` to any scrollable container. */
+.glass-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.10) transparent;
+}
+.glass-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.glass-scroll::-webkit-scrollbar-track { background: transparent; }
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+.glass-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+.glass-scroll::-webkit-scrollbar-corner { background: transparent; }
