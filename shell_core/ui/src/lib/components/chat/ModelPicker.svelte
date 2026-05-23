@@ -25,9 +25,9 @@
             {@const active = String(m.model_id) === selectedModel}
             <button
               onclick={() => onChange(String(m.model_id))}
-              class="w-full text-left px-3 py-2 rounded-xl text-[11px] font-mono transition leading-snug break-words
+              class="w-full text-left px-3 py-2 text-[11px] font-mono transition leading-snug break-words
                      {active
-                        ? 'active-pill'
+                        ? 'active-row'
                         : 'text-white/60 hover:text-white/90 hover:bg-white/[0.03]'}"
             >
               {modelLabel(m)}
