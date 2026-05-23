@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import hashlib
 import re
 import secrets
+import sqlite3
 import uuid
 from datetime import date, datetime
 
@@ -11,7 +12,7 @@ from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import rerender_boot_document, rerender_shell_sessions, session_start_payload
-from shell_render import prompt_sections
+from shell_render import prompt_sections, write_universal_block
 
 router = APIRouter(tags=["shells"])
 
@@ -173,7 +174,58 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
     }
     dialect = (sess["tool_dialect"] if sess else None) or "anthropic"
     sections = prompt_sections(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
-    return [{"label": label, "body": body} for label, body in sections]
+    return [
+        {"label": label, "body": body, "scope": scope, "editable": label in _EDITABLE_SECTIONS}
+        for label, body, scope in sections
+    ]
+
+
+# Which prompt-section labels accept text-blob edits via the viewer. Anything
+# outside this set is read-only at the API surface — including LAWS (changes
+# flow through the laws_management skill), assignment-based sections
+# (PROJECTS/TOOLS/SKILLS — pickers, not text), runtime-computed sections
+# (BOOT, OUTPUT SHAPE), append-only stores (SEED, L&S, DECISIONS), and
+# IDENTITY (a five-field form, not a single body).
+_UNIVERSAL_LABEL_TO_KEY = {
+    "SYSTEM OVERRIDE": "SYSTEM_OVERRIDE",
+    "DEFINITIONS":     "DEFINITIONS",
+    "MEMORY PROTOCOL": "MEMORY_PROTOCOL",
+    "PROHIBITIONS":    "PROHIBITIONS",
+    "COMMUNICATION":   "COMMUNICATION",
+}
+_SHELL_LABEL_TO_COLUMN = {
+    "OPERATING CONTEXT": "connections",
+    "CURRENT STATE":     "current_state",
+}
+_EDITABLE_SECTIONS = set(_UNIVERSAL_LABEL_TO_KEY) | set(_SHELL_LABEL_TO_COLUMN)
+
+
+class PromptSectionWrite(BaseModel):
+    body: str
+
+
+@router.put("/shells/{shell_id}/prompt-sections/{label}", summary="Edit one prompt section's body — universal blocks fan out to all shells; per-shell labels write the shell's column.")
+def put_shell_prompt_section(shell_id: int, label: str, payload: PromptSectionWrite, con = Depends(get_db)):
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    if label not in _EDITABLE_SECTIONS:
+        raise HTTPException(400, f"Section {label!r} is not editable via this endpoint")
+    body = payload.body
+    if label in _UNIVERSAL_LABEL_TO_KEY:
+        # Universal: rewrite the marker block in catalog_universal.md. Every
+        # shell's next render picks the change up — render_universal re-reads
+        # the file on each call.
+        write_universal_block(_UNIVERSAL_LABEL_TO_KEY[label], body)
+        return {"label": label, "scope": "universal", "ok": True}
+    # Per-shell: write the corresponding shells.* column. CURRENT STATE has a
+    # BEFORE UPDATE trigger enforcing the 280-char cap — surface that as a 400.
+    column = _SHELL_LABEL_TO_COLUMN[label]
+    try:
+        con.execute(f"UPDATE shells SET {column}=? WHERE shell_id=?", (body, shell_id))
+        con.commit()
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(400, str(e))
+    return {"label": label, "scope": "shell", "ok": True}
 
 
 @router.get("/shells/{shell_id}/sessions/{session_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")

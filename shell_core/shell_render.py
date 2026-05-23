@@ -129,6 +129,43 @@ def render_universal() -> dict[str, str]:
     return {k: "\n".join(v).strip() for k, v in blocks.items()}
 
 
+def write_universal_block(key: str, body: str) -> None:
+    """Rewrite a single `<!-- @@ KEY @@ -->` block in catalog_universal.md,
+    preserving the file's header comment, marker lines, and every other block
+    exactly. The new body is sandwiched as: marker line, blank line, stripped
+    body, blank line, then the next marker (or EOF). Raises ValueError if KEY
+    is unknown."""
+    text = _UNIVERSAL_PATH.read_text()
+    lines = text.splitlines()
+    target_idx = None
+    next_idx = len(lines)
+    for i, line in enumerate(lines):
+        m = _UNIVERSAL_MARKER.match(line)
+        if not m:
+            continue
+        if m.group(1) == key:
+            target_idx = i
+        elif target_idx is not None:
+            next_idx = i
+            break
+    if target_idx is None:
+        raise ValueError(f"unknown universal block: {key}")
+    new_body = body.strip()
+    # File convention: marker line, body lines, single blank line, next marker.
+    # No blank between marker and body. Final block has no trailing blank.
+    rebuilt = (
+        lines[: target_idx + 1]
+        + (new_body.splitlines() if new_body else [])
+        + ([""] if next_idx < len(lines) else [])
+        + lines[next_idx:]
+    )
+    # Preserve trailing newline if the original had one.
+    out = "\n".join(rebuilt)
+    if text.endswith("\n") and not out.endswith("\n"):
+        out += "\n"
+    _UNIVERSAL_PATH.write_text(out)
+
+
 def render_boot_context(runtime_ctx: dict) -> str:
     """Section ⌂ — wall-clock + session metadata, computed by the caller at
     render time. A local model has no clock, so this section is its only one.
@@ -335,10 +372,13 @@ def prompt_sections(
     *,
     dialect: str = "anthropic",
     runtime_ctx: dict,
-) -> list[tuple[str, str]]:
-    """The typed (label, body) catalog (spec §02) for a shell, in render order.
-    SYSTEM OVERRIDE leads, then ⌂/A–O. Pure read — same composition path as
-    `assemble_catalog`; the viewer reads structure straight from this list."""
+) -> list[tuple[str, str, str]]:
+    """The typed (label, body, scope) catalog (spec §02) for a shell, in render
+    order. SYSTEM OVERRIDE leads, then ⌂/A–O. `scope` is "universal" for sections
+    whose body is shared across all shells (same body fans out to every shell —
+    edits made here should propagate) and "shell" for sections derived from this
+    shell's identity, assignments, or runtime. Pure read — same composition path
+    as `assemble_catalog`; the viewer reads structure straight from this list."""
     shell = con.execute(
         "SELECT display_name, shortname, partner, role, mandate, "
         "current_state, connections FROM shells WHERE shell_id=?",
@@ -348,25 +388,27 @@ def prompt_sections(
         raise ValueError(f"shell {shell_id} not found")
     universal = render_universal()
 
+    # OUTPUT SHAPE is dialect-shaped, not shell-shaped — its body is identical
+    # for every shell on a given dialect, so it groups with universals.
     return [
-        ("SYSTEM OVERRIDE",   universal["SYSTEM_OVERRIDE"]),
-        ("BOOT",              render_boot_context(runtime_ctx)),
-        ("IDENTITY",          render_identity(shell)),
-        ("DEFINITIONS",       universal["DEFINITIONS"]),
-        ("OPERATING CONTEXT", render_operating_context(shell)),
-        ("ACTIVE PROJECTS",   render_active_projects(con, shell_id)),
-        ("TOOLS",             render_tools(con, shell_id, dialect)),
-        ("SKILLS AVAILABLE",  render_skills(con, shell_id)),
-        ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"]),
-        ("CURRENT STATE",     render_current_state(shell)),
-        ("SEED",              render_seed(con, shell_id)),
-        ("LESSONS & STANCES", render_lns(con, shell_id)),
-        ("RECENT DECISIONS",  render_recent_decisions(con, shell_id)),
-        ("OPEN FLAGS",        render_flags_pointer(con, shell_id)),
-        ("PROHIBITIONS",      universal["PROHIBITIONS"]),
-        ("LAWS",              universal["LAWS"]),
-        ("COMMUNICATION",     universal["COMMUNICATION"]),
-        ("OUTPUT SHAPE",      render_output_shape(dialect)),
+        ("SYSTEM OVERRIDE",   universal["SYSTEM_OVERRIDE"],          "universal"),
+        ("BOOT",              render_boot_context(runtime_ctx),      "shell"),
+        ("IDENTITY",          render_identity(shell),                "shell"),
+        ("DEFINITIONS",       universal["DEFINITIONS"],              "universal"),
+        ("OPERATING CONTEXT", render_operating_context(shell),       "shell"),
+        ("ACTIVE PROJECTS",   render_active_projects(con, shell_id), "shell"),
+        ("TOOLS",             render_tools(con, shell_id, dialect),  "shell"),
+        ("SKILLS AVAILABLE",  render_skills(con, shell_id),          "shell"),
+        ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"],          "universal"),
+        ("CURRENT STATE",     render_current_state(shell),           "shell"),
+        ("SEED",              render_seed(con, shell_id),            "shell"),
+        ("LESSONS & STANCES", render_lns(con, shell_id),             "shell"),
+        ("RECENT DECISIONS",  render_recent_decisions(con, shell_id),"shell"),
+        ("OPEN FLAGS",        render_flags_pointer(con, shell_id),   "shell"),
+        ("PROHIBITIONS",      universal["PROHIBITIONS"],             "universal"),
+        ("LAWS",              universal["LAWS"],                     "universal"),
+        ("COMMUNICATION",     universal["COMMUNICATION"],             "universal"),
+        ("OUTPUT SHAPE",      render_output_shape(dialect),          "universal"),
     ]
 
 
@@ -391,4 +433,4 @@ def assemble_catalog(
     sections = prompt_sections(
         con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx,
     )
-    return "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
+    return "\n\n".join(f"## {label} ##\n{body}" for label, body, _scope in sections)

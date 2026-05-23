@@ -5,8 +5,8 @@
   // skill viewer. (redline: shared/redlines/Shells Tab.png)
   import { onMount } from 'svelte'
   import {
-    getMyShells, getShell, getShellPromptSections,
-    getAvailableSkills, getShellSkills, getSkill,
+    getMyShells, getShell, getShellPromptSections, putShellPromptSection,
+    getAvailableSkills, getShellSkills, getSkill, updateSkill,
     addShellSkill, removeShellSkill,
   } from '$lib/api.js'
   import MarkdownBlock from '$lib/components/MarkdownBlock.svelte'
@@ -28,11 +28,29 @@
   let loading    = $state(false)
   let error      = $state('')
 
+  // Unified edit modal — one body editor for prompt-section blocks and skill
+  // content. Null = closed. Open shape: { title, draft, saving, save() }.
+  let editModal = $state(null)
+
+  // Rough token estimator — BPE-ish, ~15% off for English; the tilde in the
+  // header makes the approximation explicit. No bundled tokenizer.
+  function approxTokens(s) { return Math.ceil((s?.length ?? 0) / 4) }
+
+  // Reparent an element to document.body. The shells page mounts inside a
+  // `relative z-10` wrapper that creates a stacking context, trapping any
+  // child z-index. Modals need to escape that context to paint above the
+  // ChatSidebar sibling (which lives in the parent stacking context).
+  function portal(node) {
+    document.body.appendChild(node)
+    return { destroy() { node.parentNode?.removeChild(node) } }
+  }
+
   async function loadShellData(id) {
     if (!id) return
     loading = true
     error = ''
     openLabels = new Set()
+    editModal = null
     activeSkillId = null
     activeSkill = null
     try {
@@ -59,12 +77,62 @@
 
   async function selectSkill(skill_id) {
     activeSkillId = skill_id
+    if (editModal?.kind === 'skill') editModal = null
     try {
       activeSkill = await getSkill(skill_id)
     } catch (e) {
       activeSkill = null
       error = String(e.message ?? e)
     }
+  }
+
+  function openSectionEdit(sec) {
+    error = ''
+    editModal = {
+      kind:   'section',
+      title:  sec.label,
+      draft:  sec.body ?? '',
+      saving: false,
+      save:   async () => {
+        if (!shellId) return
+        editModal.saving = true
+        try {
+          await putShellPromptSection(shellId, sec.label, editModal.draft)
+          sections  = await getShellPromptSections(shellId)
+          editModal = null
+        } catch (e) {
+          error = String(e.message ?? e)
+          editModal.saving = false
+        }
+      },
+    }
+  }
+
+  function openSkillEdit() {
+    if (!activeSkill) return
+    error = ''
+    editModal = {
+      kind:   'skill',
+      title:  activeSkill.name,
+      draft:  activeSkill.content ?? '',
+      saving: false,
+      save:   async () => {
+        editModal.saving = true
+        try {
+          await updateSkill(activeSkill.skill_id, { content: editModal.draft })
+          activeSkill = await getSkill(activeSkill.skill_id)
+          editModal   = null
+        } catch (e) {
+          error = String(e.message ?? e)
+          editModal.saving = false
+        }
+      },
+    }
+  }
+
+  function closeModal() {
+    if (editModal?.saving) return  // don't yank state mid-save
+    editModal = null
   }
 
   async function toggleAssigned(skill_id) {
@@ -119,12 +187,21 @@
     caption: s.shortname ?? null,
     suffix:  s.is_shared ? '(shared)' : null,
   })))
+
+  // Harness Prompt is split into two groups — General (universal — same body
+  // for every shell; edits should fan out) and Shell Specific (derived from
+  // this shell's row, assignments, or runtime). Within each group the API's
+  // render order is preserved so the boot composition stays legible.
+  const groupedSections = $derived([
+    { title: 'General',        items: sections.filter(s => s.scope === 'universal') },
+    { title: 'Shell Specific', items: sections.filter(s => s.scope === 'shell') },
+  ])
 </script>
 
 <!-- Sticky identity sub-header — sits below the TopBar (h-[52px]).
      Glass backdrop so content scrolls cleanly under it. -->
 <header
-  class="sticky top-[52px] z-20 px-6 py-4 flex flex-col gap-1 border-b border-white/[0.08]"
+  class="sticky top-0 z-20 px-6 py-4 flex flex-col gap-1 border-b border-white/[0.08]"
   style="background: rgba(255, 255, 255, 0.02);
          backdrop-filter: blur(24px);
          -webkit-backdrop-filter: blur(24px);"
@@ -161,23 +238,44 @@
       {#if loading && !sections.length}
         <div class="text-white/40 text-xs px-4 py-3">Loading…</div>
       {/if}
-      {#each sections as sec, i}
-        {@const open = openLabels.has(sec.label)}
-        <div class={i > 0 ? 'border-t border-white/[0.06]' : ''}>
-          <button
-            type="button"
-            onclick={() => toggle(sec.label)}
-            class="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[12px] font-mono font-semibold tracking-wider text-white/90 hover:bg-white/[0.03] transition"
+      {#each groupedSections as group, gi}
+        {#if group.items.length}
+          <div
+            class="px-4 py-1.5 text-[10px] uppercase tracking-[0.15em] text-white/40 bg-white/[0.02]
+                   {gi > 0 ? 'border-t border-white/[0.06]' : ''}"
           >
-            <span class="text-white/40 w-3 text-xs">{open ? '▾' : '▸'}</span>
-            <span class="uppercase">{sec.label}</span>
-          </button>
-          {#if open}
-            <div class="px-5 pb-4 pt-3 border-t border-white/[0.06] text-[12px]">
-              <MarkdownBlock text={sec.body} />
+            {group.title}
+          </div>
+          {#each group.items as sec}
+            {@const open = openLabels.has(sec.label)}
+            <div class="border-t border-white/[0.06]">
+              <button
+                type="button"
+                onclick={() => toggle(sec.label)}
+                class="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[12px] font-mono font-semibold tracking-wider text-white/90 hover:bg-white/[0.03] transition"
+              >
+                <span class="text-white/40 w-3 text-xs">{open ? '▾' : '▸'}</span>
+                <span class="uppercase">{sec.label}</span>
+              </button>
+              {#if open}
+                <div class="px-5 pb-4 pt-3 border-t border-white/[0.06] text-[12px] relative">
+                  <!-- Pencil opens the edit modal; hidden for non-editable
+                       sections (LAWS, pickers, append-only, BOOT, etc). -->
+                  {#if sec.editable}
+                    <button
+                      type="button"
+                      aria-label="Edit"
+                      title="Edit"
+                      onclick={() => openSectionEdit(sec)}
+                      class="absolute top-2 right-3 px-2 py-0.5 text-white/40 hover:text-white text-xs leading-none transition"
+                    >✎</button>
+                  {/if}
+                  <MarkdownBlock text={sec.body} />
+                </div>
+              {/if}
             </div>
-          {/if}
-        </div>
+          {/each}
+        {/if}
       {/each}
     </div>
   </section>
@@ -186,11 +284,11 @@
   <section class="flex flex-col gap-2">
     <div class="flex items-center gap-3 px-1">
       <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40 shrink-0">Skill Viewer</h2>
-      <div class="relative ml-auto" bind:this={skillBtnRef}>
+      <div class="relative" bind:this={skillBtnRef}>
         <button
           type="button"
           onclick={() => skillsOpen = !skillsOpen}
-          class="flex items-center gap-2 min-w-[18rem] px-3 py-1.5 rounded-full border text-xs transition
+          class="flex items-center gap-2 w-40 px-3 py-1.5 rounded-full border text-xs transition
                  {skillsOpen
                     ? 'text-white border-white/20 bg-white/[0.04]'
                     : 'text-white/70 hover:text-white border-white/[0.10] hover:border-white/20'}"
@@ -210,7 +308,7 @@
         {#if skillsOpen && allSkills.length}
           <!-- Solid medium-grey popover — same treatment as SkillsPopover + GlassDropdown. -->
           <div
-            class="absolute top-full right-0 mt-2 w-max max-w-[80vw] max-h-96 overflow-y-auto rounded-2xl border py-2 z-40"
+            class="absolute top-full left-0 mt-2 w-max max-w-[80vw] max-h-96 overflow-y-auto rounded-2xl border py-2 z-40"
             style="background: var(--menu-bg);
                    border-color: var(--menu-border);
                    box-shadow: var(--menu-shadow);"
@@ -242,6 +340,16 @@
           </div>
         {/if}
       </div>
+      <!-- Right-aligned edit affordance — opens the unified edit modal. -->
+      {#if activeSkill}
+        <button
+          type="button"
+          aria-label="Edit"
+          title="Edit skill content"
+          onclick={openSkillEdit}
+          class="ml-auto px-2 py-0.5 text-white/40 hover:text-white text-xs leading-none transition"
+        >✎</button>
+      {/if}
     </div>
     <div
       class="rounded-2xl border border-white/[0.08] p-4 min-h-[12rem] text-[12px]"
@@ -260,4 +368,61 @@
     </div>
   </section>
 </div>
+
+<!-- Unified edit modal — 650×700, fixed dialog with an overlay that cancels
+     on click. Save bottom-left, Cancel bottom-right per spec. Header carries
+     the display name + a live ~tokens / chars readout. -->
+{#if editModal}
+  <div
+    use:portal
+    class="fixed inset-0 z-50 flex items-center justify-center"
+    style="background: rgba(0,0,0,0.55);"
+    onmousedown={closeModal}
+    role="presentation"
+  >
+    <div
+      class="flex flex-col rounded-2xl border border-white/[0.10] shadow-2xl"
+      style="width: 650px; height: 700px; background: var(--menu-bg);"
+      onmousedown={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-modal="true"
+      aria-label={editModal.title}
+      tabindex="-1"
+    >
+      <!-- Header — subheading-styled name on the left, live counter on the right. -->
+      <div class="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/[0.08]">
+        <div class="text-sm font-medium text-white/90 truncate pr-3">{editModal.title}</div>
+        <div class="text-[11px] font-mono text-white/40 shrink-0">
+          ~{approxTokens(editModal.draft).toLocaleString()} tokens
+          / {editModal.draft.length.toLocaleString()} chars
+        </div>
+      </div>
+      <!-- Body — single textarea fills the remaining height. -->
+      <div class="flex-1 min-h-0 p-4">
+        <!-- svelte-ignore a11y_autofocus -->
+        <textarea
+          bind:value={editModal.draft}
+          disabled={editModal.saving}
+          autofocus
+          class="w-full h-full px-3 py-2 rounded-lg bg-black/30 border border-white/[0.08] focus:border-white/20 focus:outline-none text-[12px] font-mono text-white/90 resize-none"
+        ></textarea>
+      </div>
+      <!-- Footer — Save bottom-LEFT, Cancel bottom-RIGHT (per spec). -->
+      <div class="flex items-center justify-between px-5 pb-4 pt-2">
+        <button
+          type="button"
+          onclick={editModal.save}
+          disabled={editModal.saving}
+          class="px-4 py-1.5 rounded-full text-xs font-medium border border-white/20 text-white hover:bg-white/[0.06] transition disabled:opacity-40"
+        >{editModal.saving ? 'Saving…' : 'Save'}</button>
+        <button
+          type="button"
+          onclick={closeModal}
+          disabled={editModal.saving}
+          class="px-4 py-1.5 rounded-full text-xs text-white/70 hover:text-white border border-white/[0.10] hover:border-white/20 transition disabled:opacity-40"
+        >Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
 

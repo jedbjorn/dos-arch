@@ -14,6 +14,10 @@
   function isActive(href) { return $page.url.pathname.startsWith(href) }
 
   let drawerOpen = $state(false)
+
+  // Placeholder until auth lands — derive from the logged-in user then.
+  // Initials default keeps the avatar legible without any backing data.
+  const userInitials = '—'
 </script>
 
 <header
@@ -48,6 +52,18 @@
       </button>
     {/each}
   </nav>
+
+  <!-- Avatar — right side, placeholder until auth ships. The aria-label
+       and title carry an explicit 'sign-in' affordance hint for future
+       wiring; for now the button is inert. -->
+  <button
+    type="button"
+    aria-label="Account"
+    title="Account (placeholder — auth not wired)"
+    class="ml-auto w-8 h-8 rounded-full border border-white/[0.10] flex items-center justify-center text-[11px] font-medium text-white/70 hover:text-white hover:border-white/20 transition"
+  >
+    {userInitials}
+  </button>
 </header>
 
 <SideDrawer bind:open={drawerOpen} />
