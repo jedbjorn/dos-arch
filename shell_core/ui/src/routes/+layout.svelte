@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { theme, applyTheme, loadThemeFromApi } from '$lib/theme.js'
   import TopBar from '$lib/components/TopBar.svelte'
-  import ChatSidebar from '$lib/components/ChatSidebar.svelte'
+  import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte'
 
   onMount(() => {
     const t = $theme
