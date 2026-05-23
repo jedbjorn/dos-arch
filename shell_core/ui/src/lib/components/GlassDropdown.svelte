@@ -84,13 +84,12 @@
   {#if open}
     <div
       role="listbox"
-      class="absolute top-full mt-2 min-w-full max-h-96 overflow-y-auto
-             rounded-2xl border border-white/[0.10] py-2 z-40
+      class="absolute top-full mt-2 w-max max-w-[80vw] max-h-96 overflow-y-auto
+             rounded-2xl border py-2 z-40
              {align === 'right' ? 'right-0' : 'left-0'}"
-      style="background: rgba(20, 20, 30, 0.85);
-             backdrop-filter: blur(24px);
-             -webkit-backdrop-filter: blur(24px);
-             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);"
+      style="background: var(--menu-bg);
+             border-color: var(--menu-border);
+             box-shadow: var(--menu-shadow);"
     >
       {#each items as it}
         {@const active = it.value === value}
@@ -99,17 +98,17 @@
           role="option"
           aria-selected={active}
           onclick={() => pick(it.value)}
-          class="w-full text-left flex flex-col px-4 py-2 transition
-                 {active ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'}"
+          class="w-full text-left flex flex-col px-4 py-2 transition whitespace-nowrap
+                 {active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}"
         >
           <div class="flex items-baseline gap-2">
-            <span class="text-sm text-white/90 truncate flex-1">{it.label}</span>
+            <span class="text-sm text-white/90 flex-1">{it.label}</span>
             {#if it.suffix}
               <span class="text-[10px] text-white/40 shrink-0">{it.suffix}</span>
             {/if}
           </div>
           {#if it.caption}
-            <span class="text-[10px] font-mono text-white/40 mt-0.5 truncate">{it.caption}</span>
+            <span class="text-[10px] font-mono text-white/40 mt-0.5">{it.caption}</span>
           {/if}
         </button>
       {/each}

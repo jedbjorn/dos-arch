@@ -43,6 +43,13 @@
   /* Soft orb — the canvas-toned variant for decorative "ready" moments. */
   --orb-soft-grad: linear-gradient(135deg, rgba(129, 140, 248, 0.30), rgba(244, 114, 182, 0.20));
   --orb-soft-glow: rgba(99, 102, 241, 0.40);
+
+  /* Dropdown menus — solid medium-grey surface, no transparency or blur.
+     Used by GlassDropdown, SkillsPopover, and the /shells skill picker
+     so all three popover menus stay visually identical. */
+  --menu-bg:     rgb(56, 56, 64);
+  --menu-border: rgba(255, 255, 255, 0.12);
+  --menu-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 html, body {

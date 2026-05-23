@@ -208,20 +208,19 @@
           </svg>
         </button>
         {#if skillsOpen && allSkills.length}
-          <!-- Glass popover — same heavy-glass treatment as SkillsPopover. -->
+          <!-- Solid medium-grey popover — same treatment as SkillsPopover + GlassDropdown. -->
           <div
-            class="absolute top-full right-0 mt-2 min-w-full max-h-96 overflow-y-auto                   rounded-2xl border border-white/[0.10] py-2 z-40"
-            style="background: rgba(20, 20, 30, 0.85);
-                   backdrop-filter: blur(24px);
-                   -webkit-backdrop-filter: blur(24px);
-                   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);"
+            class="absolute top-full right-0 mt-2 w-max max-w-[80vw] max-h-96 overflow-y-auto rounded-2xl border py-2 z-40"
+            style="background: var(--menu-bg);
+                   border-color: var(--menu-border);
+                   box-shadow: var(--menu-shadow);"
           >
             {#each allSkills as sk}
               {@const assigned = assignedIds.has(sk.skill_id)}
               {@const isActive = sk.skill_id === activeSkillId}
               <div
-                class="flex items-center px-1 transition
-                       {isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'}"
+                class="flex items-center px-1 transition whitespace-nowrap
+                       {isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}"
               >
                 <button
                   type="button"
