@@ -13,16 +13,6 @@
   --color-priority-medium: #d4914a;
   --color-priority-low:    #4caf7d;
 
-  /* Legacy flat surfaces — kept for back-compat through the reskin waves.
-     Components migrate to the glass primitives below as each wave lands. */
-  --color-surface-1:  #0f1117;
-  --color-surface-2:  #161b24;
-  --color-surface-3:  #1e2533;
-  --color-border:     #2a3040;
-  --color-text:       #e2e8f0;
-  --color-text-dim:   #6b7080;
-  --color-text-muted: #4a5260;
-
   /* Spatial-glass primitives. */
   --glass-bg:        rgba(255, 255, 255, 0.03);
   --glass-bg-strong: rgba(255, 255, 255, 0.04);
@@ -49,13 +39,17 @@
      Also overridden by lib/theme.js. */
   --orb-grad: linear-gradient(135deg, #818cf8, #f472b6);
   --orb-glow: rgba(99, 102, 241, 0.4);
+
+  /* Soft orb — the canvas-toned variant for decorative "ready" moments. */
+  --orb-soft-grad: linear-gradient(135deg, rgba(129, 140, 248, 0.30), rgba(244, 114, 182, 0.20));
+  --orb-soft-glow: rgba(99, 102, 241, 0.40);
 }
 
 html, body {
   background-color: var(--app-base);
   background-image: var(--app-gradient);
   background-attachment: fixed;
-  color: var(--color-text);
+  color: rgba(255, 255, 255, 0.90);
   font-family: var(--font-sans);
 }
 
@@ -84,4 +78,21 @@ html, body {
     inset 0 0 0 1px rgba(255, 255, 255, 0.12),
     0 0 24px var(--active-pill-glow);
   color: white;
+}
+
+/* Focus ring — keyboard-only, subtle white outline. Applied globally to
+   anything focusable; suppresses on mouse interactions so it doesn't read
+   as a permanent decoration. */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+  border-radius: inherit;
+}
+/* Don't double-ring the active pill — its inset ring already does the job;
+   add a slightly stronger outer ring to signal focus. */
+.active-pill:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.20),
+    0 0 0 2px rgba(255, 255, 255, 0.35),
+    0 0 24px var(--active-pill-glow);
 }
