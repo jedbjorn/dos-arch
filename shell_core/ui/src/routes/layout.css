@@ -90,11 +90,13 @@ html {
 
 /* Focus ring — keyboard-only, subtle white outline. Applied globally to
    anything focusable; suppresses on mouse interactions so it doesn't read
-   as a permanent decoration. */
+   as a permanent decoration. Box-shadow naturally follows the focused
+   element's own border-radius — no `border-radius: inherit` needed, and
+   inheriting it would clip overflow content (e.g. textareas) at the
+   parent's rounded corners. */
 :focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
-  border-radius: inherit;
 }
 /* Form controls live inside styled glass containers — give the container
    the focus indication via :focus-within instead, so the ring frames the
