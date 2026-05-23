@@ -466,6 +466,19 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
         # Adapter retries already exhausted.
         print(f"  provider API error after retries: {e}", file=sys.stderr, flush=True)
         final_text = "(I'm currently overloaded — please retry in a moment.)"
+        # Self-healing classification: if Ollama said this model doesn't
+        # accept tools, flip the registry bit so it drops out of the picker
+        # without waiting for the next modelsync tick (or for the user to
+        # hit it again). The static /api/show classification can be stale
+        # or wrong; the runtime 400 is ground truth. See migration 034.
+        if "does not support tools" in str(e):
+            con.execute(
+                "UPDATE models SET supports_tools=0 WHERE name=?",
+                (model_name,),
+            )
+            con.commit()
+            print(f"  classifier: {model_name} marked supports_tools=0 "
+                  f"(runtime tool-support failure)", file=sys.stderr, flush=True)
 
     if not final_text:
         final_text = "(empty reply)"

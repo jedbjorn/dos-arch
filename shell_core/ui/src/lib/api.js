@@ -45,6 +45,7 @@ export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${
 // ── Browser chat ─────────────────────────────────────────────────────────────
 
 export const getModels             = ()                => get('/models')
+export const routeModelToAgents    = (model_id)        => post(`/models/${model_id}/route-to-agents`)
 export const getMyShells           = ()                => get('/shells/mine')
 export const activateShell         = (shell_id)        => patch(`/shells/${shell_id}/activate`)
 export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)

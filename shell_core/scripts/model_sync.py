@@ -36,6 +36,7 @@ Env:
 import argparse
 import json
 import os
+import re
 import socket
 import sqlite3
 import sys
@@ -49,6 +50,44 @@ DEFAULT_DB = ROOT / "shell_core" / "shell_db.db"
 
 VRAM_TIERS = [8, 12, 24, 32, 48, 128]
 VRAM_HEADROOM_GB = 1.5  # KV cache + runtime overhead on top of weights
+
+# ── Template classifier ──────────────────────────────────────────────────────
+#
+# Some Ollama templates (hermes3-class) emit user-supplied System content only
+# in the *else* branch of a `.Tools` conditional — when the dispatcher passes
+# tools, those templates silently drop the substrate boot prompt before the
+# model sees it. We detect that pattern by static regex over the template
+# string from /api/show; no canary probe, no model load.
+#
+# The regex is whitespace-tolerant and matches the canonical Go-template
+# shape used by hermes3:
+#   {{- if .Tools }} … {{- else if .System }} … {{- end }}
+# False-positive risk (a template that has *another* System branch elsewhere
+# in the file) exists but is small in practice. The UI carries a manual
+# "Move to agents" toggle as the safety net for any pattern we don't catch.
+_DROPS_SYSTEM_RE = re.compile(
+    r"\{\{-?\s*if\s+\.Tools\s*\}\}.*?"
+    r"\{\{-?\s*else\s+if\s+\.System\s*\}\}",
+    re.DOTALL,
+)
+
+
+def _bool_to_int(v: bool | None) -> int | None:
+    """SQLite stores classification flags as 1/0/NULL — keep None passing
+    through so an unknown classification lands as NULL, not 0."""
+    return None if v is None else (1 if v else 0)
+
+
+def _accepts_substrate_system(template: str | None) -> bool | None:
+    """Classify a template's stance on System + Tools. Returns True iff the
+    template emits user-supplied System content unconditionally (or under
+    Tools); False iff it drops System in the Tools branch (hermes-class).
+    Returns None when the template string is missing — that's "unknown",
+    written to the DB as NULL so the classifier re-evaluates next tick."""
+    if not template:
+        return None
+    return _DROPS_SYSTEM_RE.search(template) is None
+
 
 # name-prefix -> provider. First matching prefix wins.
 _PROVIDER_MAP = [
@@ -150,7 +189,11 @@ def sync(db_path: Path, user_id: int) -> None:
     try:
         hw_id = resolve_hardware_id(con, user_id)
         seen: list[str] = []
-        tools_by_name: dict[str, bool] = {}
+        # Per-name classification gathered from /api/show — used by
+        # promote_local_models to populate models.supports_tools and
+        # models.accepts_substrate_system. None means "unknown" → written
+        # as NULL so the classifier retries next tick.
+        classification: dict[str, dict[str, bool | None]] = {}
         inserted = updated = 0
 
         for m in models:
@@ -159,13 +202,21 @@ def sync(db_path: Path, user_id: int) -> None:
             details = m.get("details") or {}
             size_gb = round(m["size"] / 1024**3, 2) if m.get("size") else None
 
+            show: dict | None
             try:
                 show = _api(base, "/api/show", {"name": name})
             except (urllib.error.URLError, OSError):
+                show = None
+            if show is None:
+                classification[name] = {"supports_tools": None,
+                                        "accepts_substrate_system": None}
                 show = {}
-            # A /api/show failure leaves the model marked as no-tools so it
-            # stays out of the picker — better to hide than to fail a turn.
-            tools_by_name[name] = "tools" in (show.get("capabilities") or [])
+            else:
+                classification[name] = {
+                    "supports_tools": "tools" in (show.get("capabilities") or []),
+                    "accepts_substrate_system":
+                        _accepts_substrate_system(show.get("template")),
+                }
 
             rec = {
                 "hardware_id": hw_id,
@@ -224,7 +275,7 @@ def sync(db_path: Path, user_id: int) -> None:
         removed = cur.rowcount
 
         promoted, reactivated, deactivated = promote_local_models(
-            con, hw_id, base, tools_by_name)
+            con, hw_id, base, classification)
         con.commit()
     finally:
         con.close()
@@ -235,19 +286,26 @@ def sync(db_path: Path, user_id: int) -> None:
           f"{deactivated} deactivated.")
 
 
-def promote_local_models(con: sqlite3.Connection, hw_id: int, base: str,
-                         tools_by_name: dict[str, bool]) -> tuple[int, int, int]:
+def promote_local_models(
+    con: sqlite3.Connection, hw_id: int, base: str,
+    classification: dict[str, dict[str, bool | None]],
+) -> tuple[int, int, int]:
     """Mirror this host's installed Ollama models into the `models` registry
     so they are dispatchable (CC-62). Each installed model becomes a
-    provider='local' row whose status is gated on tool-call capability:
-    Ollama advertises `tools` in /api/show.capabilities → active, else
-    inactive (visible in the registry, hidden from the picker). A local
-    registry row whose model is no longer installed is flipped to inactive
-    too (kept for history, FK-safe).
+    provider='local' row whose `status` and classification flags reflect
+    what /api/show told us:
 
-    Single Ollama host is assumed — the down-sweep reconciles every
-    provider='local' row against this host's installed set. Scope this by
-    endpoint/hardware if a second Ollama host is ever added.
+      - `supports_tools=1` only when `capabilities` contains `"tools"`;
+      - `accepts_substrate_system=1` only when the template doesn't drop
+        user-supplied System under Tools (hermes-class is 0);
+      - row goes `status='active'` iff *both* flags are 1; otherwise
+        `inactive` (visible in the registry as a record of what was
+        filtered, hidden from the picker, routable to the agent surface).
+
+    A flag stays NULL when /api/show is unreachable for that model on this
+    tick — the classifier retries on every watch tick that still finds a
+    NULL, so a flaky probe self-heals. NULL classifications keep the row
+    out of the picker (the API filter requires =1, not "not =0").
 
     Returns (promoted, reactivated, deactivated).
     """
@@ -263,10 +321,26 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int, base: str,
     for name, ctx, vram in installed:
         seen.append(name)
         prior = con.execute(
-            "SELECT status FROM models WHERE name=?", (name,)
+            "SELECT status, supports_tools, accepts_substrate_system "
+            "FROM models WHERE name=?",
+            (name,),
         ).fetchone()
-        has_tools = tools_by_name.get(name, False)
-        target_status = "active" if has_tools else "inactive"
+        prior_status, prior_st, prior_as = (
+            prior if prior is not None else (None, None, None)
+        )
+
+        cls = classification.get(name) or {}
+        fresh_st = _bool_to_int(cls.get("supports_tools"))
+        fresh_as = _bool_to_int(cls.get("accepts_substrate_system"))
+        # Classifications are sticky once written — by the classifier OR by
+        # the manual "Move to agents" UI. Fresh reads only fill in NULLs.
+        # Without this, a user-set 0 would be overwritten back to 1 on the
+        # next watch tick if the template regex disagreed.
+        eff_st = prior_st if prior_st is not None else fresh_st
+        eff_as = prior_as if prior_as is not None else fresh_as
+
+        substrate_capable = eff_st == 1 and eff_as == 1
+        target_status = "active" if substrate_capable else "inactive"
         # display_name and auth_ref are kept out of the UPDATE branch so a
         # human-tuned registry row keeps its label.
         con.execute(
@@ -274,24 +348,27 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int, base: str,
             INSERT INTO models
                 (name, display_name, provider, endpoint, auth_ref,
                  tool_dialect, context_window, locality, vram_estimate_gb,
-                 status, supports_tools)
+                 status, supports_tools, accepts_substrate_system)
             VALUES
                 (:name, :display, 'local', :endpoint, NULL,
-                 'openai', :ctx, 'local', :vram, :status, :supports_tools)
+                 'openai', :ctx, 'local', :vram, :status,
+                 :supports_tools, :accepts_substrate_system)
             ON CONFLICT(name) DO UPDATE SET
                 provider='local', endpoint=excluded.endpoint,
                 tool_dialect='openai', context_window=excluded.context_window,
                 locality='local', vram_estimate_gb=excluded.vram_estimate_gb,
                 status=excluded.status,
-                supports_tools=excluded.supports_tools
+                supports_tools=excluded.supports_tools,
+                accepts_substrate_system=excluded.accepts_substrate_system
             """,
             {"name": name, "display": f"{name} (local)", "endpoint": endpoint,
              "ctx": ctx, "vram": vram, "status": target_status,
-             "supports_tools": 1 if has_tools else 0},
+             "supports_tools": eff_st,
+             "accepts_substrate_system": eff_as},
         )
-        if prior is None and has_tools:
+        if prior is None and substrate_capable:
             promoted += 1
-        elif prior is not None and prior[0] != "active" and has_tools:
+        elif prior is not None and prior_status != "active" and substrate_capable:
             reactivated += 1
 
     # Down-sweep: any active local row whose model is no longer installed

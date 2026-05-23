@@ -184,12 +184,17 @@ CREATE TABLE models (
     cost_cache_write REAL,
     status           TEXT    NOT NULL DEFAULT 'active'
                      CHECK (status IN ('active','inactive')),
-    -- Whether this model declares tool-call capability. Cloud rows are 1
-    -- (every active row we ship supports tools). Local rows are set by
-    -- `dosarch-modelsync` from Ollama's /api/show `capabilities` — the
-    -- picker filters to supports_tools=1, since a tool-driven shell can't
-    -- honor its contract without them. See migration 034.
-    supports_tools   INTEGER NOT NULL DEFAULT 0,
+    -- Whether this model declares tool-call capability (Ollama's
+    -- /api/show.capabilities for local; assumed 1 for cloud). NULL means
+    -- not yet classified; the picker filters to =1. See migration 034.
+    supports_tools           INTEGER,
+    -- Whether the model's chat template emits user-supplied System
+    -- content even when Tools are present. Hermes-class templates branch
+    -- `{{ if .Tools }} ... {{ else if .System }}` and silently drop the
+    -- substrate boot prompt under tools; those rows land at 0 and route
+    -- to the (future) agents surface. NULL means not yet classified;
+    -- cloud rows are hardcoded 1. See migration 035.
+    accepts_substrate_system INTEGER,
     last_verified    TEXT
 );
 
