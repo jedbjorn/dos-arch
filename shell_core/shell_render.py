@@ -329,24 +329,16 @@ def render_output_shape(dialect: str = "anthropic") -> str:
     )
 
 
-def assemble_catalog(
+def prompt_sections(
     con: sqlite3.Connection,
     shell_id: int,
     *,
     dialect: str = "anthropic",
     runtime_ctx: dict,
-) -> str:
-    """Compose the full typed boot-prompt catalog (spec §02) for a shell — a
-    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections, with Prohibitions
-    rendered just before Laws. Pure read.
-
-    `runtime_ctx` carries the render-time values a DB query cannot give —
-    wall-clock, session ids; see `render_boot_context`. The baked universal
-    sections come from `catalog_universal.md`; `dialect` shapes the Tools and
-    Output Shape sections.
-
-    Both render paths compose through it — `compose_claude_md` (the CLI
-    launcher) and `compose_boot_document` (the API)."""
+) -> list[tuple[str, str]]:
+    """The typed (label, body) catalog (spec §02) for a shell, in render order.
+    SYSTEM OVERRIDE leads, then ⌂/A–O. Pure read — same composition path as
+    `assemble_catalog`; the viewer reads structure straight from this list."""
     shell = con.execute(
         "SELECT display_name, shortname, partner, role, mandate, "
         "current_state, connections FROM shells WHERE shell_id=?",
@@ -356,8 +348,8 @@ def assemble_catalog(
         raise ValueError(f"shell {shell_id} not found")
     universal = render_universal()
 
-    # ⌂ then A–O, in catalog order (spec §02).
-    sections = [
+    return [
+        ("SYSTEM OVERRIDE",   universal["SYSTEM_OVERRIDE"]),
         ("BOOT",              render_boot_context(runtime_ctx)),
         ("IDENTITY",          render_identity(shell)),
         ("DEFINITIONS",       universal["DEFINITIONS"]),
@@ -376,5 +368,27 @@ def assemble_catalog(
         ("COMMUNICATION",     universal["COMMUNICATION"]),
         ("OUTPUT SHAPE",      render_output_shape(dialect)),
     ]
-    catalog = "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)
-    return f"## SYSTEM OVERRIDE ##\n{universal['SYSTEM_OVERRIDE']}\n\n{catalog}"
+
+
+def assemble_catalog(
+    con: sqlite3.Connection,
+    shell_id: int,
+    *,
+    dialect: str = "anthropic",
+    runtime_ctx: dict,
+) -> str:
+    """Compose the full typed boot-prompt catalog (spec §02) for a shell — a
+    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections, with Prohibitions
+    rendered just before Laws. Pure read.
+
+    `runtime_ctx` carries the render-time values a DB query cannot give —
+    wall-clock, session ids; see `render_boot_context`. The baked universal
+    sections come from `catalog_universal.md`; `dialect` shapes the Tools and
+    Output Shape sections.
+
+    Both render paths compose through it — `compose_claude_md` (the CLI
+    launcher) and `compose_boot_document` (the API)."""
+    sections = prompt_sections(
+        con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx,
+    )
+    return "\n\n".join(f"## {label} ##\n{body}" for label, body in sections)

@@ -34,8 +34,11 @@ export const getRecentLogs      = ()         => get('/me/recent-logs')
 export const searchUsers        = (q = '')   => get(`/users${q ? '?q=' + encodeURIComponent(q) : ''}`)
 
 export const getShells          = ()                   => get('/admin/shells')
+export const getShell           = (shell_id)           => get(`/shells/${shell_id}`)
 export const getShellSkills     = (shell_id)           => get(`/shells/${shell_id}/skills`)
+export const getShellPromptSections = (shell_id)       => get(`/shells/${shell_id}/prompt-sections`)
 export const getAvailableSkills = ()                   => get('/admin/skills/available')
+export const getSkill           = (skill_id)           => get(`/admin/skills/${skill_id}`)
 export const addShellSkill      = (shell_id, skill_id) => post(`/admin/shells/${shell_id}/skills`, { skill_id })
 export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${shell_id}/skills/${skill_id}`)
 
