@@ -150,6 +150,7 @@ def sync(db_path: Path, user_id: int) -> None:
     try:
         hw_id = resolve_hardware_id(con, user_id)
         seen: list[str] = []
+        tools_by_name: dict[str, bool] = {}
         inserted = updated = 0
 
         for m in models:
@@ -162,6 +163,9 @@ def sync(db_path: Path, user_id: int) -> None:
                 show = _api(base, "/api/show", {"name": name})
             except (urllib.error.URLError, OSError):
                 show = {}
+            # A /api/show failure leaves the model marked as no-tools so it
+            # stays out of the picker — better to hide than to fail a turn.
+            tools_by_name[name] = "tools" in (show.get("capabilities") or [])
 
             rec = {
                 "hardware_id": hw_id,
@@ -219,7 +223,8 @@ def sync(db_path: Path, user_id: int) -> None:
         )
         removed = cur.rowcount
 
-        promoted, reactivated, deactivated = promote_local_models(con, hw_id, base)
+        promoted, reactivated, deactivated = promote_local_models(
+            con, hw_id, base, tools_by_name)
         con.commit()
     finally:
         con.close()
@@ -230,12 +235,15 @@ def sync(db_path: Path, user_id: int) -> None:
           f"{deactivated} deactivated.")
 
 
-def promote_local_models(con: sqlite3.Connection, hw_id: int,
-                         base: str) -> tuple[int, int, int]:
+def promote_local_models(con: sqlite3.Connection, hw_id: int, base: str,
+                         tools_by_name: dict[str, bool]) -> tuple[int, int, int]:
     """Mirror this host's installed Ollama models into the `models` registry
-    so they are dispatchable (CC-62). Each installed model becomes an active
-    provider='local' row; a local registry row whose model is no longer
-    installed is flipped to status='inactive' (kept for history, FK-safe).
+    so they are dispatchable (CC-62). Each installed model becomes a
+    provider='local' row whose status is gated on tool-call capability:
+    Ollama advertises `tools` in /api/show.capabilities → active, else
+    inactive (visible in the registry, hidden from the picker). A local
+    registry row whose model is no longer installed is flipped to inactive
+    too (kept for history, FK-safe).
 
     Single Ollama host is assumed — the down-sweep reconciles every
     provider='local' row against this host's installed set. Scope this by
@@ -257,6 +265,8 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int,
         prior = con.execute(
             "SELECT status FROM models WHERE name=?", (name,)
         ).fetchone()
+        has_tools = tools_by_name.get(name, False)
+        target_status = "active" if has_tools else "inactive"
         # display_name and auth_ref are kept out of the UPDATE branch so a
         # human-tuned registry row keeps its label.
         con.execute(
@@ -264,24 +274,29 @@ def promote_local_models(con: sqlite3.Connection, hw_id: int,
             INSERT INTO models
                 (name, display_name, provider, endpoint, auth_ref,
                  tool_dialect, context_window, locality, vram_estimate_gb,
-                 status)
+                 status, supports_tools)
             VALUES
                 (:name, :display, 'local', :endpoint, NULL,
-                 'openai', :ctx, 'local', :vram, 'active')
+                 'openai', :ctx, 'local', :vram, :status, :supports_tools)
             ON CONFLICT(name) DO UPDATE SET
                 provider='local', endpoint=excluded.endpoint,
                 tool_dialect='openai', context_window=excluded.context_window,
                 locality='local', vram_estimate_gb=excluded.vram_estimate_gb,
-                status='active'
+                status=excluded.status,
+                supports_tools=excluded.supports_tools
             """,
             {"name": name, "display": f"{name} (local)", "endpoint": endpoint,
-             "ctx": ctx, "vram": vram},
+             "ctx": ctx, "vram": vram, "status": target_status,
+             "supports_tools": 1 if has_tools else 0},
         )
-        if prior is None:
+        if prior is None and has_tools:
             promoted += 1
-        elif prior[0] != "active":
+        elif prior is not None and prior[0] != "active" and has_tools:
             reactivated += 1
 
+    # Down-sweep: any active local row whose model is no longer installed
+    # gets flipped to inactive. Tool-incapable installed rows are already
+    # inactive from the upsert above, so they don't need a separate sweep.
     placeholders = ",".join("?" * len(seen)) or "''"
     cur = con.execute(
         f"""UPDATE models SET status='inactive'

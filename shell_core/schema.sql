@@ -184,6 +184,12 @@ CREATE TABLE models (
     cost_cache_write REAL,
     status           TEXT    NOT NULL DEFAULT 'active'
                      CHECK (status IN ('active','inactive')),
+    -- Whether this model declares tool-call capability. Cloud rows are 1
+    -- (every active row we ship supports tools). Local rows are set by
+    -- `dosarch-modelsync` from Ollama's /api/show `capabilities` — the
+    -- picker filters to supports_tools=1, since a tool-driven shell can't
+    -- honor its contract without them. See migration 034.
+    supports_tools   INTEGER NOT NULL DEFAULT 0,
     last_verified    TEXT
 );
 
