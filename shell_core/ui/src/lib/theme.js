@@ -61,6 +61,15 @@ export function applyTheme(bg, accent) {
     `radial-gradient(ellipse 60% 80% at 100% 100%, ${wash2}, transparent), ` +
     `radial-gradient(ellipse 50% 50% at 60% 50%, ${wash3}, transparent)`
 
+  // Active-pill highlight — same two-stop linear gradient the JSX example
+  // uses (135° from primary accent into a +90° hue-shifted twin), plus a
+  // soft outer glow at the same hue as the primary. Consumed by the
+  // .active-pill class for tabs, model picker selection, etc.
+  const pillA    = washFrom(accent,   0, 0.18)
+  const pillB    = washFrom(accent,  90, 0.10)
+  const pillGlow = washFrom(accent,   0, 0.25)
+  const activePill = `linear-gradient(135deg, ${pillA}, ${pillB})`
+
   el.textContent = `
     :root, html, body {
       --color-surface-1: ${bg};
@@ -70,6 +79,8 @@ export function applyTheme(bg, accent) {
       --color-accent:    ${accent};
       --app-base:        ${bg};
       --app-gradient:    ${gradient};
+      --active-pill-grad: ${activePill};
+      --active-pill-glow: ${pillGlow};
       background-color:  ${bg};
     }
   `
