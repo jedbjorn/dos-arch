@@ -16,6 +16,7 @@
   import {
     getModels, getMyShells, activateShell, getShellChat, getShellChatSession,
     createShellChatSession, postShellChat, clearShellSession, setSessionModel,
+    routeModelToAgents,
   } from '$lib/api.js'
   import { defaultModelId as pickDefaultModel } from '$lib/chat/models.js'
   import { computeChatTokens } from '$lib/chat/tokens.js'
@@ -188,7 +189,15 @@
 </script>
 
 <aside class="chat-sidebar relative z-10 flex h-screen shrink-0 border-l border-white/[0.08]">
-  <ModelPicker {models} {selectedModel} onChange={changeModel} />
+  <ModelPicker
+    {models}
+    {selectedModel}
+    onChange={changeModel}
+    onRouteToAgents={async (model_id) => {
+      try { await routeModelToAgents(model_id) } catch {}
+      try { models = await getModels() } catch {}
+    }}
+  />
 
   <div class="flex-1 min-w-0 flex flex-col">
     <div class="relative flex items-center gap-2 h-[52px] px-3 border-b border-white/[0.06]">
