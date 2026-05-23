@@ -6,80 +6,38 @@
 
   let { models = [], selectedModel = '', onChange } = $props()
   const grouped = $derived(modelsByProvider(models))
+  const totalCount = $derived(models.length)
 </script>
 
-<div class="models-col">
-  <div class="col-title">Available Models</div>
-  <div class="models-list">
+<div class="w-[180px] shrink-0 flex flex-col border-r border-white/[0.08]">
+  <div class="h-[52px] flex flex-col justify-center px-5 border-b border-white/[0.06]">
+    <div class="text-sm text-white font-medium leading-tight">Models</div>
+    <div class="text-[10px] text-white/40 leading-tight mt-0.5 tabular-nums">
+      {totalCount} available
+    </div>
+  </div>
+  <div class="flex-1 overflow-y-auto glass-scroll p-4">
     {#each PROVIDERS as p}
-      <div class="provider-group">
-        <div class="provider-head">{p.label}</div>
-        {#each grouped[p.key] ?? [] as m}
-          <button class="model-row" class:active={String(m.model_id) === selectedModel}
-            onclick={() => onChange(String(m.model_id))}>{modelLabel(m)}</button>
-        {/each}
-        {#if !(grouped[p.key] ?? []).length}
-          <div class="model-none">(none yet)</div>
-        {/if}
+      <div class="mb-5">
+        <div class="text-[10px] uppercase tracking-[0.15em] text-white/30 mb-2">{p.label}</div>
+        <div class="space-y-1">
+          {#each grouped[p.key] ?? [] as m}
+            {@const active = String(m.model_id) === selectedModel}
+            <button
+              onclick={() => onChange(String(m.model_id))}
+              class="w-full text-left px-3 py-2 rounded-xl text-[11px] font-mono transition leading-snug break-words
+                     {active
+                        ? 'active-pill'
+                        : 'text-white/60 hover:text-white/90 hover:bg-white/[0.03]'}"
+            >
+              {modelLabel(m)}
+            </button>
+          {/each}
+          {#if !(grouped[p.key] ?? []).length}
+            <div class="px-3 py-1 text-[10px] italic text-white/30">(none yet)</div>
+          {/if}
+        </div>
       </div>
     {/each}
   </div>
 </div>
-
-<style>
-  .models-col {
-    width: 140px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid var(--color-border);
-    background: var(--color-surface-2);
-  }
-  .col-title {
-    height: 52px;            /* aligns with the chat-header divider */
-    display: flex;
-    align-items: center;
-    padding: 0 12px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: var(--color-text);
-    border-bottom: 1px solid var(--color-border);
-  }
-  .models-list { flex: 1; overflow-y: auto; padding: 6px 0; }
-  .provider-group { margin-bottom: 8px; }
-  .provider-head {
-    padding: 6px 12px 3px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-accent);
-  }
-  .model-row {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: none;
-    border-left: 2px solid transparent;
-    color: var(--color-text-dim);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 4px 12px;
-    line-height: 1.3;
-  }
-  .model-row:hover { color: var(--color-text); background: var(--color-surface-3); }
-  .model-row.active {
-    color: var(--color-text);
-    border-left-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  }
-  .model-none {
-    padding: 3px 12px;
-    font-size: 10px;
-    font-style: italic;
-    color: var(--color-text-muted);
-  }
-</style>
