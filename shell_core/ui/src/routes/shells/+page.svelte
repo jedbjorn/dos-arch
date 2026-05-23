@@ -1,8 +1,8 @@
 <script>
   // Shells viewer — inspect an assigned shell's rendered boot prompt and
-  // toggle which skills are assigned to it. Sticky identity header at the
-  // top; accordions for the prompt; a checkbox-popup skill picker that
-  // drives the markdown body below. (redline: shared/redlines/Shells Tab.png)
+  // toggle which skills are assigned to it. Sticky identity sub-header
+  // below the TopBar; glass-panel sections for the prompt accordions and
+  // skill viewer. (redline: shared/redlines/Shells Tab.png)
   import { onMount } from 'svelte'
   import {
     getMyShells, getShell, getShellPromptSections,
@@ -113,14 +113,21 @@
   })
 </script>
 
-<!-- Sticky identity header — sits below TopBar (h-[52px]). The shell
-     dropdown IS the name; shortname + role hang underneath. -->
-<header class="sticky top-[52px] z-20 bg-surface-1 border-b border-border px-6 py-4 flex flex-col gap-1">
+<!-- Sticky identity sub-header — sits below the TopBar (h-[52px]).
+     Glass backdrop so content scrolls cleanly under it. -->
+<header
+  class="sticky top-[52px] z-20 px-6 py-4 flex flex-col gap-1 border-b border-white/[0.08]"
+  style="background: rgba(255, 255, 255, 0.02);
+         backdrop-filter: blur(24px);
+         -webkit-backdrop-filter: blur(24px);"
+>
   {#if myShells.length}
     <div class="flex items-baseline gap-3">
-      <select class="shell-name-select"
+      <select
+        class="shell-name-select"
         bind:value={shellId}
-        onchange={e => shellId = Number(e.target.value)}>
+        onchange={e => shellId = Number(e.target.value)}
+      >
         {#each myShells as s}
           <option value={s.shell_id}>
             {s.display_name}{s.is_shared ? '  (shared)' : ''}
@@ -128,37 +135,48 @@
         {/each}
       </select>
       {#if shell?.shortname}
-        <span class="text-text-dim text-sm">{shell.shortname}</span>
+        <span class="text-white/40 text-sm font-mono">{shell.shortname}</span>
       {/if}
     </div>
     {#if shell?.role}
-      <div class="text-sm"><span class="meta-label">Role:</span> {shell.role}</div>
+      <div class="flex items-baseline gap-2 text-sm">
+        <span class="text-[10px] uppercase tracking-[0.15em] text-white/30">Role</span>
+        <span class="text-white/80">{shell.role}</span>
+      </div>
     {/if}
   {/if}
 </header>
 
-<div class="px-6 pt-5 pb-10 flex flex-col gap-5 font-mono">
+<div class="px-6 pt-5 pb-10 flex flex-col gap-5">
   {#if error}
     <div class="text-red text-sm">{error}</div>
   {/if}
 
-  <!-- Harness Prompt -->
-  <section class="flex flex-col gap-1">
-    <h2 class="section-header">Harness Prompt</h2>
-    <hr class="border-t border-border" />
-    {#if loading && !sections.length}
-      <div class="text-text-dim text-xs mt-2">Loading…</div>
-    {/if}
-    <div class="flex flex-col gap-1 mt-1">
-      {#each sections as sec}
+  <!-- Harness Prompt — single glass panel containing all accordion rows. -->
+  <section class="flex flex-col gap-2">
+    <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40 px-1">Harness Prompt</h2>
+    <div
+      class="rounded-2xl border border-white/[0.08] overflow-hidden"
+      style="background: var(--glass-bg);
+             backdrop-filter: blur(var(--glass-blur));
+             -webkit-backdrop-filter: blur(var(--glass-blur));"
+    >
+      {#if loading && !sections.length}
+        <div class="text-white/40 text-xs px-4 py-3">Loading…</div>
+      {/if}
+      {#each sections as sec, i}
         {@const open = openLabels.has(sec.label)}
-        <div class="rounded border border-border bg-surface-2">
-          <button class="accordion-head" onclick={() => toggle(sec.label)} type="button">
-            <span class="caret">{open ? '▾' : '▸'}</span>
-            <span class="label">{sec.label}</span>
+        <div class={i > 0 ? 'border-t border-white/[0.06]' : ''}>
+          <button
+            type="button"
+            onclick={() => toggle(sec.label)}
+            class="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[12px] font-mono font-semibold tracking-wider text-white/90 hover:bg-white/[0.03] transition"
+          >
+            <span class="text-white/40 w-3 text-xs">{open ? '▾' : '▸'}</span>
+            <span class="uppercase">{sec.label}</span>
           </button>
           {#if open}
-            <div class="accordion-body">
+            <div class="px-5 pb-4 pt-3 border-t border-white/[0.06] text-[12px]">
               <MarkdownBlock text={sec.body} />
             </div>
           {/if}
@@ -167,30 +185,61 @@
     </div>
   </section>
 
-  <!-- Skill Viewer -->
+  <!-- Skill Viewer — header row + glass-panel body. -->
   <section class="flex flex-col gap-2">
-    <div class="flex items-center gap-3">
-      <h2 class="section-header shrink-0">Skill Viewer</h2>
-      <div class="relative" bind:this={skillBtnRef}>
-        <button type="button" class="skill-picker"
-          onclick={() => skillsOpen = !skillsOpen}>
-          <span class="picker-label">
+    <div class="flex items-center gap-3 px-1">
+      <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40 shrink-0">Skill Viewer</h2>
+      <div class="relative ml-auto" bind:this={skillBtnRef}>
+        <button
+          type="button"
+          onclick={() => skillsOpen = !skillsOpen}
+          class="flex items-center gap-2 min-w-[18rem] px-3 py-1.5 rounded-full border text-xs transition
+                 {skillsOpen
+                    ? 'text-white border-white/20 bg-white/[0.04]'
+                    : 'text-white/70 hover:text-white border-white/[0.10] hover:border-white/20'}"
+        >
+          <span class="flex-1 text-left font-mono truncate">
             {activeSkill?.name ?? (allSkills.length ? 'Select a skill' : '—')}
           </span>
-          <span class="picker-caret">{skillsOpen ? '▴' : '▾'}</span>
+          <svg
+            class="text-white/40 shrink-0"
+            width="10" height="14" viewBox="0 0 10 14" fill="none" stroke="currentColor"
+            stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="2.5,5 5,2.5 7.5,5" />
+            <polyline points="2.5,9 5,11.5 7.5,9" />
+          </svg>
         </button>
         {#if skillsOpen && allSkills.length}
-          <div class="skill-menu">
+          <!-- Glass popover — same heavy-glass treatment as SkillsPopover. -->
+          <div
+            class="absolute top-full right-0 mt-2 min-w-full max-h-96 overflow-y-auto glass-scroll
+                   rounded-2xl border border-white/[0.10] py-2 z-40"
+            style="background: rgba(20, 20, 30, 0.85);
+                   backdrop-filter: blur(24px);
+                   -webkit-backdrop-filter: blur(24px);
+                   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);"
+          >
             {#each allSkills as sk}
               {@const assigned = assignedIds.has(sk.skill_id)}
-              <div class="skill-row" class:row-active={sk.skill_id === activeSkillId}>
-                <button type="button" class="skill-check"
+              {@const isActive = sk.skill_id === activeSkillId}
+              <div
+                class="flex items-center px-1 transition
+                       {isActive ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'}"
+              >
+                <button
+                  type="button"
                   aria-label={assigned ? 'Unassign' : 'Assign'}
-                  onclick={(e) => { e.stopPropagation(); toggleAssigned(sk.skill_id) }}>
+                  onclick={(e) => { e.stopPropagation(); toggleAssigned(sk.skill_id) }}
+                  class="px-2 py-1 text-sm leading-none text-white/70 hover:text-white transition"
+                >
                   {assigned ? '☑' : '☐'}
                 </button>
-                <button type="button" class="skill-name"
-                  onclick={() => { selectSkill(sk.skill_id); skillsOpen = false }}>
+                <button
+                  type="button"
+                  onclick={() => { selectSkill(sk.skill_id); skillsOpen = false }}
+                  class="flex-1 text-left px-2 py-1.5 text-[12px] font-mono text-white/80 hover:text-white transition"
+                >
                   {sk.name}
                 </button>
               </div>
@@ -199,133 +248,52 @@
         {/if}
       </div>
     </div>
-    <hr class="border-t border-border" />
-    <div class="rounded border border-border bg-surface-2 p-3 min-h-[12rem]">
+    <div
+      class="rounded-2xl border border-white/[0.08] p-4 min-h-[12rem] text-[12px]"
+      style="background: var(--glass-bg);
+             backdrop-filter: blur(var(--glass-blur));
+             -webkit-backdrop-filter: blur(var(--glass-blur));"
+    >
       {#if activeSkill}
         {#if activeSkill.description}
-          <div class="text-text-dim text-xs mb-2">{activeSkill.description}</div>
+          <div class="text-white/50 text-xs mb-3 leading-relaxed">{activeSkill.description}</div>
         {/if}
         <MarkdownBlock text={activeSkill.content ?? ''} />
       {:else if !loading}
-        <div class="text-text-dim text-xs">No skill selected.</div>
+        <div class="text-white/40 text-xs">No skill selected.</div>
       {/if}
     </div>
   </section>
 </div>
 
 <style>
-  .meta-label {
-    color: var(--color-text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 0.7rem;
-    margin-right: 0.35em;
-  }
-  .section-header {
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--color-text-dim);
-  }
+  /* Native <select> as a transparent display-name picker.
+     The caret is two small triangles drawn via background-image so we
+     don't need a wrapper button + custom menu just to hide the native
+     dropdown — the dropdown is still the OS dropdown. */
   .shell-name-select {
     background: transparent;
     border: 0;
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 18px;
+    color: white;
+    font-family: var(--font-sans);
+    font-size: 22px;
     font-weight: 600;
     line-height: 1.2;
-    padding: 0 1.2em 0 0;       /* right pad makes room for the native caret */
+    padding: 0 1.2em 0 0;       /* right pad makes room for the custom caret */
     cursor: pointer;
     outline: none;
     appearance: none;
     -webkit-appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, var(--color-text-dim) 50%),
-                      linear-gradient(135deg, var(--color-text-dim) 50%, transparent 50%);
-    background-position: calc(100% - 14px) 55%, calc(100% - 8px) 55%;
+    background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.4) 50%),
+                      linear-gradient(135deg, rgba(255,255,255,0.4) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 60%, calc(100% - 8px) 60%;
     background-size: 6px 6px;
     background-repeat: no-repeat;
   }
   .shell-name-select option {
-    background: var(--color-surface-2);
-    color: var(--color-text);
+    background: rgba(20, 20, 30, 0.95);
+    color: white;
     font-size: 13px;
     font-weight: 400;
   }
-
-  .accordion-head {
-    display: flex; align-items: center; gap: 0.5rem;
-    width: 100%; background: transparent; border: 0;
-    padding: 8px 12px;
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
-    cursor: pointer; text-align: left;
-  }
-  .accordion-head:hover { background: var(--color-surface-3); }
-  .caret { color: var(--color-text-dim); width: 0.75rem; }
-  .label { text-transform: uppercase; }
-  .accordion-body {
-    padding: 10px 14px 12px;
-    border-top: 1px solid var(--color-border);
-    font-size: 12px;
-  }
-
-  /* Skill picker — custom popup with checkbox + name per row. */
-  .skill-picker {
-    display: flex; align-items: center; gap: 0.5rem;
-    min-width: 18rem;
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    padding: 4px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    text-align: left;
-  }
-  .picker-label { flex: 1; }
-  .picker-caret { color: var(--color-text-dim); }
-  .skill-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    min-width: 100%;
-    max-height: 24rem;
-    overflow-y: auto;
-    background: var(--color-surface-2);
-    border: 1px solid var(--color-border);
-    border-radius: 3px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-    z-index: 40;
-    padding: 4px 0;
-  }
-  .skill-row {
-    display: flex; align-items: center;
-    padding: 0 4px;
-  }
-  .skill-row:hover { background: var(--color-surface-3); }
-  .row-active { background: var(--color-surface-3); }
-  .skill-check {
-    background: transparent; border: 0;
-    color: var(--color-text);
-    font-size: 14px;
-    cursor: pointer;
-    padding: 4px 8px;
-    line-height: 1;
-  }
-  .skill-check:hover { color: var(--color-accent); }
-  .skill-name {
-    flex: 1;
-    background: transparent; border: 0;
-    color: var(--color-text);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    text-align: left;
-    padding: 5px 8px;
-    cursor: pointer;
-  }
-  .skill-name:hover { color: var(--color-accent); }
 </style>
