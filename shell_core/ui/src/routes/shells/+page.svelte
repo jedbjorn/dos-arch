@@ -10,6 +10,7 @@
     addShellSkill, removeShellSkill,
   } from '$lib/api.js'
   import MarkdownBlock from '$lib/components/MarkdownBlock.svelte'
+  import GlassDropdown from '$lib/components/GlassDropdown.svelte'
 
   let myShells   = $state([])
   let shellId    = $state(null)
@@ -111,6 +112,13 @@
   $effect(() => {
     if (shellId) loadShellData(shellId)
   })
+
+  const shellItems = $derived(myShells.map(s => ({
+    value:   s.shell_id,
+    label:   s.display_name,
+    caption: s.shortname ?? null,
+    suffix:  s.is_shared ? '(shared)' : null,
+  })))
 </script>
 
 <!-- Sticky identity sub-header — sits below the TopBar (h-[52px]).
@@ -122,22 +130,11 @@
          -webkit-backdrop-filter: blur(24px);"
 >
   {#if myShells.length}
-    <div class="flex items-baseline gap-3">
-      <select
-        class="shell-name-select"
-        bind:value={shellId}
-        onchange={e => shellId = Number(e.target.value)}
-      >
-        {#each myShells as s}
-          <option value={s.shell_id}>
-            {s.display_name}{s.is_shared ? '  (shared)' : ''}
-          </option>
-        {/each}
-      </select>
-      {#if shell?.shortname}
-        <span class="text-white/40 text-sm font-mono">{shell.shortname}</span>
-      {/if}
-    </div>
+    <GlassDropdown
+      value={shellId}
+      items={shellItems}
+      onChange={v => shellId = Number(v)}
+    />
     {#if shell?.role}
       <div class="flex items-baseline gap-2 text-sm">
         <span class="text-[10px] uppercase tracking-[0.15em] text-white/30">Role</span>
@@ -213,8 +210,7 @@
         {#if skillsOpen && allSkills.length}
           <!-- Glass popover — same heavy-glass treatment as SkillsPopover. -->
           <div
-            class="absolute top-full right-0 mt-2 min-w-full max-h-96 overflow-y-auto glass-scroll
-                   rounded-2xl border border-white/[0.10] py-2 z-40"
+            class="absolute top-full right-0 mt-2 min-w-full max-h-96 overflow-y-auto                   rounded-2xl border border-white/[0.10] py-2 z-40"
             style="background: rgba(20, 20, 30, 0.85);
                    backdrop-filter: blur(24px);
                    -webkit-backdrop-filter: blur(24px);
@@ -266,34 +262,3 @@
   </section>
 </div>
 
-<style>
-  /* Native <select> as a transparent display-name picker.
-     The caret is two small triangles drawn via background-image so we
-     don't need a wrapper button + custom menu just to hide the native
-     dropdown — the dropdown is still the OS dropdown. */
-  .shell-name-select {
-    background: transparent;
-    border: 0;
-    color: white;
-    font-family: var(--font-sans);
-    font-size: 22px;
-    font-weight: 600;
-    line-height: 1.2;
-    padding: 0 1.2em 0 0;       /* right pad makes room for the custom caret */
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.4) 50%),
-                      linear-gradient(135deg, rgba(255,255,255,0.4) 50%, transparent 50%);
-    background-position: calc(100% - 14px) 60%, calc(100% - 8px) 60%;
-    background-size: 6px 6px;
-    background-repeat: no-repeat;
-  }
-  .shell-name-select option {
-    background: rgba(20, 20, 30, 0.95);
-    color: white;
-    font-size: 13px;
-    font-weight: 400;
-  }
-</style>

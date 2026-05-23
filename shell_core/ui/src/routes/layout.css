@@ -53,21 +53,22 @@ html, body {
   font-family: var(--font-sans);
 }
 
-/* Thin scrollbar that reads as part of the glass surface.
-   Apply `class="glass-scroll"` to any scrollable container. */
-.glass-scroll {
+/* Glass scrollbars — applied globally, not opt-in. Firefox: scrollbar-*
+   cascades from html; Chromium: the ::-webkit-scrollbar pseudo matches
+   every scrollable element on its own. */
+html {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.10) transparent;
 }
-.glass-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-.glass-scroll::-webkit-scrollbar-track { background: transparent; }
-.glass-scroll::-webkit-scrollbar-thumb {
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.10);
   border-radius: 999px;
   transition: background 0.2s ease;
 }
-.glass-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
-.glass-scroll::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Active-state pill — accent gradient + inset hairline ring + soft glow.
    Reusable across tabs, picker rows, anything that needs a "selected" state
@@ -87,6 +88,14 @@ html, body {
   outline: none;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
   border-radius: inherit;
+}
+/* Form controls live inside styled glass containers — give the container
+   the focus indication via :focus-within instead, so the ring frames the
+   pill rather than painting a second box inside it. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: none;
 }
 /* Don't double-ring the active pill — its inset ring already does the job;
    add a slightly stronger outer ring to signal focus. */

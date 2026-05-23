@@ -76,8 +76,7 @@
   {#if showSkills}
     <!-- Popover: glass card hanging off the right edge of the header. -->
     <div
-      class="absolute top-full right-0 mt-2 w-[280px] max-h-[420px] overflow-y-auto glass-scroll
-             rounded-2xl border border-white/[0.10] py-2 z-10"
+      class="absolute top-full right-0 mt-2 w-[280px] max-h-[420px] overflow-y-auto             rounded-2xl border border-white/[0.10] py-2 z-10"
       style="background: rgba(20, 20, 30, 0.85);
              backdrop-filter: blur(24px);
              -webkit-backdrop-filter: blur(24px);
