@@ -74,14 +74,12 @@
   </button>
 
   {#if showSkills}
-    <!-- Popover: glass card hanging off the right edge of the header. -->
+    <!-- Popover: solid medium-grey card hanging off the right edge of the header. -->
     <div
-      class="absolute top-full right-0 mt-2 w-[280px] max-h-[420px] overflow-y-auto glass-scroll
-             rounded-2xl border border-white/[0.10] py-2 z-10"
-      style="background: rgba(20, 20, 30, 0.85);
-             backdrop-filter: blur(24px);
-             -webkit-backdrop-filter: blur(24px);
-             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);"
+      class="absolute top-full right-0 mt-2 w-max max-w-[80vw] max-h-[420px] overflow-y-auto rounded-2xl border py-2 z-10"
+      style="background: var(--menu-bg);
+             border-color: var(--menu-border);
+             box-shadow: var(--menu-shadow);"
     >
       {#if skills.length === 0}
         <div class="px-4 py-2.5 text-[11px] text-white/40">No skills assigned.</div>
@@ -92,7 +90,7 @@
             role="button"
             tabindex={skill.command ? 0 : -1}
             class="flex flex-col gap-1 px-4 py-2 transition
-                   {skill.command ? 'cursor-pointer hover:bg-white/[0.04]' : 'cursor-default'}"
+                   {skill.command ? 'cursor-pointer hover:bg-white/[0.06]' : 'cursor-default'}"
             onmouseenter={e => onEnter(e, skill)}
             onmouseleave={onLeave}
             onclick={skill.command ? () => pick(skill) : null}

@@ -38,7 +38,7 @@
   <div
     bind:this={listEl}
     onscroll={onScroll}
-    class="flex-1 overflow-y-auto glass-scroll p-3 flex flex-col gap-2.5 min-h-0"
+    class="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5 min-h-0"
   >
     {#if messages.length === 0}
       <!-- "ready" empty state — soft accent orb + caption. Mirrors the

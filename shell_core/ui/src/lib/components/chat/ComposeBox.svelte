@@ -65,7 +65,8 @@
   <!-- input pill + vertical action column -->
   <div class="flex items-stretch gap-2">
     <div
-      class="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 flex items-end gap-3"
+      class="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 flex items-end gap-3 transition-colors
+             focus-within:border-white/20 focus-within:bg-white/[0.06]"
       style="background: var(--glass-bg-strong);
              backdrop-filter: blur(var(--glass-blur-soft));
              -webkit-backdrop-filter: blur(var(--glass-blur-soft));"

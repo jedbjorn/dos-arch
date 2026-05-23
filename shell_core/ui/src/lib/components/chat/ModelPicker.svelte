@@ -16,7 +16,7 @@
       {totalCount} available
     </div>
   </div>
-  <div class="flex-1 overflow-y-auto glass-scroll p-4">
+  <div class="flex-1 overflow-y-auto p-4">
     {#each PROVIDERS as p}
       <div class="mb-5">
         <div class="text-[10px] uppercase tracking-[0.15em] text-white/30 mb-2">{p.label}</div>

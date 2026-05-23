@@ -36,21 +36,21 @@
   .md :global(em) { font-style: italic; }
 
   .md :global(code) {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--menu-bg);
+    border: 1px solid var(--menu-border);
     padding: 0.05em 0.35em;
     border-radius: 4px;
     font-family: var(--font-mono);
-    font-size: 0.85em;
+    font-size: 0.93em;
     overflow-wrap: anywhere;
   }
   .md :global(pre) {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--menu-bg);
+    border: 1px solid var(--menu-border);
     padding: 0.7em 0.9em;
     border-radius: 10px;
     font-family: var(--font-mono);
-    font-size: 0.82em;
+    font-size: 0.9em;
     margin: 0.6em 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
