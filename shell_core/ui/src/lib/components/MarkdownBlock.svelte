@@ -41,7 +41,7 @@
     padding: 0.05em 0.35em;
     border-radius: 4px;
     font-family: var(--font-mono);
-    font-size: 0.85em;
+    font-size: 0.93em;
     overflow-wrap: anywhere;
   }
   .md :global(pre) {
@@ -50,7 +50,7 @@
     padding: 0.7em 0.9em;
     border-radius: 10px;
     font-family: var(--font-mono);
-    font-size: 0.82em;
+    font-size: 0.9em;
     margin: 0.6em 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
