@@ -47,12 +47,11 @@
         <div
           class="w-16 h-16 rounded-full flex items-center justify-center"
           style="background: var(--orb-soft-grad);
-                 box-shadow: 0 0 40px var(--orb-soft-glow);"
+                 box-shadow: 0 0 25px var(--orb-soft-glow);"
         >
           <div class="w-3 h-3 rounded-full bg-white/80"></div>
         </div>
         <div class="text-sm text-white/60 mt-4">ready</div>
-        <div class="text-[10px] text-white/30 mt-1">say something to begin</div>
       </div>
     {:else}
       {#each messages as msg (msg.message_id)}

@@ -6,8 +6,7 @@
   import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte'
 
   onMount(() => {
-    const t = $theme
-    applyTheme(t.bg, t.accent)
+    applyTheme($theme)
     loadThemeFromApi()
   })
 

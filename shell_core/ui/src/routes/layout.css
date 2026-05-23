@@ -29,11 +29,13 @@
     radial-gradient(ellipse 60% 80% at 100% 100%, rgba(236, 72, 153, 0.20), transparent),
     radial-gradient(ellipse 50% 50% at 60% 50%,   rgba(56, 189, 248, 0.14), transparent);
 
-  /* Active-pill highlight — also overridden by lib/theme.js to track
-     the selected accent. These defaults match the JSX reference so
-     SSR renders coherently before theme.js runs in the browser. */
-  --active-pill-grad: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(236, 72, 153, 0.10));
-  --active-pill-glow: rgba(99, 102, 241, 0.25);
+  /* Active-state accents — overridden by lib/theme.js to track the
+     selected theme's accent. Tabs get a solid 2px underline in
+     --accent-bar; rows get a 90° accent-rgba gradient (35% → 5%)
+     plus a 2px left bar in --accent-bar. Defaults here keep SSR
+     coherent before theme.js mounts. */
+  --accent-bar:      #fbbf24;
+  --accent-row-grad: linear-gradient(90deg, rgba(251, 191, 36, 0.20), rgba(251, 191, 36, 0.03));
 
   /* Avatar orb — saturated accent gradient + soft glow.
      Also overridden by lib/theme.js. */
@@ -42,7 +44,7 @@
 
   /* Soft orb — the canvas-toned variant for decorative "ready" moments. */
   --orb-soft-grad: linear-gradient(135deg, rgba(129, 140, 248, 0.30), rgba(244, 114, 182, 0.20));
-  --orb-soft-glow: rgba(99, 102, 241, 0.40);
+  --orb-soft-glow: rgba(99, 102, 241, 0.20);
 
   /* Dropdown menus — solid medium-grey surface, no transparency or blur.
      Used by GlassDropdown, SkillsPopover, and the /shells skill picker
@@ -77,14 +79,30 @@ html {
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* Active-state pill — accent gradient + inset hairline ring + soft glow.
-   Reusable across tabs, picker rows, anything that needs a "selected" state
-   in the spatial-glass look. */
-.active-pill {
-  background: var(--active-pill-grad);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 0 24px var(--active-pill-glow);
+/* Active tab — text only, with a solid 2px accent bar pinned to the
+   bottom edge. No fill, no glow. Matches the palette-study reference.
+   The bar is drawn via ::after so it spans the button's box regardless
+   of padding; the host must be `position: relative`. */
+.active-tab {
+  position: relative;
+  color: white;
+}
+.active-tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent-bar);
+}
+
+/* Active row — picker / list selected state. 90° accent gradient
+   (35% → 5%) for the surface wash, plus a solid 2px left bar drawn as
+   an inset box-shadow so it follows whatever border-radius the row uses. */
+.active-row {
+  background: var(--accent-row-grad);
+  box-shadow: inset 2px 0 0 0 var(--accent-bar);
   color: white;
 }
 
@@ -106,11 +124,10 @@ textarea:focus-visible,
 select:focus-visible {
   box-shadow: none;
 }
-/* Don't double-ring the active pill — its inset ring already does the job;
-   add a slightly stronger outer ring to signal focus. */
-.active-pill:focus-visible {
+/* Don't drop the row's inset bar when focused — layer the focus ring on
+   top of it so both the selection bar and the keyboard ring are visible. */
+.active-row:focus-visible {
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.20),
-    0 0 0 2px rgba(255, 255, 255, 0.35),
-    0 0 24px var(--active-pill-glow);
+    inset 2px 0 0 0 var(--accent-bar),
+    0 0 0 2px rgba(255, 255, 255, 0.35);
 }

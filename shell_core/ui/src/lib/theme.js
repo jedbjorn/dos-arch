@@ -1,14 +1,34 @@
-// Theme handling — persistent bg/accent presets in localStorage.
+// Theme handling — three named themes, persisted by name in localStorage.
 //
-// Spatial-glass model: bg is the deep base color; accent drives a three-wash
-// radial gradient (accent, accent+90°, accent-45°) layered over the base.
-// Picking a new accent shifts the whole canvas mood.
+// Each theme pins a base color + an explicit background gradient + an accent.
+// The accent drives accent-derived washes for the active-pill highlight and
+// the avatar orb so a single theme switch shifts the whole canvas mood.
 import { writable } from 'svelte/store'
 
 const STORAGE_KEY = 'dos_theme'
 
-export const BG_PRESETS     = ['#0f1117', '#0f172a', '#1c1412', '#0d1f17', '#1a0a0e', '#170f2e']
-export const ACCENT_PRESETS = ['#0072FF', '#3b82f6', '#d97706', '#10b981', '#e11d48', '#8b5cf6']
+export const THEMES = [
+  {
+    name: 'Solid Charcoal',
+    base: '#17171c',
+    background: 'linear-gradient(180deg, #1a1a1f 0%, #141418 100%)',
+    accent: '#fbbf24',
+  },
+  {
+    name: 'Twilight',
+    base: '#06051a',
+    background: 'linear-gradient(135deg, #06051a 0%, #150929 100%)',
+    accent: '#ec4899',
+  },
+  {
+    name: 'Slate',
+    base: '#1a1f2a',
+    background: 'linear-gradient(180deg, #1a1f2a 0%, #252b35 100%)',
+    accent: '#38bdf8',
+  },
+]
+
+const DEFAULT_THEME = 'Solid Charcoal'
 
 function hexToHsl(hex) {
   const r = parseInt(hex.slice(1,3),16) / 255
@@ -38,7 +58,15 @@ function washFrom(accent, hueShift, alpha) {
   return `hsla(${hh.toFixed(1)}, ${s.toFixed(1)}%, ${lift.toFixed(1)}%, ${alpha})`
 }
 
-export function applyTheme(bg, accent) {
+function hexToRgb(hex) {
+  return [
+    parseInt(hex.slice(1,3),16),
+    parseInt(hex.slice(3,5),16),
+    parseInt(hex.slice(5,7),16),
+  ]
+}
+
+export function applyTheme(t) {
   if (typeof document === 'undefined') return
   let el = document.getElementById('dos-theme')
   if (!el) {
@@ -46,69 +74,66 @@ export function applyTheme(bg, accent) {
     el.id = 'dos-theme'
     document.head.appendChild(el)
   }
-  const wash1 = washFrom(accent,   0, 0.28)
-  const wash2 = washFrom(accent,  90, 0.20)
-  const wash3 = washFrom(accent, -45, 0.14)
-  const gradient =
-    `radial-gradient(ellipse 80% 60% at 20% 0%, ${wash1}, transparent), ` +
-    `radial-gradient(ellipse 60% 80% at 100% 100%, ${wash2}, transparent), ` +
-    `radial-gradient(ellipse 50% 50% at 60% 50%, ${wash3}, transparent)`
+  const { base, background, accent } = t
 
-  // Active-pill highlight — same two-stop linear gradient the JSX example
-  // uses (135° from primary accent into a +90° hue-shifted twin), plus a
-  // soft outer glow at the same hue as the primary. Consumed by the
-  // .active-pill class for tabs, model picker selection, etc.
-  const pillA    = washFrom(accent,   0, 0.18)
-  const pillB    = washFrom(accent,  90, 0.10)
-  const pillGlow = washFrom(accent,   0, 0.25)
-  const activePill = `linear-gradient(135deg, ${pillA}, ${pillB})`
+  // Active-row highlight — 90° linear gradient from 20% accent → 3% accent.
+  // Paired with a solid 2px left bar (--accent-bar) in CSS. Pure accent
+  // rgba band, no hue rotation.
+  const [ar, ag, ab] = hexToRgb(accent)
+  const accentRowGrad =
+    `linear-gradient(90deg, rgba(${ar},${ag},${ab},0.20), rgba(${ar},${ag},${ab},0.03))`
 
-  // Avatar orb — same hue pair but fully saturated, with a stronger glow.
-  // Drives the small gradient circle in the chat header (and any other
-  // identity orbs we add later).
+  // Avatar orb — same hue pair fully saturated with a stronger glow.
   const orbA   = washFrom(accent,   0, 1)
   const orbB   = washFrom(accent,  90, 1)
   const orbGlow = washFrom(accent,  0, 0.4)
   const orbGrad = `linear-gradient(135deg, ${orbA}, ${orbB})`
 
-  // Soft orb — the canvas-toned variant. Used for empty-state "ready"
-  // moments where the orb is decorative rather than identity-bearing.
+  // Soft orb — canvas-toned variant for decorative empty-state moments.
   const orbSoftA    = washFrom(accent,   0, 0.30)
   const orbSoftB    = washFrom(accent,  90, 0.20)
-  const orbSoftGlow = washFrom(accent,   0, 0.40)
+  const orbSoftGlow = washFrom(accent,   0, 0.20)
   const orbSoftGrad = `linear-gradient(135deg, ${orbSoftA}, ${orbSoftB})`
 
   el.textContent = `
     :root, html, body {
       --color-accent:     ${accent};
-      --app-base:         ${bg};
-      --app-gradient:     ${gradient};
-      --active-pill-grad: ${activePill};
-      --active-pill-glow: ${pillGlow};
+      --app-base:         ${base};
+      --app-gradient:     ${background};
+      --accent-bar:       ${accent};
+      --accent-row-grad:  ${accentRowGrad};
       --orb-grad:         ${orbGrad};
       --orb-glow:         ${orbGlow};
       --orb-soft-grad:    ${orbSoftGrad};
       --orb-soft-glow:    ${orbSoftGlow};
-      background-color:   ${bg};
+      background-color:   ${base};
     }
   `
 }
 
-function loadStored() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {} } catch { return {} }
+function findTheme(name) {
+  return THEMES.find(t => t.name === name) || THEMES[0]
 }
 
-const stored = typeof window !== 'undefined' ? loadStored() : {}
+function loadStored() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    return (raw && raw.name) || DEFAULT_THEME
+  } catch { return DEFAULT_THEME }
+}
 
-export const theme = writable({
-  bg:     stored.bg     || '#0f1117',
-  accent: stored.accent || '#0072FF',
-})
+const storedName = typeof window !== 'undefined' ? loadStored() : DEFAULT_THEME
+
+export const theme = writable(findTheme(storedName))
+
+export function setTheme(name) {
+  theme.set(findTheme(name))
+}
 
 if (typeof window !== 'undefined') {
   theme.subscribe(t => {
-    applyTheme(t.bg, t.accent)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(t))
+    applyTheme(t)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ name: t.name }))
   })
 }
 

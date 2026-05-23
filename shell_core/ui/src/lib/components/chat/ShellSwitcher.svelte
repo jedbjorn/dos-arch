@@ -6,12 +6,11 @@
 
   let { myShells = [], shellId = null, disabled = false, onSwitch } = $props()
 
-  // Map shells → dropdown items: name + shortname caption + (shared) suffix.
+  // Map shells → dropdown items: name + (shared) suffix.
   const items = $derived(myShells.map(s => ({
-    value:   s.shell_id,
-    label:   s.display_name,
-    caption: s.shortname ?? null,
-    suffix:  s.is_shared ? '(shared)' : null,
+    value:  s.shell_id,
+    label:  s.display_name,
+    suffix: s.is_shared ? '(shared)' : null,
   })))
 </script>
 
@@ -20,7 +19,6 @@
     value={shellId}
     {items}
     {disabled}
-    orb={true}
     onChange={v => onSwitch(Number(v))}
   />
 {:else}
