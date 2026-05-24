@@ -20,7 +20,7 @@
   /* Markdown surfaces tuned for the spatial-glass canvas — code blocks
      read as small glass cards, blockquotes use hairlines, headings step
      down through the white-alpha ramp. */
-  .md { word-break: break-word; color: rgba(255, 255, 255, 0.90); }
+  .md { overflow-wrap: break-word; color: rgba(255, 255, 255, 0.90); }
   .md :global(h1), .md :global(h2), .md :global(h3), .md :global(h4) {
     font-size: 0.8rem; font-weight: 600; letter-spacing: 0.15em;
     text-transform: uppercase; color: rgba(255, 255, 255, 0.40); margin: 0.9em 0 0.3em;
@@ -67,5 +67,50 @@
     border: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     margin: 0.9em 0;
+  }
+
+  /* Tables — render as proper grids, with column A (term) never breaking
+     mid-word and the meaning column driving the wrap. `display: block` +
+     `overflow-x: auto` lets a too-wide table scroll inside its section
+     instead of clipping the panel. */
+  .md :global(table) {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    margin: 0.6em 0;
+    font-size: 0.93em;
+  }
+  .md :global(thead) {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  }
+  .md :global(th), .md :global(td) {
+    padding: 0.4em 0.7em;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    word-break: normal;
+    overflow-wrap: break-word;
+  }
+  .md :global(th) {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.78em;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .md :global(tr:last-child td) { border-bottom: 0; }
+  /* Column A — strict word-boundary breaks, never mid-word. Wraps between
+     words for multi-word terms ("tool / tooling"); a single long token like
+     `current_state` holds the line and the row's wrap is driven by col B. */
+  .md :global(td:first-child), .md :global(th:first-child) {
+    word-break: keep-all;
+    overflow-wrap: normal;
+    white-space: normal;
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    padding-right: 1em;
   }
 </style>
