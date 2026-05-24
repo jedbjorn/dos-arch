@@ -4,47 +4,71 @@ description: --decision [decision] [context] — Record a Major decision via the
 category: workflow
 common: 1
 ---
+**API-ONLY** — this skill writes over the substrate API. If a needed
+endpoint is unreachable, surface it to the operator and stop — the API is
+extended from the repo, never worked around.
+
+---
 
 # decision
+
+> **Anchors** — `<self>` = your `shell_id:` value · `{archive_id}` = your
+> `archive:` value. Both shown in `## BOOT ##` of your CLAUDE.md.
 
 - **Trigger:** `--decision`
 - **Args:** `[decision] [context]` — interviewed if not provided inline
 
-Record a major decision with context: a decision record (canonical) plus
-a line on the active session narrative.
+Record a major decision with context: a decision record (canonical) plus a
+line on the active session narrative.
 
-The work is two named tools — see their blocks in the `## TOOLS ##`
-section of your boot prompt:
-
-- `create_decision` writes the canonical row to `shell_decisions`.
-- `append_narrative` adds the decision line to the active session
-  narrative.
-
-Both resolve `shell_id` (and `archive_id`, for narrative) server-side
-from the Bearer token, so you fill only the content.
+---
 
 ## Scope
 
-Applies to **Major decisions** (M priority), including project-
-architectural decisions made while working in a code repo. Repo-facing
-ADR files (`DECISIONS.md`, `docs/decisions/`) are mirrors for the repo's
-audience — they do **not** substitute for the decision record. The API
-record is canonical; repo files link to it, never the reverse.
+Applies to **Major decisions** (M priority), including project-architectural
+decisions made while working in a code repo. Repo-facing ADR files
+(`DECISIONS.md`, `docs/decisions/`) are mirrors for the repo's audience —
+they do **not** substitute for the decision record. The API record is
+canonical; repo files link to it, never the reverse.
+
+---
 
 ## Steps
 
-1. **Resolve args.** If `decision` or `context` were not provided
-   inline, interview — "What is the decision?", "What is the context —
-   why does this matter?" Wait for each answer. Never guess.
-2. **Record the decision** — call `create_decision` with
-   `{"decision": "...", "rationale": "..."}`. On error, surface and stop.
-3. **Append to the narrative** — call `append_narrative` with
-   `{"narrative_entry": "[HH:MM] DECISION: {decision} — {context}"}`.
-   A 409 here means the shell has no active archive — surface that gap
-   to the operator and stop; the decision row from step 2 stays
-   canonical regardless.
+`$DOS_API_URL` and `$DOS_API_TOKEN` are in your container environment.
+
+1. **Resolve args.** If decision or context were not provided inline,
+   interview — "What is the decision?", "What is the context — why does this
+   matter?" Wait for each answer. Never guess.
+
+2. **Record the decision** — `POST /shells/<self>/decisions`:
+   ```bash
+   curl -fsS -X POST "$DOS_API_URL/shells/<self>/decisions" \
+     -H "Authorization: Bearer $DOS_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"decision_date": "YYYY-MM-DD", "priority": "M", "decision": "{decision}", "rationale": "{context}"}'
+   ```
+   Use today's date. On a non-2xx response: surface the error to the
+   operator and stop.
+
+3. **Append to the active session narrative** — `PATCH /shell-memory-archives/{archive_id}`:
+   ```bash
+   curl -fsS -X PATCH "$DOS_API_URL/shell-memory-archives/{archive_id}" \
+     -H "Authorization: Bearer $DOS_API_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"narrative_entry": "[HH:MM] DECISION: {decision} — {context}"}'
+   ```
+   If `{archive_id}` is `—` (no archive row for this session — common on
+   API-model shells, where `shell_memory_archives` is unpopulated), skip
+   step 3. The decision record from step 2 is canonical; the narrative
+   line is a convenience. On any other non-2xx response: surface the
+   error to the operator and stop.
+
 4. **Confirm:** "Decision recorded."
+
+---
 
 ## Idempotent?
 
-No. Each invocation records a new decision. Verify before triggering.
+No. Each invocation records a new decision. Fired twice with the same
+decision, two identical records are written. Verify before triggering.

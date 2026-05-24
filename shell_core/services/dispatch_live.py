@@ -41,7 +41,6 @@ import threading
 import time
 import traceback
 import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,67 +86,12 @@ TOOL_SEMAPHORE = threading.Semaphore(TOOL_CONCURRENCY)
 METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_delete": "DELETE"}
 
 # Named API routes: a tool whose stored `handler` is a key here fires a
-# fixed (method, path) and projects the model's `input` dict onto the
-# request — model sees only content, never the HTTP shape. One entry per
-# substrate operation that runs in the 90% case (PR #103-stack: CC-080);
-# the generic api_* surface stays the right tool for anything ad-hoc.
-#
-# Each entry is a dict with:
-#   method            HTTP verb.
-#   path              path template. `{self}` substitutes the calling
-#                     shell's id (resolved from the dispatcher's Bearer);
-#                     other `{name}` placeholders are pulled from the
-#                     model-supplied body (see path_from_body).
-#   path_from_body    optional list of body keys that fill named path
-#                     placeholders. Each named key is popped from the
-#                     body before send.
-#   default_body      optional dict merged into the request body — used to
-#                     pin server-required fields the model should not have
-#                     to think about (e.g. `kind=seed`). Model fields win
-#                     on conflict.
-#   default_query     optional dict merged into the query string for GETs.
-#                     Values may contain `{self}` for substitution.
-NAMED_API_ROUTES: dict[str, dict] = {
-    "flag.create": {
-        "method": "POST",
-        "path":   "/flags",
-    },
-    "decision.create": {
-        "method": "POST",
-        "path":   "/shells/{self}/decisions",
-    },
-    "narrative.append": {
-        "method": "POST",
-        "path":   "/shells/{self}/narrative-entries",
-    },
-    "current_state.set": {
-        "method": "PATCH",
-        "path":   "/shells/{self}",
-    },
-    "seed.add": {
-        "method":       "POST",
-        "path":         "/shells/{self}/identity-entries",
-        "default_body": {"kind": "seed"},
-    },
-    "lns.add": {
-        "method":       "POST",
-        "path":         "/shells/{self}/identity-entries",
-        "default_body": {"kind": "lns"},
-    },
-    "flag.resolve": {
-        "method":          "PATCH",
-        "path":            "/flags/{flag_id}/resolve",
-        "path_from_body": ["flag_id"],
-    },
-    "flag.list": {
-        "method":        "GET",
-        "path":          "/flags",
-        "default_query": {"shell_id": "{self}"},
-    },
-    "decision.list": {
-        "method": "GET",
-        "path":   "/shells/{self}/decisions",
-    },
+# fixed (method, path) and uses its `input` dict as the request body — the
+# model never sees the path/HTTP details, only the content schema. Keep
+# entries narrow ("one tool, one route"); the generic api_* surface stays
+# the right tool for anything ad-hoc.
+NAMED_API_ROUTES: dict[str, tuple[str, str]] = {
+    "flag.create": ("POST", "/flags"),
 }
 
 # One cached adapter per (provider, endpoint) — adapters are thread-safe and
@@ -352,58 +296,12 @@ def fetch_session_start(shell_id: int, chat_session_id, token: str | None = None
         return {"error": f"bad session-start payload: {e}"}
 
 
-def _resolve_named_route(handler: str, params: dict, shell_id: int):
-    """Project a named-tool call onto (method, path, body | None). Returns
-    either the triple, or a (text, True) error tuple ready to surface.
-    Pure / side-effect-free — execute_tool wraps this with the semaphore +
-    HTTP send."""
-    route = NAMED_API_ROUTES[handler]
-    method = route["method"]
-    path   = route["path"]
-    # Mutable copy — path placeholders + default merges pop / shift keys.
-    body = dict(params) if isinstance(params, dict) else {}
-
-    subs: dict[str, object] = {"self": shell_id}
-    for key in route.get("path_from_body", []):
-        if key not in body:
-            return f"missing required path param '{key}' for {handler}", True
-        subs[key] = body.pop(key)
-    try:
-        path = path.format(**subs)
-    except KeyError as e:
-        return f"unresolved path placeholder {e} for {handler}", True
-
-    if method == "GET":
-        query = {}
-        for k, v in route.get("default_query", {}).items():
-            query[k] = v.format(self=shell_id) if isinstance(v, str) else v
-        # Model-supplied params override defaults — the operator's specific
-        # filter beats the convenience default. Stringify here; query-string
-        # values are always urlencoded strings on the wire.
-        for k, v in body.items():
-            if v is None:
-                continue
-            query[k] = v
-        if query:
-            qs = urllib.parse.urlencode({k: str(v) for k, v in query.items()})
-            path = f"{path}?{qs}"
-        return method, path, None
-
-    # POST / PATCH / DELETE — JSON body. default_body pins fields the model
-    # should not think about (e.g. kind=seed); model keys win on conflict so
-    # a deliberate override still lands.
-    out_body = {**route.get("default_body", {}), **body}
-    return method, path, out_body
-
-
-def execute_tool(name: str, params: dict, handler: str | None,
-                 shell_id: int, token: str | None = None):
+def execute_tool(name: str, params: dict, handler: str | None, token: str | None = None):
     """Run one tool call. Returns (text, is_error). A tool whose stored
     `handler` is 'api' hits the dos-arch API — METHOD_MAP maps the tool name
-    to an HTTP verb; a handler in NAMED_API_ROUTES projects the model's
-    `params` onto a fixed (method, path-template) with `{self}` from Bearer
-    and optional body-pulled path params; every other handler key routes to
-    a shell_core.services.tools handler via run_tool()."""
+    to an HTTP verb; a handler in NAMED_API_ROUTES fires a fixed (method,
+    path) with `params` as the body; every other handler key routes to a
+    shell_core.services.tools handler via run_tool()."""
     params = params or {}
     if handler == "api":
         method = METHOD_MAP.get(name)
@@ -416,12 +314,9 @@ def execute_tool(name: str, params: dict, handler: str | None,
         with TOOL_SEMAPHORE:
             return _request(method, path, body=params.get("body"), timeout=30, token=token)
     if handler in NAMED_API_ROUTES:
-        resolved = _resolve_named_route(handler, params, shell_id)
-        if len(resolved) == 2:           # error tuple from the resolver
-            return resolved
-        method, path, body = resolved
+        method, path = NAMED_API_ROUTES[handler]
         with TOOL_SEMAPHORE:
-            return _request(method, path, body=body, timeout=30, token=token)
+            return _request(method, path, body=params, timeout=30, token=token)
     if not handler:
         return f"tool '{name}' has no handler registered", True
     return run_tool(handler, params)
@@ -553,7 +448,7 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
                 for tc in parsed.tool_calls:
                     result, is_error = execute_tool(
                         tc["name"], tc["input"], tool_handlers.get(tc["name"]),
-                        shell_id=shell["shell_id"], token=token)
+                        token=token)
                     short_in  = json.dumps(tc["input"])[:140].replace("\n", " ")
                     short_out = result[:140].replace("\n", " ")
                     print(f"  tool={tc['name']} in={short_in} err={is_error} out={short_out}", flush=True)
