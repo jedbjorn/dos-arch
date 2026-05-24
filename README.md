@@ -18,584 +18,353 @@ everything together.
 
 ## Dependencies
 
-The substrate runs on a handful of host packages. **[Quickstart Step 0](#quickstart)**
-below has the install commands — this is what each one is for:
+The substrate runs on a handful of host packages. `host-setup.sh` (phase 1
+of `./install/setup.sh`) installs them; this is what each is for:
 
 - **git**, **make** — clone the repo + Make entry points
 - **Python 3.10+** — FastAPI runtime, launcher, admin scripts
 - **Node 18+** + **npm** — SvelteKit UI
-- **pm2** — process manager for the host-level UI (the API and broker run
+- **pm2** — host-side process manager for the UI, the browser-chat
+  dispatcher, and the Ollama model-sync watcher (the API and broker run
   as their own containers)
 - **Docker** + `docker-buildx`, `slirp4netns`, `fuse-overlayfs` — the
-  per-shell container sandbox (run rootless)
-- **acl** (`setfacl`) — lets the `dos-arch` service user reach the clone
+  per-shell container sandbox (run rootless, as the operator)
+- **cronie** — runs the nightly `dr_*` catalogue sync
 
 `claude` is **not** a host dependency — it is baked into the `dos-shell`
 image and run via `docker exec` inside the container.
 
-Installing the packages is only the start: the **rootless-Docker
-configuration** — service user, rootless daemon, the substrate images — is
-the scripted procedure in **[install/README.md](install/README.md)**. Those
-scripts are Arch-specific (`pacman`); on Ubuntu the rootless-Docker steps
-need adapting.
+Installing the packages is only the start: the rootless-Docker
+configuration — daemon under the operator's user systemd, the substrate
+images, broker + API containers, pm2 supervisors, the catalogue cron —
+is the scripted procedure in **[install/README.md](install/README.md)**.
+The scripts are **Arch-only** (`pacman` gate); Ubuntu support would need
+a parallel `host-setup-deb.sh` that doesn't ship yet.
 
 > **Next:** the **[Quickstart](#quickstart)** below runs the install
-> end-to-end; **[install/README.md](install/README.md)** has the Layer-1
-> (Docker host) detail and **[Cold bootstrap](#cold-bootstrap)** explains
-> what the substrate build does.
+> end-to-end; **[install/README.md](install/README.md)** has the per-phase
+> detail; **[Cold bootstrap](#cold-bootstrap)** explains what the
+> substrate build does.
 
 ---
 
 ## Quickstart
 
-The system has two layers, documented in two files. The real end-to-end
-sequence — fresh host → working shell — runs top to bottom: copy each
-command in turn, one at a time. The links go to deeper explanation; you
-do not need to follow them to get through the install.
+The full install is **one script** — `./install/setup.sh` — that runs nine
+phases end-to-end. Two interactive moments, both up front (your `sudo`
+password, then the first substrate user's username + password); everything
+after runs unattended.
 
-### Step 0 — dependencies & clone (operator)
+`setup.sh` is **Arch-only** (`pacman` gate). Ubuntu would need a parallel
+`host-setup-deb.sh` that doesn't ship yet.
 
-The whole install runs on a handful of host packages. **Install them
-first** — a skipped dependency doesn't fail loudly here; it surfaces much
-later as a `<name> not found` error (`pm2 not found`, `node not found`, …).
-See **[Dependencies](#dependencies)** above for what each one does.
+### Step 0 — sync, clone, .env (operator)
 
-**Arch / CachyOS:**
-
-```bash
-sudo pacman -Syu     # rolling distro — sync the package db first, or pacman -S 404s on stale entries
-sudo pacman -S --needed git base-devel python nodejs npm docker docker-buildx slirp4netns fuse-overlayfs acl
-sudo npm install -g pm2
-```
-
-If `pacman -Syu` updates the kernel, reboot before continuing.
-
-**Ubuntu (24.04+):**
+`host-setup.sh` (phase 1 of `setup.sh`) installs the system packages, so
+you don't need to install them by hand — but on a rolling distro it is
+worth syncing the package db first:
 
 ```bash
-sudo apt update
-sudo apt install -y git build-essential python3 python3-venv nodejs npm docker.io docker-buildx slirp4netns fuse-overlayfs uidmap acl
-sudo npm install -g pm2
+sudo pacman -Syu
 ```
 
-**Ollama** — the local-model runtime dos-arch shells run against. Install
-the build that matches your GPU:
-
-```bash
-# Arch / CachyOS — NVIDIA GPU (AMD: ollama-rocm  ·  CPU-only: ollama)
-sudo pacman -S --needed ollama-cuda
-sudo systemctl enable --now ollama
-
-# Ubuntu / other Linux — the installer auto-detects the GPU
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-GPU variants and the reasoning behind the choice are in
-**[install/README.md → Local models](install/README.md#local-models)**.
-
-Then clone the repo into your home directory:
+If the kernel updates, reboot before continuing. Then clone the repo:
 
 ```bash
 git clone https://github.com/jedbjorn/dos-arch.git ~/dos-arch
 ```
 
-### Layer 1 — Docker host
-
-Detailed in **[install/README.md](install/README.md)**.
-
-#### 1 — host bootstrap (operator)
-
-Run from your clone, as the operator:
+`setup.sh` refuses to start without the broker secrets file at
+`~/.config/dos-arch/.env`. A script cannot author secrets — create it now:
 
 ```bash
 cd ~/dos-arch
-sudo ./install/host-setup.sh
+mkdir -p ~/.config/dos-arch
+cp .env.example ~/.config/dos-arch/.env
+nano ~/.config/dos-arch/.env
 ```
 
-[Creates the `dos-arch` service user, subuid/subgid ranges, installs `docker docker-buildx slirp4netns fuse-overlayfs`, disables the rootful daemon, enables linger, stages `install/`+`docker/` into `~dos-arch/setup/`.](install/README.md#1--host-bootstrap-operator-sudo)
+In `nano`: arrow keys move the cursor; type each value right after the `=`
+sign (no spaces, no quotes); `Ctrl+O` then `Enter` to save, `Ctrl+X` to
+exit. The two lines to fill:
 
-#### 2 — rootless Docker (dos-arch)
+**`ANTHROPIC_API_KEY`** — create one in the Anthropic Console:
+[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+It looks like `sk-ant-…`:
 
-Enter a `dos-arch` session (run as the operator):
+```
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+```
+
+**`GITHUB_TOKEN`** — a GitHub token the broker uses for git-over-HTTPS
+(clone / pull / push) on behalf of shell containers. Two ways to get one:
+
+- *Recommended — a fine-grained PAT.* Create one at
+  [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
+  (GitHub → Settings → Developer settings → Personal access tokens →
+  Fine-grained tokens → Generate new token). Set:
+  - **Repository access** → *Only select repositories* → just the repos
+    your shells will work in. Narrow scope bounds the blast radius if the
+    token is ever leaked.
+  - **Repository permissions** → **Contents: Read and write** (*read* =
+    clone/pull, *write* = push). **Metadata: Read-only** is selected
+    automatically and is required. Leave everything else off.
+
+  ```
+  GITHUB_TOKEN=github_pat_xxxxxxxx
+  ```
+
+- *Quick — dev/test only.* If `gh` is already authenticated on the host,
+  `gh auth token` prints a usable token — but it is **account-wide**, not
+  scoped to specific repos. Wire it in directly:
+
+  ```bash
+  sed -i "s|^GITHUB_TOKEN=.*|GITHUB_TOKEN=$(gh auth token)|" ~/.config/dos-arch/.env
+  ```
+
+### Run setup
 
 ```bash
-sudo machinectl shell dos-arch@
+./install/setup.sh
 ```
 
-Inside that session the staged setup lives in `~/setup`:
+That's it. Nine phases run in order:
 
-```bash
-cd ~/setup
-./install/rootless-setup.sh
-```
+| # | What | Notes |
+|---|---|---|
+| 1 | `sudo ./install/host-setup.sh` | Asks for your sudo password. Packages, subuid/subgid, linger, cronie. |
+| 2 | `make bootstrap`               | **Interactive** — prompts for the first substrate user's username + password. |
+| 3 | `make install`                 | `.venv` + pip deps + `npm install`. |
+| 4 | `./install/rootless-setup.sh`  | Fetches rootless-extras into `~/bin`, starts the rootless daemon, selects its CLI context. |
+| 5 | `./install/build-image.sh`     | Builds `dos-shell`, `dos-broker`, `dos-api`. |
+| 6 | `./install/broker-up.sh`       | `dos-net` network + `dos-broker` container. |
+| 7 | `./install/api-up.sh`          | Migrate DB, host-side `dr_sync`, start `dos-api` on `127.0.0.1:8001`. |
+| 8 | `make up`                      | pm2 starts `dosarch-ui` (5174), `dosarch-dispatch`, `dosarch-modelsync`. |
+| 9 | `./install/cron-install.sh` + `make sync-models` | Daily catalogue cron; hardware probe + Ollama model read (non-fatal if Ollama absent). |
 
-Then return to your operator login:
+Each script is also runnable on its own — useful when fixing a partial
+install. Full per-phase detail in
+**[install/README.md](install/README.md#what-setupsh-runs)**.
 
-```bash
-exit
-```
+**Pin a Claude Code version** into the `dos-shell` image:
+`./install/setup.sh 2.1.133`. Default is `stable`.
 
-[Fetches version-matched rootless-extras, runs the setuptool, persists `PATH`+`DOCKER_HOST` in `.bashrc`, verifies with `docker run hello-world`.](install/README.md#2--rootless-docker-as-dos-arch)
-
-#### 3 — create `.env` + grant access (operator)
-
-Back as the operator, in your clone:
-
-```bash
-cd ~/dos-arch
-```
-
-```bash
-cp .env.example .env
-```
-
-Fill in the two broker secrets — `ANTHROPIC_API_KEY` and `GITHUB_TOKEN`:
-
-```bash
-nano .env
-```
-
-Then grant the `dos-arch` user access to the clone:
-
-```bash
-setfacl -m u:dos-arch:x ~
-setfacl -R -m u:dos-arch:rwX ~/dos-arch
-setfacl -R -d -m u:dos-arch:rwX ~/dos-arch
-```
-
-[Broker secrets; grants `dos-arch` access to the clone.](install/README.md#3--create-env-operator) The linked section walks through obtaining each token.
-
-#### 4 — build images (dos-arch)
-
-`build-image.sh` and `broker-up.sh` need the full clone, so enter a `dos-arch` session that lands in it (run as the operator):
-
-```bash
-sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
-```
-
-Then build all three images:
-
-```bash
-./install/build-image.sh
-```
-
-[Builds 3 images: `dos-shell`, `dos-broker`, `dos-api`.](install/README.md#4--build-images--start-the-broker-as-dos-arch)
-
-#### 5 — start the broker (dos-arch)
-
-In the same `dos-arch` session:
-
-```bash
-./install/broker-up.sh
-```
-
-[Creates `dos-net`, runs the `dos-broker` container, health-checks it.](install/README.md#4--build-images--start-the-broker-as-dos-arch)
-
-Then return to your operator login:
-
-```bash
-exit
-```
-
-### Layer 2 — substrate
-
-Detailed in **[Cold bootstrap](#cold-bootstrap)** below.
-
-#### Refresh the clone (operator)
-
-You own the clone, so the `git pull` is yours to run:
-
-```bash
-cd ~/dos-arch
-git pull
-```
-
-[Refreshes the Layer-1 clone before building the substrate.](#cold-bootstrap)
-
-#### 6 — install dependencies (dos-arch)
-
-Steps 6–11 run in **one `dos-arch` session** — once you are in, copy them
-straight down the list. Enter it from your operator login:
-
-```bash
-sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
-```
-
-Then:
-
-```bash
-make install
-```
-
-[`.venv` + pip (fastapi/uvicorn/pydantic) + `npm install` in `ui/`.](#cold-bootstrap)
-
-#### 7 — bootstrap the database (dos-arch)
-
-In the same session:
-
-```bash
-make bootstrap
-```
-
-[`bootstrap.py`: applies `schema.sql`, seeds skills from `assets/skills/`, seeds Forge, prompts for the first user, seeds Sys-Admin → writes `shell_db.db`.](#cold-bootstrap) This step is interactive — it prompts for the first user's username and password.
-
-#### 8 — start the API (dos-arch)
-
-`api-up.sh` needs `shell_db.db`, so it runs *after* `make bootstrap`. Same session:
-
-```bash
-./install/api-up.sh
-```
-
-[Runs the `dos-api` container, bind-mounts `shell_core/`, publishes `127.0.0.1:8000`.](#cold-bootstrap)
-
-#### 9 — start the UI (dos-arch)
-
-```bash
-make up
-```
-
-[pm2 starts the UI (`127.0.0.1:5173`).](#cold-bootstrap)
-
-#### 10 — launch a shell (dos-arch)
+### Then launch a shell
 
 ```bash
 make launch
 ```
 
-[`run.py`: auth → picker → render `CLAUDE.md` → `ensure_container` → `docker exec -it claude` into `shell-<name>`.](#cold-bootstrap)
+The launcher authenticates you, lists your shells (owned + shared), opens
+or starts the picked shell's container, and `docker exec`s `claude` into
+it. See **[Daily commands](#daily-commands)** below.
 
-#### 11 — install the catalogue cron (dos-arch)
+### Local models (Ollama)
 
-```bash
-./install/cron-install.sh
-```
-
-[Installs the daily dr_* catalogue sync cron — the only *automatic* full sync; logs each run to `dr_sync_runs`. Run once.](#cold-bootstrap)
-
-That is the full install. From here, `make launch` (step 10) is the daily
-entry point — see **[Daily commands](#daily-commands)** below.
-
-### Local models (after install)
-
-dos-arch shells run against a local LLM via Ollama (installed in Step 0).
-Once the substrate is up, pull a model set sized to your hardware, then
-record what is installed as live DB state:
+dos-arch shells run against a local LLM served by Ollama on the host.
+`setup.sh` does not install Ollama — pick the GPU variant by hand:
 
 ```bash
-ollama pull qwen2.5-coder:7b      # browse the library: https://ollama.com/library
-make collect-hardware             # probe this host       -> user_hardware
-make sync-models                  # read Ollama's set      -> installed_models
+sudo pacman -S --needed ollama-cuda     # NVIDIA — offloads to the GPU
+sudo pacman -S --needed ollama-rocm     # AMD
+sudo pacman -S --needed ollama          # CPU-only
+sudo systemctl enable --now ollama
 ```
 
-Which models to pull depends on VRAM. **[install/README.md → Local
-models](install/README.md#local-models)** has the full walkthrough;
-**[docs/model-tiers.md](docs/model-tiers.md)** breaks down hardware and
-model picks per VRAM tier (8 / 12 / 24 / 32 / 48 / 128 GB).
-
-**For the browser-chat sidebar (CC-50 agnostic runtime).** The chat panel's
-"Available Models — Local" column reads from a different table: the
-`models` registry, which carries `provider` / `tool_dialect` / `endpoint`.
-A starter row for `qwen2.5:3b` ships with `endpoint=http://localhost:11434/v1`
-and `tool_dialect=openai` (Ollama's OpenAI-compatible `/v1`). If you pull a
-different tool-capable model, or run Ollama on a different host, update
-the registry directly — or override at runtime with the `OLLAMA_API_BASE`
-environment variable:
+Pull a model sized to your VRAM — see **[docs/model-tiers.md](docs/model-tiers.md)**
+for picks per tier — then refresh the substrate's view:
 
 ```bash
-# Pull a tool-capable local model (browse: https://ollama.com/library)
-ollama pull qwen2.5:3b           # ~2 GB,  3B params (recommended starter)
-# ollama pull qwen2.5:1.5b       # ~1 GB,  comfortable on tight RAM
-# ollama pull qwen2.5-coder:7b   # ~5 GB,  SWE-tuned
-
-# Point dos-arch at a different model / host
-sqlite3 shell_core/shell_db.db \
-  "UPDATE models SET name='<your-ollama-tag>', endpoint='http://<host>:11434/v1' WHERE provider='local'"
-# or env-override the endpoint without touching the DB:
-export OLLAMA_API_BASE=http://your-ollama-host:11434/v1
+ollama pull qwen2.5-coder:7b
+make sync-models                  # read Ollama -> installed_models + models registry
 ```
 
-Ollama itself and the specific model tags are **user-managed**
-dependencies — dos-arch does not pull them for you. Pick a model that
-supports tool calls (the Ollama library tags these "Tools").
+`model_sync.py` is the source of truth for local models in the `models`
+registry: it reads Ollama's installed set via `/api/tags` + `/api/show`,
+UPSERTs each as a `provider='local'` row, classifies `supports_tools` +
+`accepts_substrate_system` from the template, and flips inactive any row
+whose model is no longer installed. No local rows are seeded at install
+time — the registry starts empty for local models and `model_sync` fills
+it from reality. The `dosarch-modelsync` pm2 process watches Ollama
+continuously, so the registry tracks `ollama pull` / `ollama rm`
+hands-free after the first sync.
+
+Pick models the Ollama library tags as **"Tools"** — the browser-chat
+dispatcher needs tool calls. Models without that capability still sync,
+just registered as `status='inactive'`.
 
 ### Troubleshooting
 
 | Symptom | Cause → fix |
 |---|---|
-| `pm2 not found` / `node not found` / `python3 not found` (from `make install`) | A dependency was skipped — run **Step 0** above, then retry. |
-| `failed retrieving file …` (during `host-setup.sh`) | Stale package database on a rolling distro — `sudo pacman -Syu` (reboot if the kernel updates), then re-run the step. |
-| `docker: command not found` (`build-image.sh` / `api-up.sh` / `make launch`) | Not in a `dos-arch` session, or its `PATH` isn't loaded — use the `sudo machinectl shell dos-arch@ /bin/bash -lc "…"` one-liner forms; the `-l` login shell loads `~/.bashrc`. |
-| `sudo` asks for a `dos-arch` password | You ran `sudo` *inside* a `dos-arch` session — `dos-arch` is passwordless and not a sudoer. `exit` to the operator first; `sudo` is the operator's. |
+| `cannot read ~/.config/dos-arch/.env` (setup or broker) | Create the file: `mkdir -p ~/.config/dos-arch && cp .env.example ~/.config/dos-arch/.env`, then fill in the two keys. |
+| `pacman: command not found` (host-setup) | Not an Arch-based host. `setup.sh` is Arch-only. |
+| `failed retrieving file …` (host-setup) | Stale package database on a rolling distro — `sudo pacman -Syu` (reboot if the kernel updates), then re-run. |
+| `XDG_RUNTIME_DIR unset` (rootless-setup) | Running in a detached session. Use a desktop terminal, a tty, or `ssh -t`. |
+| `docker: command not found` (after install, new shell) | `~/bin` not on PATH — open a fresh shell, or `export PATH=$HOME/bin:$PATH`. |
+| `connect: permission denied` on Docker socket | Wrong Docker context — `docker context use rootless`. |
+| Daily `make launch` errors immediately | Check `pm2 ls` (the three `dosarch-*` apps), `docker ps` (`dos-api` + `dos-broker`), and `curl http://127.0.0.1:8001/health`. |
+
+More cases — cgroup v2 delegation, user namespaces, etc. — in
+**[install/README.md → Notes / troubleshooting](install/README.md#notes--troubleshooting)**.
 
 ### Updating procedure
 
 Routine updates need no rebuild — the API and UI run from bind-mounted
-source, so a `git pull` plus a restart picks up code changes.
-
-#### U1 — refresh the clone (operator)
+source, so `git pull` + a restart picks up code changes. As the operator:
 
 ```bash
 cd ~/dos-arch
-```
-
-```bash
 git pull
+./install/api-up.sh     # applies migrations, restarts dos-api
+make restart            # bounces dosarch-ui, dosarch-dispatch, dosarch-modelsync
 ```
 
-#### U2 — restart services (dos-arch)
+`api-up.sh` snapshots the DB automatically before migrating (see the path
+it prints) — no manual backup is needed. `make db-backup` is there if you
+want an extra one.
 
-Enter a `dos-arch` session in the clone (run as the operator):
+**Rebuild images** only when something under `docker/` changes, or to pin
+a new Claude Code version:
 
 ```bash
-sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && exec bash -l"
+./install/build-image.sh         # rolls history-1..3, builds fresh :latest
+./install/broker-up.sh           # recreate dos-broker on the new image
+./install/api-up.sh              # recreate dos-api on the new image
 ```
 
-Recreate the API container against the updated source:
-
-```bash
-./install/api-up.sh
-```
-
-Bounce the UI:
-
-```bash
-make restart
-```
-
-Then return to your operator login:
-
-```bash
-exit
-```
-
-`api-up.sh` applies any pending DB migrations on the way up and snapshots
-the DB automatically first — so no manual backup step is needed before an
-update. `make db-backup` is there if you want an extra snapshot.
-
-#### Rebuilding images (when Dockerfiles change)
-
-The images only need rebuilding when something under `docker/` changes — or
-to pin a new Claude Code version into `dos-shell`. In the same `dos-arch`
-session as U2:
-
-```bash
-./install/build-image.sh
-```
-
-```bash
-./install/broker-up.sh
-```
-
-Existing shell containers keep running their old `dos-shell` image until
-they are recreated.
+Existing per-shell containers keep running the old `dos-shell` image until
+recreated.
 
 ### Teardown procedure
 
-`teardown.sh` is the inverse of the install — it runs in three phases. Full
-detail in **[install/README.md](install/README.md#teardown--rebuild-or-complete-removal)**.
-
-#### T1 — dos-arch-side teardown (dos-arch)
-
-Enter a `dos-arch` session (run as the operator):
+`./install/teardown.sh` is the inverse of the install. Run as the operator:
 
 ```bash
-sudo machinectl shell dos-arch@
+cd ~/dos-arch
+./install/teardown.sh
 ```
 
-The staged scripts live in `~/setup`:
+Five operator-side phases: pm2 delete the three `dosarch-*` apps; remove
+all containers; prune images/networks/volumes/build cache; uninstall
+rootless Docker; wipe `~/.local/share/docker`.
+
+**What it leaves alone — by design, so a re-`setup.sh` rebuilds without
+re-asking:** pacman packages, the operator's subuid/subgid + linger, the
+repo clone, `~/.config/dos-arch/.env`, `~/db_backups/dos-arch`, and the
+`dr_sync` cron line. To rebuild from here, re-run `./install/setup.sh`.
+
+#### Complete rip-out
+
+For a full uninstall:
 
 ```bash
-~/setup/install/teardown.sh
+crontab -l | grep -v dr-sync-cron | crontab -        # remove the cron line
+rm -rf ~/.config/dos-arch                            # broker secrets (had real keys)
+rm -rf ~/db_backups/dos-arch                         # DB snapshots
+rm -rf ~/dos-arch                                    # the clone
+sudo loginctl disable-linger $(id -un)               # only if no other rootless service uses it
+sudo sed -i "/^$(id -un):/d" /etc/subuid /etc/subgid # only if no other rootless service needs the range
 ```
 
-Then return to your operator login:
+Optional — remove the packages (`pacman -Rns` refuses if anything still
+depends on them):
 
 ```bash
-exit
+sudo pacman -Rns docker docker-buildx slirp4netns fuse-overlayfs cronie
 ```
 
-Prunes all containers / images / networks / volumes and uninstalls rootless
-Docker.
+`.env` carried real credentials — if the host is shared or untrusted,
+rotate them after deletion. `rm` clears them from disk, not from anywhere
+they were already used.
 
-#### T2 — host-level removal (operator, sudo)
+#### Fresh-DB rebuild
 
-As the operator, remove the `dos-arch` service user and its host footprint:
+To reset every build artifact (DB, `.venv`, `node_modules`, rendered
+shells) but keep the host setup, from the repo root:
 
 ```bash
-sudo loginctl disable-linger dos-arch
+git clean -xfd
+./install/setup.sh
 ```
 
-```bash
-sudo loginctl terminate-user dos-arch
-```
-
-```bash
-sudo userdel -r dos-arch
-```
-
-```bash
-sudo sed -i '/^dos-arch:/d' /etc/subuid /etc/subgid
-```
-
-Optional — remove the Docker packages, only if nothing else on the host
-uses them (`pacman` refuses if a package still has dependents):
-
-```bash
-sudo pacman -Rns docker docker-buildx slirp4netns fuse-overlayfs
-```
-
-To rebuild from here, stop — the host is clean — and start again at
-**[step 1](#1--host-bootstrap-operator)**.
-
-#### T3 — complete removal (operator)
-
-Phases T1–T2 leave your clone and shell config untouched. For a complete
-rip-out, also remove these — as the operator:
-
-```bash
-setfacl -b ~
-```
-
-```bash
-rm -rf ~/dos-arch
-```
-
-```bash
-sudo rm -f /etc/sudoers.d/launch-dos-arch
-```
-
-```bash
-rm -rf ~/db_backups/dos-arch
-```
-
-Then remove the `launch-dos-arch` shortcut from your shell — see
-**[install/README.md](install/README.md#teardown--rebuild-or-complete-removal)**
-for the fish/bash specifics.
-
-`~/dos-arch/.env` held real credentials (`ANTHROPIC_API_KEY`,
-`GITHUB_TOKEN`) — rotate them if the host is shared or untrusted. Deleting
-the file clears it from disk, not from anywhere it was already used.
+`git clean -xfd` removes everything git ignores — no path list to keep in
+sync. `.env` lives at `~/.config/dos-arch/.env` outside the clone, so it
+survives.
 
 ---
 
 ## Daily commands
 
-```bash
-sudo machinectl shell dos-arch@ /bin/bash     #Enter the shell env
+All run as the operator, from anywhere in `~/dos-arch`:
 
-make launch                                   # picker: auth, pick a shell, launch it in its container
-make launch-<shortname>                       # boot that shell directly (skip picker)
-make create-user                              # provision a new substrate user
-make set-password                             # reset a user's launcher password
-make gen-api-key                              # issue/rotate a shell's substrate-API key (ARGS=<shortname>)
-make up                                       # pm2 start the UI (API + broker run as containers)
-make down                                     # pm2 delete the UI
-make restart                                  # bounce the UI
-make status                                   # pm2 ls
-make logs                                     # pm2 logs (Ctrl-C to detach)
-make health                                   # GET /health
-make dispatch                                  # run the browser-chat dispatcher (needs ANTHROPIC_API_KEY)
-make db-backup                                # snapshot shell_db.db -> ~/db_backups/dos-arch/<ts>.db
-make bootstrap                                # one-shot fresh-substrate setup; refuses if DB exists
-make migrate                                  # apply pending DB migrations (ARGS=--status to preview)
-make catalogue                                # print the catalogue (filter via ARGS=, e.g. ARGS='flag')
+```bash
+cd ~/dos-arch
+
+make launch                       # picker: auth, pick a shell, launch it in its container
+make launch-<shortname>           # boot that shell directly (skip picker)
+make create-user                  # provision a new substrate user
+make set-password                 # reset a user's launcher password
+make gen-api-key ARGS=<shortname> # issue/rotate a shell's substrate-API key
+make up                           # pm2 start the UI + dispatcher + modelsync
+make down                         # pm2 delete the same three
+make restart                      # bounce them
+make status                       # pm2 ls
+make logs                         # pm2 logs (Ctrl-C to detach)
+make health                       # GET http://127.0.0.1:8001/health
+make dispatch                     # run the browser-chat dispatcher in the foreground (debug)
+make db-backup                    # snapshot shell_db.db -> ~/db_backups/dos-arch/<ts>.db
+make migrate ARGS=--status        # preview pending DB migrations
+make migrate                      # apply them
+make catalogue ARGS='flag'        # print the catalogue (substring filter)
+make sync-models                  # re-read Ollama into the registry
 ```
 
-`make launch` runs as the `dos-arch` service user — it drives rootless
-Docker. Use the `launch-dos-arch` shortcut below to launch from your own
-login.
+The `dos-api` + `dos-broker` containers stay up between sessions; only
+per-shell containers spin up at `make launch` and stay running across
+re-launches of the same shell.
 
-### Shortcut: `launch-dos-arch` / 'enter-dos-arch'
+The launcher runs as you, the operator — no `sudo`, no session hop.
+Convenience alias if you want to launch from any directory:
 
-The launcher runs as the `dos-arch` service user — it drives rootless
-Docker, which only `dos-arch` can reach. `launch-dos-arch` is a shortcut,
-defined in your operator login's shell, that hops into a `dos-arch` session
-and runs `make launch` from any directory.
-
-The functions use `$HOME/dos-arch` — your shell expands `$HOME` *before*
-entering the `dos-arch` session, so the session receives your real clone
-path. (Inside a `dos-arch` session `~` is `/home/dos-arch`, not your home —
-which is why the path can't be written `~/dos-arch` here.) Change it only if
-you cloned somewhere other than `~/dos-arch`.
-
-**fish** — define a function and persist it (`funcsave` writes it to
-`~/.config/fish/functions/`, so it survives new sessions):
-
-**Enters the Dos-arch dir**
+**fish:**
 ```fish
-function enter-dos-arch
-    sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"
+function dosarch
+    cd ~/dos-arch && make launch
 end
-funcsave enter-dos-arch
+funcsave dosarch
 ```
 
-**Launches the Shell Renderer**
-```fish
-function launch-dos-arch
-    sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"
-end
-funcsave launch-dos-arch
-```
-
-**bash** — add a function to `~/.bashrc` (a function, not an alias — it
-nests quotes cleanly):
-
-**Enters the Dos-arch dir**
+**bash:**
 ```bash
-cat >> ~/.bashrc <<'EOF'
-enter-dos-arch() { sudo machinectl shell dos-arch@ /bin/bash; }
-EOF
+echo 'dosarch() { (cd ~/dos-arch && make launch); }' >> ~/.bashrc
 source ~/.bashrc
-```
-**Launches the Shell Renderer**
-```bash
-cat >> ~/.bashrc <<'EOF'
-launch-dos-arch() { sudo machinectl shell dos-arch@ /bin/bash -lc "cd $HOME/dos-arch && make launch"; }
-EOF
-source ~/.bashrc
-```
-
-Then `launch-dos-arch` boots the picker from anywhere. It prompts once for
-your `sudo` password per launch.
-
-**Drop the password prompt (optional).** A scoped `sudoers` rule lets the
-hop run without a prompt — no new privilege, since your operator user is
-already a sudoer. As that user (replace `<operator>` with your username):
-
-```bash
-echo '<operator> ALL=(root) NOPASSWD: /usr/bin/machinectl shell dos-arch@*' \
-  | sudo tee /etc/sudoers.d/launch-dos-arch
-sudo chmod 440 /etc/sudoers.d/launch-dos-arch
 ```
 
 ---
 
 ## Cold bootstrap
 
-The Quickstart (steps 6–11) is the command sequence; this is the
-explanation behind it — what `make bootstrap` does, and why the substrate
-ends up self-healing.
-
-The substrate is the second install layer: the DB, the `dos-api`
-container, and the host-level UI, built on the rootless-Docker host from
-**[install/README.md](install/README.md)**. It continues from the clone
-made in Quickstart Step 0 — no second clone.
+The Quickstart is the command sequence; this is the explanation behind
+phase 2 — what `make bootstrap` does, and why the substrate ends up
+self-healing.
 
 `make bootstrap` runs `shell_core/scripts/bootstrap.py`, which:
 1. Errors out if `shell_db.db` already exists (use `make db-backup` first if recreating).
-2. Executes `schema.sql` against a new SQLite file.
-3. Seeds every skill from `shell_core/assets/skills/` — one tracked `.md` per skill, frontmatter + body.
-4. Seeds Forge, the shared bootstrap shell, from `shell_core/assets/shells/forge.md` (`is_shared=1`, `create_shell` attached).
-5. Prompts for the first user — username + password. This is the substrate admin.
-6. Seeds Sys-Admin, the resident admin/dev shell, owned by that user — identity columns (`role`, `mandate`, `connections`) from `shell_core/assets/shells/sys-admin.md`, with every `common`-flagged skill attached.
+2. Executes `schema.sql` against a new SQLite file, then stamps every shipped migration as applied.
+3. Seeds every skill from `shell_core/assets/skills/` — one tracked `.md` per skill, frontmatter → columns, body → `content`.
+4. Seeds the remote model registry (Anthropic + OpenAI). Local models are not seeded — they appear when `model_sync.py` reads Ollama (Quickstart phase 9 + the `dosarch-modelsync` pm2 watcher).
+5. Seeds Forge, the shared bootstrap shell, from `shell_core/assets/shells/forge.md` (`is_shared=1`, `create_shell` attached).
+6. Prompts for the first user — username + password. This is the substrate admin.
+7. Seeds Sys-Admin, the resident admin/dev shell, owned by that user — identity from `shell_core/assets/shells/sys-admin.md`, with every `common`-flagged skill attached, `is_admin=1`, `browser_chat=1`.
+8. Seeds every tool from `shell_core/assets/tools/` and scopes each handler family to its skill via `[skill_map]`.
 
 So a freshly-bootstrapped substrate already has a working admin shell. On
 `make launch` the first user enters their username, clears the password
 challenge, and picks Sys-Admin — or Forge, to spawn more shells.
 
-`api-up.sh` (Quickstart step 8) bind-mounts `shell_core/` into the
-`dos-api` container and publishes the API on `127.0.0.1:8000`, so a later
+`api-up.sh` (Quickstart phase 7) bind-mounts `shell_core/` into the
+`dos-api` container and publishes the API on `127.0.0.1:8001`, so a later
 `git pull` plus a re-run picks up code changes with no image rebuild — see
 **[Updating procedure](#updating-procedure)**.
 
