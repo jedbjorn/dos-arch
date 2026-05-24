@@ -1,6 +1,6 @@
 ---
 name: shared
-description: Inspect this shell's shared host↔container handoff folder. Returns the absolute path plus a one-level listing (count + most-recent entry per subdir) of redlines/, review/, repos/, backups/.
+description: Inspect this shell's shared host↔container handoff folder. Returns JSON {path, subdirs: {redlines: {count, latest}, review: {...}, repos: {...}, backups: {...}}}.
 kind: builtin
 handler: shared.inspect
 ---
