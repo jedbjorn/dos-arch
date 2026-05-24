@@ -698,6 +698,39 @@ class UpdateArchiveBody(BaseModel):
     narrative_entry: str
 
 
+@router.post("/shells/{shell_id}/narrative-entries", summary="Append an entry to the shell's active session narrative — archive_id resolved server-side")
+def append_shell_narrative(shell_id: int, body: UpdateArchiveBody, con = Depends(get_db)):
+    """Shell-scoped wrapper over `PATCH /shell-memory-archives/{archive_id}` —
+    the dispatcher and its named tools (`narrative.append`) do not have to
+    track the active archive id. Looks up `shells.active_archive_id`; if NULL
+    (typical on API-model shells whose archive row is unpopulated), returns a
+    409 with a clear message so the caller surfaces the gap instead of
+    silently dropping the line."""
+    row = con.execute(
+        "SELECT active_archive_id FROM shells WHERE shell_id=?", (shell_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Shell not found")
+    archive_id = row["active_archive_id"]
+    if archive_id is None:
+        raise HTTPException(409, "shell has no active archive — narrative.append is not available here")
+    entry = body.narrative_entry.strip()
+    if not entry:
+        raise HTTPException(422, "narrative_entry is required")
+    arch = con.execute(
+        "SELECT full_narrative FROM shell_memory_archives WHERE archive_id=?", (archive_id,)
+    ).fetchone()
+    if arch is None:
+        raise HTTPException(409, f"active_archive_id={archive_id} does not exist on shell_memory_archives")
+    new_narrative = ((arch["full_narrative"] or "") + "\n" + entry).strip()
+    con.execute(
+        "UPDATE shell_memory_archives SET full_narrative = ? WHERE archive_id = ?",
+        (new_narrative, archive_id)
+    )
+    con.commit()
+    return {"shell_id": shell_id, "archive_id": archive_id, "appended_chars": len(entry)}
+
+
 @router.patch("/shell-memory-archives/{archive_id}", summary="Append an entry to an archive's full_narrative")
 def update_shell_memory_archive(archive_id: int, body: UpdateArchiveBody, con = Depends(get_db)):
     row = con.execute("SELECT * FROM shell_memory_archives WHERE archive_id = ?", (archive_id,)).fetchone()
