@@ -1,18 +1,23 @@
 """Identity, decisions, archives, chat, messages — the per-shell CRUD surface."""
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Response
 from pydantic import BaseModel, Field
 import hashlib
 import re
 import secrets
 import sqlite3
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from api.common.db import get_db
 from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
-from api.services.boot_document import rerender_boot_document, rerender_shell_sessions, session_start_payload
-from shell_render import prompt_sections, write_universal_block
+from api.services.boot_document import (
+    rerender_boot_document, rerender_shell_sessions, session_start_payload,
+    _dynamic_block, format_dynamic_block,
+)
+from shell_render import assemble_catalog, prompt_sections, write_universal_block
+
+_DOWNLOAD_DIALECTS = ("anthropic", "openai", "parsed")
 
 router = APIRouter(tags=["shells"])
 
@@ -178,6 +183,38 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
         {"label": label, "body": body, "scope": scope, "editable": label in _EDITABLE_SECTIONS}
         for label, body, scope in sections
     ]
+
+
+@router.get("/shells/{shell_id}/prompt-render", summary="Render a fresh full boot prompt (Blocks 1+2 catalog + Block 3 dynamic tail) for the shell, as a downloadable markdown file.")
+def render_shell_prompt(shell_id: int, dialect: str = "anthropic", con = Depends(get_db)):
+    if dialect not in _DOWNLOAD_DIALECTS:
+        raise HTTPException(400, f"Unknown dialect {dialect!r}; expected one of {list(_DOWNLOAD_DIALECTS)}")
+    row = con.execute(
+        "SELECT shortname, active_archive_id FROM shells WHERE shell_id=?",
+        (shell_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Shell not found")
+    runtime_ctx = {
+        "datetime":   datetime.now(),
+        "session_id": "—",
+        "archive_id": row["active_archive_id"] or "—",
+        "shell_id":   shell_id,
+        "model":      None,
+    }
+    body = (
+        assemble_catalog(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
+        + "\n\n"
+        + format_dynamic_block(_dynamic_block(con, shell_id))
+        + "\n"
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = f"{row['shortname']}-prompt-{stamp}.md"
+    return Response(
+        content=body,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # Which prompt-section labels accept text-blob edits via the viewer. Anything
