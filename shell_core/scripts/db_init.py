@@ -28,7 +28,6 @@ rows, so local edits to the live DB survive a re-run. Propagating an
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 import tomllib
 from pathlib import Path
@@ -77,47 +76,23 @@ def _coerce(value: str, decl_type: str):
     return value
 
 
-_BODY_MARKER = re.compile(r"^<!-- @@ (\w+) @@ -->$")
-
-
-def _split_body_sections(body: str) -> dict[str, str]:
-    """Split a body on `<!-- @@ KEY @@ -->` markers into {KEY: section_text}.
-    Each section is the text after its marker up to the next marker (or EOF),
-    stripped of surrounding whitespace. Text before the first marker is
-    discarded. Same idiom as shell_render.render_universal."""
-    sections: dict[str, list[str]] = {}
-    key: str | None = None
-    for line in body.splitlines():
-        m = _BODY_MARKER.match(line)
-        if m:
-            key = m.group(1)
-            sections[key] = []
-        elif key is not None:
-            sections[key].append(line)
-    return {k: "\n".join(v).strip() for k, v in sections.items()}
-
-
 def seed_from_assets(con: sqlite3.Connection, domain: str) -> list[str]:
     """Seed one asset domain — `assets/<domain>/` — into its table.
 
     The domain's `_seed.toml` is the contract:
 
-        table          target table
-        match          column used for INSERT-missing-only dedup
-        body           column the markdown / JSON body is written to
-        body_format    optional — 'text' (default) or 'json' (validated at seed)
-        [const]        optional — column = value pairs applied to every row
-        [body_sections] optional — split the body on `<!-- @@ KEY @@ -->`
-                       markers into per-column writes. When present, supersedes
-                       `body` + `body_format`. Each entry is
-                       `KEY = { column = "col", format = "text"|"json" }`.
+        table        target table
+        match        column used for INSERT-missing-only dedup
+        body         column the markdown / JSON body is written to
+        body_format  optional — 'text' (default) or 'json' (validated at seed)
+        [const]      optional — column = value pairs applied to every row
 
     Each `*.md` file is one row: frontmatter keys map 1:1 to columns, the
-    body (whole or per-section) goes to the named column(s). Every key —
-    manifest, const, and frontmatter — is checked against the live schema
-    (`PRAGMA table_info`); an unknown column, a missing match key, a missing
-    body marker, or a body that fails its format validation is a hard error.
-    INSERT-missing-only; returns the match values newly seeded. Caller commits.
+    body goes to the `body` column. Every key — manifest, const, and
+    frontmatter — is checked against the live schema (`PRAGMA table_info`);
+    an unknown column, a missing match key, or a body that fails
+    `body_format` validation is a hard error. INSERT-missing-only; returns
+    the match values newly seeded. Caller commits.
     """
     domain_dir = ASSETS / domain
     manifest_path = domain_dir / "_seed.toml"
@@ -125,36 +100,18 @@ def seed_from_assets(con: sqlite3.Connection, domain: str) -> list[str]:
         raise FileNotFoundError(f"{domain}: missing {manifest_path}")
     manifest = tomllib.loads(manifest_path.read_text())
 
-    table          = manifest["table"]
-    match          = manifest["match"]
-    body_sections  = manifest.get("body_sections")
-    const          = manifest.get("const", {})
+    table       = manifest["table"]
+    match       = manifest["match"]
+    body_col    = manifest["body"]
+    body_format = manifest.get("body_format", "text")
+    const       = manifest.get("const", {})
 
-    # body_sections (multi-column) takes precedence over single-column body/body_format.
-    if body_sections:
-        section_targets: dict[str, tuple[str, str]] = {}
-        for key, spec in body_sections.items():
-            col = spec.get("column")
-            fmt = spec.get("format", "text")
-            if not col:
-                raise ValueError(f"{domain}: body_sections[{key!r}] missing 'column'")
-            if fmt not in ("text", "json"):
-                raise ValueError(f"{domain}: body_sections[{key!r}] unknown format {fmt!r}")
-            section_targets[key] = (col, fmt)
-        body_col = None
-        body_format = None
-    else:
-        body_col       = manifest["body"]
-        body_format    = manifest.get("body_format", "text")
-        if body_format not in ("text", "json"):
-            raise ValueError(f"{domain}: unknown body_format '{body_format}'")
-        section_targets = {}
-
+    if body_format not in ("text", "json"):
+        raise ValueError(f"{domain}: unknown body_format '{body_format}'")
     cols = {row[1]: row[2] for row in con.execute(f"PRAGMA table_info({table})")}
     if not cols:
         raise ValueError(f"{domain}: table '{table}' not in schema")
-    body_cols = (body_col,) if body_col else tuple(c for c, _ in section_targets.values())
-    for col in (match, *body_cols, *const):
+    for col in (match, body_col, *const):
         if col not in cols:
             raise ValueError(
                 f"{domain}: _seed.toml names column '{col}' not on table '{table}'")
@@ -168,30 +125,11 @@ def seed_from_assets(con: sqlite3.Connection, domain: str) -> list[str]:
                     f"{path.name}: frontmatter key '{key}' is not a column on '{table}'")
         if match not in meta:
             raise ValueError(f"{path.name}: missing match key '{match}' in frontmatter")
-
-        # Resolve body → {column: value}.
-        if section_targets:
-            sections = _split_body_sections(body)
-            body_writes: dict[str, str] = {}
-            for key, (col, fmt) in section_targets.items():
-                if key not in sections:
-                    raise ValueError(
-                        f"{path.name}: missing body marker '<!-- @@ {key} @@ -->'")
-                value = sections[key]
-                if fmt == "json":
-                    try:
-                        json.loads(value)
-                    except json.JSONDecodeError as e:
-                        raise ValueError(
-                            f"{path.name}: section {key} is not valid JSON — {e}") from e
-                body_writes[col] = value
-        else:
-            if body_format == "json":
-                try:
-                    json.loads(body)
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"{path.name}: body is not valid JSON — {e}") from e
-            body_writes = {body_col: body}
+        if body_format == "json":
+            try:
+                json.loads(body)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path.name}: body is not valid JSON — {e}") from e
 
         if con.execute(
             f"SELECT 1 FROM {table} WHERE {match}=?", (meta[match],)
@@ -200,7 +138,7 @@ def seed_from_assets(con: sqlite3.Connection, domain: str) -> list[str]:
 
         row = {**const,
                **{k: _coerce(v, cols[k]) for k, v in meta.items()},
-               **body_writes}
+               body_col: body}
         con.execute(
             f"INSERT INTO {table} ({', '.join(row)}) "
             f"VALUES ({', '.join('?' for _ in row)})",

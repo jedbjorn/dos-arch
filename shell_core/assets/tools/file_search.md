@@ -4,7 +4,6 @@ description: Search file contents for a pattern.
 kind: builtin
 handler: file.search
 ---
-<!-- @@ SPEC @@ -->
 {
   "type": "object",
   "properties": {
@@ -25,17 +24,3 @@ handler: file.search
     "pattern"
   ]
 }
-
-<!-- @@ PROMPT @@ -->
-### file_search — search file contents
-
-**use when:** finding where a symbol, string, or pattern occurs inside files. For name-only matching, use `file_find`.
-
-**args (model fills):**
-- `pattern` (string, required) — substring, or a regular expression when `regex` is true.
-- `path` (string, optional) — file or directory to search under. Defaults to the working directory.
-- `regex` (boolean, optional) — treat pattern as a regex. Default false (literal substring).
-
-**example:** find a symbol across a tree
-
-  <tool:file_search>{"pattern":"NAMED_API_ROUTES","path":"~/dos-arch/shell_core"}</tool>
