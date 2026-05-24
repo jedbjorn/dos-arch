@@ -12,9 +12,10 @@ seed, L&S, skills — were rendered by byte-identical copy-pasted functions in
 each file. This module is the single home for those shared section
 renderers: a change to how a section renders now lands once, not once per
 renderer. ``assemble_catalog`` goes further — it composes the full
-16-section typed catalog (spec §02), section order and all, from the
+17-section typed catalog (spec §02), section order and all, from the
 per-section renderers below; the two render paths converge on it as each
-is cut over.
+is cut over. Each section header carries a `kind` tag (`protocol` /
+`identity` / `state` / `capability`) so the shell can orient at a glance.
 
 This is the seam the shell-prompt-renderer spec (§01) builds the typed
 section catalog on — keep new shared section renderers here.
@@ -93,16 +94,19 @@ def render_skills(con: sqlite3.Connection, shell_id: int) -> str:
 # ── Typed section catalog (shell-prompt-renderer spec §02) ────────────────────
 #
 # The catalog is the ordered set of sections every rendered boot prompt is
-# built from — identity frames first, constraints (Prohibitions, Laws,
-# Communication) sit last where recency keeps them honoured.
-# `assemble_catalog` composes all seventeen; the per-section renderers above
-# and below it are the building blocks.
+# built from. Sections cluster by `kind` — protocol (rules) → identity (what
+# you are) → state (what's true now) → capability (what you can call) — with
+# PROHIBITIONS + LAWS tail-anchored after the capability cluster so the
+# hardest constraints stay last-read. `assemble_catalog` composes all
+# seventeen; the per-section renderers above and below it are the building
+# blocks.
 #
 # The DB-driven sections render from live shell state. The baked universal
 # sections — Definitions, Memory protocol, Prohibitions, Laws, Communication
 # — come from templates/catalog_universal.md via `render_universal`. The
-# Tools and Output Shape sections are dialect-shaped (spec §05) —
-# `render_tools` / `render_output_shape`.
+# Tools section is dialect-shaped (spec §05) via `render_tools`; the output
+# shape is dialect-shaped via `render_output_shape` and appended to the
+# COMMUNICATION body at composition time (no standalone section).
 
 RECENT_DECISIONS_N = 3   # Section K — most-recent decisions rendered (spec open Q#2)
 
@@ -372,13 +376,28 @@ def prompt_sections(
     *,
     dialect: str = "anthropic",
     runtime_ctx: dict,
-) -> list[tuple[str, str, str]]:
-    """The typed (label, body, scope) catalog (spec §02) for a shell, in render
-    order. SYSTEM OVERRIDE leads, then ⌂/A–O. `scope` is "universal" for sections
-    whose body is shared across all shells (same body fans out to every shell —
-    edits made here should propagate) and "shell" for sections derived from this
-    shell's identity, assignments, or runtime. Pure read — same composition path
-    as `assemble_catalog`; the viewer reads structure straight from this list."""
+) -> list[tuple[str, str, str, str]]:
+    """The typed (label, body, scope, kind) catalog (spec §02) for a shell, in
+    render order. Sections cluster by `kind` — `protocol` → `identity` → `state`
+    → `capability`, with PROHIBITIONS and LAWS tail-anchored after the
+    capability cluster so the hardest constraints stay last-read.
+
+    `scope` is "universal" for sections whose body is shared across all shells
+    (same body fans out to every shell — edits propagate) and "shell" for
+    sections derived from this shell's identity, assignments, or runtime.
+
+    `kind` is the shell-facing orientation tag rendered into each section
+    header by `assemble_catalog` (`## LABEL · kind ##`) — `protocol` (rules),
+    `identity` (what you are), `state` (what's true now), `capability` (what
+    you can call). The taxonomy is the shell's, not the renderer's: it tells
+    the model which mental bucket a section's bytes belong to.
+
+    OUTPUT SHAPE is dialect-shaped but is no longer a standalone section — it
+    is appended to COMMUNICATION's body as an `**output shape**` subsection so
+    "how to communicate" reads as one whole.
+
+    Pure read — same composition path as `assemble_catalog`; the viewer reads
+    structure straight from this list."""
     shell = con.execute(
         "SELECT display_name, shortname, partner, role, mandate, "
         "current_state, connections FROM shells WHERE shell_id=?",
@@ -388,27 +407,35 @@ def prompt_sections(
         raise ValueError(f"shell {shell_id} not found")
     universal = render_universal()
 
-    # OUTPUT SHAPE is dialect-shaped, not shell-shaped — its body is identical
-    # for every shell on a given dialect, so it groups with universals.
+    communication = (
+        universal["COMMUNICATION"]
+        + "\n\n**output shape**\n"
+        + render_output_shape(dialect)
+    )
+
     return [
-        ("SYSTEM OVERRIDE",   universal["SYSTEM_OVERRIDE"],          "universal"),
-        ("BOOT",              render_boot_context(runtime_ctx),      "shell"),
-        ("IDENTITY",          render_identity(shell),                "shell"),
-        ("DEFINITIONS",       universal["DEFINITIONS"],              "universal"),
-        ("OPERATING CONTEXT", render_operating_context(shell),       "shell"),
-        ("ACTIVE PROJECTS",   render_active_projects(con, shell_id), "shell"),
-        ("TOOLS",             render_tools(con, shell_id, dialect),  "shell"),
-        ("SKILLS AVAILABLE",  render_skills(con, shell_id),          "shell"),
-        ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"],          "universal"),
-        ("CURRENT STATE",     render_current_state(shell),           "shell"),
-        ("SEED",              render_seed(con, shell_id),            "shell"),
-        ("LESSONS & STANCES", render_lns(con, shell_id),             "shell"),
-        ("RECENT DECISIONS",  render_recent_decisions(con, shell_id),"shell"),
-        ("OPEN FLAGS",        render_flags_pointer(con, shell_id),   "shell"),
-        ("PROHIBITIONS",      universal["PROHIBITIONS"],             "universal"),
-        ("LAWS",              universal["LAWS"],                     "universal"),
-        ("COMMUNICATION",     universal["COMMUNICATION"],             "universal"),
-        ("OUTPUT SHAPE",      render_output_shape(dialect),          "universal"),
+        # protocol — universal rules that bind every shell.
+        ("SYSTEM OVERRIDE",   universal["SYSTEM_OVERRIDE"],          "universal", "protocol"),
+        ("DEFINITIONS",       universal["DEFINITIONS"],              "universal", "protocol"),
+        ("MEMORY PROTOCOL",   universal["MEMORY_PROTOCOL"],          "universal", "protocol"),
+        ("COMMUNICATION",     communication,                         "universal", "protocol"),
+        # identity — stable facts about this shell.
+        ("IDENTITY",          render_identity(shell),                "shell",     "identity"),
+        ("OPERATING CONTEXT", render_operating_context(shell),       "shell",     "identity"),
+        ("SEED",              render_seed(con, shell_id),            "shell",     "identity"),
+        ("LESSONS & STANCES", render_lns(con, shell_id),             "shell",     "identity"),
+        # state — what's true right now for this shell.
+        ("BOOT",              render_boot_context(runtime_ctx),      "shell",     "state"),
+        ("CURRENT STATE",     render_current_state(shell),           "shell",     "state"),
+        ("ACTIVE PROJECTS",   render_active_projects(con, shell_id), "shell",     "state"),
+        ("RECENT DECISIONS",  render_recent_decisions(con, shell_id),"shell",     "state"),
+        ("OPEN FLAGS",        render_flags_pointer(con, shell_id),   "shell",     "state"),
+        # capability — what this shell can reach for.
+        ("TOOLS",             render_tools(con, shell_id, dialect),  "shell",     "capability"),
+        ("SKILLS AVAILABLE",  render_skills(con, shell_id),          "shell",     "capability"),
+        # tail constraints — last-read so recency keeps them honoured.
+        ("PROHIBITIONS",      universal["PROHIBITIONS"],             "universal", "protocol"),
+        ("LAWS",              universal["LAWS"],                     "universal", "protocol"),
     ]
 
 
@@ -419,18 +446,21 @@ def assemble_catalog(
     dialect: str = "anthropic",
     runtime_ctx: dict,
 ) -> str:
-    """Compose the full typed boot-prompt catalog (spec §02) for a shell — a
-    SYSTEM OVERRIDE preamble followed by the ⌂/A–O sections, with Prohibitions
-    rendered just before Laws. Pure read.
+    """Compose the full typed boot-prompt catalog (spec §02) for a shell.
+    Sections cluster by kind (protocol → identity → state → capability) with
+    PROHIBITIONS + LAWS tail-anchored; each section header carries its kind
+    tag as `## LABEL · kind ##`. Pure read.
 
     `runtime_ctx` carries the render-time values a DB query cannot give —
     wall-clock, session ids; see `render_boot_context`. The baked universal
-    sections come from `catalog_universal.md`; `dialect` shapes the Tools and
-    Output Shape sections.
+    sections come from `catalog_universal.md`; `dialect` shapes the Tools
+    section and the output-shape subsection of COMMUNICATION.
 
     Both render paths compose through it — `compose_claude_md` (the CLI
     launcher) and `compose_boot_document` (the API)."""
     sections = prompt_sections(
         con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx,
     )
-    return "\n\n".join(f"## {label} ##\n{body}" for label, body, _scope in sections)
+    return "\n\n".join(
+        f"## {label} · {kind} ##\n{body}" for label, body, _scope, kind in sections
+    )

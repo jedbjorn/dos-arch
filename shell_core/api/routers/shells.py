@@ -13,7 +13,6 @@ from api.common.auth import _require_shell_creator
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import (
     rerender_boot_document, rerender_shell_sessions, session_start_payload,
-    _dynamic_block, format_dynamic_block,
 )
 from shell_render import assemble_catalog, prompt_sections, write_universal_block
 
@@ -180,8 +179,9 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
     dialect = (sess["tool_dialect"] if sess else None) or "anthropic"
     sections = prompt_sections(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
     return [
-        {"label": label, "body": body, "scope": scope, "editable": label in _EDITABLE_SECTIONS}
-        for label, body, scope in sections
+        {"label": label, "body": body, "scope": scope, "kind": kind,
+         "editable": label in _EDITABLE_SECTIONS}
+        for label, body, scope, kind in sections
     ]
 
 
@@ -202,12 +202,7 @@ def render_shell_prompt(shell_id: int, dialect: str = "anthropic", con = Depends
         "shell_id":   shell_id,
         "model":      None,
     }
-    body = (
-        assemble_catalog(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx)
-        + "\n\n"
-        + format_dynamic_block(_dynamic_block(con, shell_id))
-        + "\n"
-    )
+    body = assemble_catalog(con, shell_id, dialect=dialect, runtime_ctx=runtime_ctx) + "\n"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     filename = f"{row['shortname']}-prompt-{stamp}.md"
     return Response(

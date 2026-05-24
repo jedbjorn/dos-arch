@@ -18,7 +18,7 @@ dos-arch (CC-47 port, CC-49 adapter seam, CC-50 registry wiring; decision #108):
   - Tokens only, no cost — `chat_messages.tokens` carries the turn's context size;
     cost varies per provider and is meaningless for local models.
   - Context is the materialized boot document: one per-session `session-start`
-    call returns `{boot_document, dynamic}` — Block 1-2 cached, Block 3 live.
+    call returns `{boot_document}`, cacheable for the session's lifetime.
 
 A shell joins the dispatcher by setting `shells.browser_chat = 1` and leaves
 by clearing it. A supervisor loop re-checks membership every RECONCILE_SEC,
@@ -340,23 +340,6 @@ def post_reply(shell_id: int, body: str, source_message_id, session_id, user_id,
 
 # ── Context assembly ──────────────────────────────────────────────────────────
 
-def render_dynamic(dyn: dict) -> str:
-    """Block 3 — the live tail returned by /session-start, as a text block."""
-    lines = [
-        "## LIVE STATE (this turn — not cached)",
-        "",
-        f"- Current time (UTC): {dyn.get('datetime_utc', '?')}",
-        f"- Open flags: {dyn.get('flags_open', 0)}",
-    ]
-    msgs = dyn.get("unread_messages") or []
-    if msgs:
-        lines.append(f"- Unread shell messages: {len(msgs)}")
-        for m in msgs:
-            lines.append(f"    - from shell {m.get('sender_id')}: {m.get('subject') or '(no subject)'}")
-    else:
-        lines.append("- Unread shell messages: none")
-    return "\n".join(lines)
-
 
 # ── The agent loop ────────────────────────────────────────────────────────────
 
@@ -406,11 +389,11 @@ def process_inbound(con: sqlite3.Connection, shell, msg) -> None:
                    token=token)
         return
 
-    # Normalized system blocks: Block 1-2 (materialized boot document) is
-    # cacheable; Block 3 (the live tail) is not. The adapter projects `cache`.
+    # Normalized system blocks: the materialized boot document is the whole
+    # context — cacheable for the session's lifetime. The adapter projects
+    # `cache` onto the provider's cache-control shape.
     system_blocks = [
         {"text": ss["boot_document"], "cache": True},
-        {"text": render_dynamic(ss.get("dynamic", {})), "cache": False},
     ]
 
     # Each iteration's input re-includes the running transcript, so the last

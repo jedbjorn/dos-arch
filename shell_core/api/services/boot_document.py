@@ -10,10 +10,11 @@ without DB triggers (substrate decision #123, refining #107).
 shell — used when shared shell identity (role, mandate, seed, L&S) changes.
 
 `session_start_payload` is what the session-start route returns: the
-materialized document plus a live Block-3 dynamic tail (datetime, flag count,
-unread inbox) assembled per request. The dispatcher reads it in one call.
+materialized document. The dispatcher reads it once per turn. The DYNAMIC
+block (wall-clock / flag count / unread inbox) was dropped from the rendered
+prompt — runtime values are tool-call territory, not prompt territory.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 import sqlite3
 
 from shell_render import assemble_catalog
@@ -28,8 +29,7 @@ def compose_boot_document(con: sqlite3.Connection, chat_session_id: str) -> str:
     renders at the dialect of the session's model — that shapes the Tools and
     Output Shape sections; a model-less session defaults to anthropic.
     Materialized into `chat_sessions.boot_document`, read once per turn by the
-    dispatcher, and re-materialized in place on a model switch. The live
-    wall-clock and flag count stay the dynamic block's job (`_dynamic_block`)."""
+    dispatcher, and re-materialized in place on a model switch."""
     sess = con.execute(
         "SELECT cs.shell_id, s.active_archive_id, m.name AS model_name, "
         "m.tool_dialect "
@@ -81,51 +81,11 @@ def rerender_shell_sessions(con: sqlite3.Connection, shell_id: int) -> None:
         rerender_boot_document(con, sid)
 
 
-def _dynamic_block(con: sqlite3.Connection, shell_id: int) -> dict:
-    """Block 3 — the volatile tail, assembled live per request. Never cached."""
-    flags_open = con.execute(
-        "SELECT COUNT(*) FROM flags WHERE shell_id=? AND resolved=0 AND is_deleted=0",
-        (shell_id,),
-    ).fetchone()[0]
-    unread = con.execute(
-        "SELECT message_id, sender_id, subject, body, sent_at FROM shell_messages "
-        "WHERE recipient_id=? AND read=0 ORDER BY sent_at ASC",
-        (shell_id,),
-    ).fetchall()
-    return {
-        "datetime_utc": datetime.now(timezone.utc).isoformat(),
-        "flags_open": flags_open,
-        "unread_messages": [dict(r) for r in unread],
-    }
-
-
-def format_dynamic_block(d: dict) -> str:
-    """Markdown rendering of the dynamic tail. The dispatcher consumes the
-    dict form (`_dynamic_block`); the download endpoint and any future
-    text-form caller use this to match the `## LABEL ##` shape `assemble_catalog`
-    emits, so a downloaded prompt reads continuously with Blocks 1+2."""
-    msgs = d.get("unread_messages") or []
-    lines = [
-        "## DYNAMIC ##",
-        "",
-        f"- datetime_utc: {d['datetime_utc']}",
-        f"- flags_open: {d['flags_open']}",
-        f"- unread_messages: {len(msgs)}",
-    ]
-    for m in msgs:
-        lines.append(
-            f"  - [{m.get('sent_at')}] from shell {m.get('sender_id')}: "
-            f"{m.get('subject') or '(no subject)'}"
-        )
-    return "\n".join(lines)
-
-
 def session_start_payload(con: sqlite3.Connection, chat_session_id: str) -> dict:
-    """The session-start body: the materialized boot document (Blocks 1-2,
-    cacheable) plus a live dynamic tail (Block 3). If the column is NULL — a
-    session created before materialization, or never written — it is rendered
-    on the spot; the caller commits. Raises ValueError if the session does
-    not exist."""
+    """The session-start body: the materialized boot document, cacheable for
+    the session's lifetime. If the column is NULL — a session created before
+    materialization, or never written — it is rendered on the spot; the
+    caller commits. Raises ValueError if the session does not exist."""
     row = con.execute(
         "SELECT shell_id, boot_document FROM chat_sessions WHERE chat_session_id=?",
         (chat_session_id,),
@@ -135,4 +95,4 @@ def session_start_payload(con: sqlite3.Connection, chat_session_id: str) -> dict
     boot = row["boot_document"]
     if boot is None:
         boot = rerender_boot_document(con, chat_session_id)
-    return {"boot_document": boot, "dynamic": _dynamic_block(con, row["shell_id"])}
+    return {"boot_document": boot}
