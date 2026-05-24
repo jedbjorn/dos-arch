@@ -56,7 +56,7 @@
       {totalCount} available
     </div>
   </div>
-  <div class="flex-1 overflow-y-auto p-4">
+  <div class="flex-1 overflow-y-auto py-4 px-2">
     {#each PROVIDERS as p}
       <div class="mb-5">
         <div class="text-[10px] uppercase tracking-[0.15em] text-white/30 mb-2">{p.label}</div>
@@ -66,7 +66,7 @@
             <div class="relative group flex items-stretch">
               <button
                 onclick={() => onChange(String(m.model_id))}
-                class="flex-1 min-w-0 text-left px-3 py-2 text-[11px] font-mono transition leading-snug break-words
+                class="flex-1 min-w-0 text-left pl-2 pr-1 py-2 text-[11px] font-mono transition leading-snug break-words
                        {active
                           ? 'active-row'
                           : 'text-white/60 hover:text-white/90 hover:bg-white/[0.03]'}"
