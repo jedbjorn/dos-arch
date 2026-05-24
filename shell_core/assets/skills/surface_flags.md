@@ -7,11 +7,13 @@ command: --flags
 ---
 # surface_flags
 
+> **Anchors** — `<self>` = your `shell_id:` value, shown in `## BOOT ##` of
+> your CLAUDE.md.
+
 Surface this shell's open flags. Run on demand with `--flags`.
 
-The fetch is the `list_flags` tool — see its block in the `## TOOLS ##`
-section of your boot prompt. shell_id is resolved server-side from the
-Bearer token, so the call is `<tool:list_flags>{}</tool>`.
+Memory is read over the substrate API — no DB file (see MEMORY PROTOCOL
+in your system prompt).
 
 `resolved` is tri-state: `0` = Open, `1` = Resolved, `2` = Tracking.
 Unresolved work is **`0` and `2`** — Open flags are active blockers;
@@ -20,8 +22,9 @@ Tracking flags are real but not yet effective (future-scheduled). Resolved
 
 ## Steps
 
-1. **Fetch** — call `list_flags`. The endpoint scopes server-side to this
-   shell; the response carries each row's schedule fields.
+1. **Fetch** — `api_get` on `/flags?shell_id=<self>`. The endpoint
+   filters server-side; the response is this shell's flags only, each
+   with its schedule fields.
 2. **Filter** — keep only rows where `resolved` is `0` or `2`. Drop the
    rest.
 3. **Sort** the kept rows: `resolved` ascending (Open `0` before Tracking

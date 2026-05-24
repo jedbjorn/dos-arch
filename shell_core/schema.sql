@@ -150,7 +150,7 @@ CREATE TABLE tools (
     skill_id    INTEGER REFERENCES skills(skill_id),  -- NULL = general; else skill-bound
     status      TEXT    NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','inactive')),
-    prompt_block TEXT                       -- pre-rendered TOOLS-section block (name, when-to-use, args, example)
+    parsed_example TEXT                      -- parsed-dialect invocation example (spec §05)
 );
 
 -- ── Models (the agnostic-runtime registry) ────────────────────────────────────

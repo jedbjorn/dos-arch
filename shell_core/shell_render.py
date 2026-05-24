@@ -25,6 +25,7 @@ same directory on ``sys.path`` before importing this module.
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -248,35 +249,39 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
 # Section E — the tools this shell can call: general tools (skill_id NULL,
 # every shell) plus the tools of each skill the shell is granted. The same
 # effective set the dispatcher's `load_tools()` resolves, so the prompt and
-# the runtime cannot disagree on what the shell can call.
-#
-# Each tool carries its own pre-rendered TOOLS-section block in `prompt_block`
-# (authored in assets/tools/<name>.md under <!-- @@ PROMPT @@ -->) — name,
-# when-to-use, model-provided args, and a worked example. `render_tools`
-# concatenates those blocks under group headers; the per-dialect call-format
-# guidance stays in `render_output_shape` (section O).
+# the runtime cannot disagree on what the shell can call. The general tools
+# are generic HTTP verbs against the substrate API; which path is a seed / a
+# decision / a flag — that map is in MEMORY PROTOCOL (section G).
 
 
-def _fallback_block(name: str, description: str | None) -> str:
-    """Minimal stand-in for a tool with no authored prompt_block. Keeps the
-    section non-empty during the gradual fill; production tools should all
-    carry a prompt_block."""
-    return f"### {name}\n\n{(description or '(no description)').strip()}\n"
+def _spec_params(spec: str | None) -> list[str]:
+    """Rendered param lines from a tool's JSON-schema `spec` — for the parsed
+    dialect, where the local model forms the call as text."""
+    try:
+        schema = json.loads(spec) if spec else {}
+    except (json.JSONDecodeError, TypeError):
+        return []
+    required = set(schema.get("required", []))
+    lines = []
+    for name, prop in (schema.get("properties") or {}).items():
+        typ = prop.get("type", "?")
+        req = "required" if name in required else "optional"
+        note = prop.get("description", "")
+        lines.append(f"  {name:<6} {typ:<8} {req}" + (f"  {note}" if note else ""))
+    return lines
 
 
 def render_tools(con: sqlite3.Connection, shell_id: int,
                  dialect: str = "anthropic") -> str:
-    """Section E — the shell's tools, each as an authored prompt_block. A tool
+    """Section E — the shell's tools, shaped by tool dialect (spec §05). A tool
     is general (skill_id NULL — every shell) or skill-bound (rendered only for
     shells granted the owning skill); skill-bound tools group under their
-    skill, general tools render first.
-
-    The `dialect` argument is preserved on the signature for API parity with
-    `render_output_shape`, but the per-tool blocks are dialect-agnostic — call
-    format guidance lives in section O."""
-    del dialect  # currently unused; prompt_block carries dialect-agnostic content
+    skill, general tools render first. `anthropic` / `openai`: a name +
+    description roster — the provider applies each tool's schema. `parsed`:
+    each tool with its params and a worked `<tool:…>` invocation, for a local
+    model that forms the call as text."""
     rows = con.execute(
-        "SELECT t.name, t.description, t.prompt_block, t.skill_id, s.name AS skill_name "
+        "SELECT t.name, t.description, t.spec, t.skill_id, s.name AS skill_name "
         "FROM tools t LEFT JOIN skills s ON s.skill_id = t.skill_id "
         "WHERE t.status='active' "
         "  AND (t.skill_id IS NULL "
@@ -289,21 +294,50 @@ def render_tools(con: sqlite3.Connection, shell_id: int,
     general = [r for r in rows if r["skill_id"] is None]
     skilled = [r for r in rows if r["skill_id"] is not None]
 
-    def block_for(r: sqlite3.Row) -> str:
-        body = (r["prompt_block"] or "").strip()
-        return body if body else _fallback_block(r["name"], r["description"])
+    if dialect == "parsed":
+        out = [
+            "# parsed dialect — the runtime applies no tool schema. Form each",
+            "# call in this format; the harness extracts and executes it. The",
+            "# endpoint paths are in MEMORY PROTOCOL.",
+            "",
+        ]
+        last = None
+        for r in rows:
+            group = r["skill_name"] or "general"
+            if group != last:
+                out.append(f"## {group}")
+                last = group
+            out.append(f"**{r['name']}** — {r['description']}")
+            params = _spec_params(r["spec"])
+            if params:
+                out.append("params:")
+                out += params
+            out.append("")
+        out += [
+            "invoke (example):",
+            "  <tool:api_post>",
+            "  path: /shells/<self>/decisions",
+            '  body: {"decision": "...", "rationale": "..."}',
+            "  </tool>",
+            "",
+            "If you cannot form a valid call, say so plainly:",
+            "  i can't do this yet — i'm missing {what}",
+        ]
+        return "\n".join(out)
 
-    parts: list[str] = []
+    # anthropic / openai — the provider applies each tool's schema; a roster
+    # is enough. General tools first, then each granted skill's own tools.
+    out = ["# the provider applies each tool's schema — this is the roster."]
     if general:
-        parts.append("## general")
-        parts += [block_for(r) for r in general]
+        out.append("# general — substrate API verbs; endpoint paths in MEMORY PROTOCOL.")
+        out += [f"- **{r['name']}** — {r['description']}" for r in general]
     last = None
     for r in skilled:
         if r["skill_name"] != last:
-            parts.append(f"## {r['skill_name']} (skill)")
+            out.append(f"# {r['skill_name']} (skill)")
             last = r["skill_name"]
-        parts.append(block_for(r))
-    return "\n\n".join(parts)
+        out.append(f"- **{r['name']}** — {r['description']}")
+    return "\n".join(out)
 
 
 def render_output_shape(dialect: str = "anthropic") -> str:
