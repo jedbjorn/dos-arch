@@ -17,7 +17,8 @@ body_format = "json"
 # whose prefix is unlisted (the api_* verbs, handler 'api') stays general
 # (skill_id NULL). Adding a tool family is a line here — no code change.
 [skill_map]
-file = "file-ops"
-proc = "process-exec"
-git  = "git-workflow"
-net  = "web-fetch"
+file   = "file-ops"
+proc   = "process-exec"
+git    = "git-workflow"
+net    = "web-fetch"
+shared = "shared"

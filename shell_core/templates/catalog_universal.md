@@ -43,6 +43,7 @@ terms used across this document. ordered to match the flow of the prompt.
 | **tool / tooling**     | the primitive calls a shell can make — the `api_*` HTTP verbs in TOOLS. skills are procedures; tools are the calls they use.  |
 | **skill**              | a procedure loaded on demand from the substrate. SKILLS AVAILABLE lists what is granted.                                      |
 | **lazy loading**       | load the map, not the territory. specifics fetched on demand, not in bulk.                                                    |
+| **shared**             | host↔container handoff folder. mounted at `~/shared/` inside your container. *your* subdir is `~/shared/<NN>-<shortname>/` where `NN` is your zero-padded `shell_id` (BOOT) and `<shortname>` is from IDENTITY. four subdirs: `redlines/` (FnB drops PNGs for review), `review/` (drafts you want FnB to see), `repos/` (scratch clones), `backups/` (snapshots you take). sibling shells' subdirs are also visible — the whole host root is mounted. surface with `--shared`. |
 
 > *"Would this still be true if I were a different shell?"* — Yes → L&S (craft-level). No → seed (person-level).
 

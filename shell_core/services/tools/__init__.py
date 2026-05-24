@@ -11,7 +11,7 @@ both live under services/, resolved on sys.path[0] like the dispatcher's
 own imports."""
 from __future__ import annotations
 
-from . import files, git, network, process
+from . import files, git, network, process, shared
 from .base import ToolError, ToolResult
 
 # handler key (tools.handler column) -> handler callable.
@@ -41,6 +41,7 @@ _REGISTRY = {
     "net.http_get":  network.handle_http_get,
     "net.http_post": network.handle_http_post,
     "net.url_fetch": network.handle_url_fetch,
+    "shared.inspect": shared.handle_inspect,
 }
 
 
