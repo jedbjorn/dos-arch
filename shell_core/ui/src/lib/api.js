@@ -40,6 +40,8 @@ export const getShellSkills     = (shell_id)           => get(`/shells/${shell_i
 export const getShellPromptSections = (shell_id)       => get(`/shells/${shell_id}/prompt-sections`)
 export const putShellPromptSection  = (shell_id, label, body) =>
   put(`/shells/${shell_id}/prompt-sections/${encodeURIComponent(label)}`, { body })
+export const promptRenderUrl        = (shell_id, dialect = 'anthropic') =>
+  `${BASE}/shells/${shell_id}/prompt-render?dialect=${encodeURIComponent(dialect)}`
 export const getAvailableSkills = ()                   => get('/admin/skills/available')
 export const getSkill           = (skill_id)           => get(`/admin/skills/${skill_id}`)
 export const updateSkill        = (skill_id, patch)    => request('PATCH', `/admin/skills/${skill_id}`, patch)

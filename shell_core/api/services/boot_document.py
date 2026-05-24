@@ -99,6 +99,27 @@ def _dynamic_block(con: sqlite3.Connection, shell_id: int) -> dict:
     }
 
 
+def format_dynamic_block(d: dict) -> str:
+    """Markdown rendering of the dynamic tail. The dispatcher consumes the
+    dict form (`_dynamic_block`); the download endpoint and any future
+    text-form caller use this to match the `## LABEL ##` shape `assemble_catalog`
+    emits, so a downloaded prompt reads continuously with Blocks 1+2."""
+    msgs = d.get("unread_messages") or []
+    lines = [
+        "## DYNAMIC ##",
+        "",
+        f"- datetime_utc: {d['datetime_utc']}",
+        f"- flags_open: {d['flags_open']}",
+        f"- unread_messages: {len(msgs)}",
+    ]
+    for m in msgs:
+        lines.append(
+            f"  - [{m.get('sent_at')}] from shell {m.get('sender_id')}: "
+            f"{m.get('subject') or '(no subject)'}"
+        )
+    return "\n".join(lines)
+
+
 def session_start_payload(con: sqlite3.Connection, chat_session_id: str) -> dict:
     """The session-start body: the materialized boot document (Blocks 1-2,
     cacheable) plus a live dynamic tail (Block 3). If the column is NULL — a

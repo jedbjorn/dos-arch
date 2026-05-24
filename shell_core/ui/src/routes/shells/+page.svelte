@@ -7,7 +7,7 @@
   import {
     getMyShells, getShell, getShellPromptSections, putShellPromptSection,
     getAvailableSkills, getShellSkills, getSkill, updateSkill,
-    addShellSkill, removeShellSkill,
+    addShellSkill, removeShellSkill, promptRenderUrl,
   } from '$lib/api.js'
   import MarkdownBlock from '$lib/components/MarkdownBlock.svelte'
   import GlassDropdown from '$lib/components/GlassDropdown.svelte'
@@ -27,6 +27,10 @@
 
   let loading    = $state(false)
   let error      = $state('')
+
+  // Dialect for the prompt-render download — TOOLS and OUTPUT SHAPE are the
+  // only sections it changes. Defaults to anthropic to match the API.
+  let downloadDialect = $state('anthropic')
 
   // Unified edit modal — one body editor for prompt-section blocks and skill
   // content. Null = closed. Open shape: { title, draft, saving, save() }.
@@ -228,7 +232,30 @@
 
   <!-- Harness Prompt — single glass panel containing all accordion rows. -->
   <section class="flex flex-col gap-2">
-    <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40 px-1">Harness Prompt</h2>
+    <div class="flex items-center justify-between px-1">
+      <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40">Harness Prompt</h2>
+      {#if shellId}
+        <div class="flex items-center gap-3">
+          <GlassDropdown
+            value={downloadDialect}
+            items={[
+              { value: 'anthropic', label: 'anthropic' },
+              { value: 'openai',    label: 'openai'    },
+              { value: 'parsed',    label: 'parsed'    },
+            ]}
+            onChange={(v) => (downloadDialect = v)}
+            align="right"
+          />
+          <a
+            href={promptRenderUrl(shellId, downloadDialect)}
+            download
+            title="Download full rendered prompt"
+            aria-label="Download full rendered prompt"
+            class="text-white/40 hover:text-white text-xs leading-none px-1 transition"
+          >↓</a>
+        </div>
+      {/if}
+    </div>
     <div
       class="rounded-2xl border border-white/[0.08] overflow-hidden"
       style="background: var(--glass-bg);
