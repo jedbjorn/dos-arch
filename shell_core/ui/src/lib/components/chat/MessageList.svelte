@@ -121,8 +121,6 @@
     background: rgba(255, 255, 255, 0.04);
     border-color: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
   }
   .msg-bubble.outbound {
     background: color-mix(in srgb, var(--color-accent) 18%, rgba(255, 255, 255, 0.04));

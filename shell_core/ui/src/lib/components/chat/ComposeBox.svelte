@@ -67,9 +67,7 @@
     <div
       class="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 flex items-end gap-3 transition-colors
              focus-within:border-white/20 focus-within:bg-white/[0.06]"
-      style="background: var(--glass-bg-strong);
-             backdrop-filter: blur(var(--glass-blur-soft));
-             -webkit-backdrop-filter: blur(var(--glass-blur-soft));"
+      style="background: var(--glass-bg-strong);"
     >
       <textarea
         bind:this={inputEl}
@@ -115,8 +113,6 @@
                   ? 'border-amber-300/60 text-amber-100'
                   : 'border-white/[0.10] text-white/70'}"
         style="background: {clearArmed ? 'rgba(251,191,36,0.10)' : 'rgba(255,255,255,0.04)'};
-               backdrop-filter: blur(var(--glass-blur-soft));
-               -webkit-backdrop-filter: blur(var(--glass-blur-soft));
                {clearArmed ? 'box-shadow: 0 0 16px rgba(251,191,36,0.35);' : ''}"
       >
         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor"
@@ -132,9 +128,7 @@
         title="Stop an in-flight turn — backend not wired yet (CC-60)"
         class="w-7 h-7 rounded-full border border-white/[0.10] text-white/40 flex items-center justify-center
                opacity-40 cursor-default"
-        style="background: rgba(255,255,255,0.04);
-               backdrop-filter: blur(var(--glass-blur-soft));
-               -webkit-backdrop-filter: blur(var(--glass-blur-soft));"
+        style="background: rgba(255,255,255,0.04);"
       >
         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor"
           stroke-width="1.6" stroke-linecap="round">

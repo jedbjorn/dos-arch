@@ -45,9 +45,7 @@
   <div class="fixed inset-0 z-40 pointer-events-none">
     <aside
       class="absolute left-0 top-0 bottom-0 w-72 pointer-events-auto flex flex-col border-r border-white/[0.08]"
-      style="background: rgba(20, 20, 25, 0.85);
-             backdrop-filter: blur(24px);
-             -webkit-backdrop-filter: blur(24px);"
+      style="background: rgba(20, 20, 25, 0.95);"
       onmouseleave={close}
     >
       <div class="px-5 py-4 border-b border-white/[0.08]">

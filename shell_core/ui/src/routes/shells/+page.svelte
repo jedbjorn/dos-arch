@@ -213,9 +213,7 @@
      Glass backdrop so content scrolls cleanly under it. -->
 <header
   class="sticky top-0 z-20 px-6 py-4 flex flex-col gap-1 border-b border-white/[0.08]"
-  style="background: rgba(255, 255, 255, 0.02);
-         backdrop-filter: blur(24px);
-         -webkit-backdrop-filter: blur(24px);"
+  style="background: var(--app-base);"
 >
   {#if myShells.length}
     <GlassDropdown
@@ -269,9 +267,7 @@
     </div>
     <div
       class="rounded-2xl border border-white/[0.08] overflow-hidden"
-      style="background: var(--glass-bg);
-             backdrop-filter: blur(var(--glass-blur));
-             -webkit-backdrop-filter: blur(var(--glass-blur));"
+      style="background: var(--glass-bg);"
     >
       {#if loading && !sections.length}
         <div class="text-white/40 text-xs px-4 py-3">Loading…</div>
@@ -395,9 +391,7 @@
     </div>
     <div
       class="rounded-2xl border border-white/[0.08] p-4 min-h-[12rem] text-[12px]"
-      style="background: var(--glass-bg);
-             backdrop-filter: blur(var(--glass-blur));
-             -webkit-backdrop-filter: blur(var(--glass-blur));"
+      style="background: var(--glass-bg);"
     >
       {#if activeSkill}
         {#if activeSkill.description}

@@ -22,9 +22,7 @@
 
 <header
   class="h-[52px] sticky top-0 z-30 flex items-center px-5 border-b border-white/[0.08]"
-  style="background: rgba(255, 255, 255, 0.02);
-         backdrop-filter: blur(24px);
-         -webkit-backdrop-filter: blur(24px);"
+  style="background: rgba(255, 255, 255, 0.02);"
 >
   <button
     onclick={() => (drawerOpen = true)}
