@@ -730,6 +730,112 @@ def sync_env(conn: sqlite3.Connection) -> dict:
     return counts
 
 
+# Curated one-line purpose per substrate table. Tables present in
+# sqlite_master but absent from this map get a row with purpose=NULL so the
+# documentation gap is visible (rather than the table being missing from the
+# catalogue entirely). Keep purposes ≤100 chars for consistency with the
+# rest of the catalogue, though dr_db.purpose has no schema cap.
+_DB_PURPOSE_ENTRIES = {
+    # ── catalogue (dr_*) ──────────────────────────────────────────────────
+    "dr_api":          "Catalogue: FastAPI endpoints (path, method, summary, router_id) — populated from app.openapi()",
+    "dr_automations":  "Catalogue: scheduled/trigger-driven jobs (cron, systemd, pm2, manual, api)",
+    "dr_db":           "Catalogue: substrate tables — one row per real table with curated purpose (this table)",
+    "dr_dependencies": "Catalogue: declared deps from manifests (project: ui / substrate / broker)",
+    "dr_env":          "Catalogue: env-var contract (scope, location, is_secret) — values not stored",
+    "dr_filepath":     "Catalogue: notable files + dirs across the substrate (curated)",
+    "dr_lib":          "Catalogue: backend modules + frontend UI libs (kind=backend|frontend)",
+    "dr_log":          "Catalogue: lifecycle change events for dr_* entries (create/update/delete/note)",
+    "dr_repo":         "Catalogue: git repos (name, remote, description) — populated from git + gh",
+    "dr_router":       "Catalogue: FastAPI router files (one row per shell_core/api/routers/*.py)",
+    "dr_services":     "Catalogue: pm2 services from ecosystem.config.cjs (kind: api/ui/other)",
+    "dr_sync_runs":    "Rolling-100 audit log of dr_sync executions (trigger_kind, counts, errors)",
+    "shell_dr_link":   "Per-shell binding to dr_* entries with optional role annotation",
+
+    # ── shell identity + memory ───────────────────────────────────────────
+    "shells":                 "Shell registry — identity, system_prompt, current_state, workspace, connections",
+    "shell_identity_entries": "Seed (cap 10) + L&S (cap 20) per shell — identity-curated rows, retired_at column",
+    "shell_decisions":        "Append-only major-decision log per shell (M only); never edit prior rows",
+    "shell_memory_archives":  "Per-session narrative archives — full_narrative appended in-session",
+    "shell_messages":         "Inter-shell messages (sender → recipient, subject/body, reply chain)",
+    "shell_prompt_automations": "Per-shell scheduled prompts (recurring, cycle count, last fire)",
+    "shell_logs":             "Per-shell prompt/result audit log (legacy surface; chat_messages is primary now)",
+    "shell_skills":           "Many-to-many: shells ↔ skills (which skills a shell has loaded)",
+    "shell_groups":           "Shell group definitions (slug, name, is_admin)",
+    "shell_group_members":    "Many-to-many: shell_groups ↔ shells",
+
+    # ── chat (browser-chat sidebar / dispatcher) ──────────────────────────
+    "chat_sessions":  "Browser-chat session metadata (per-shell, model, started/ended)",
+    "chat_messages":  "Per-message rows in browser-chat sessions (role, content, ts, session_id)",
+
+    # ── flags + plans + projects ──────────────────────────────────────────
+    "flags":          "Open/resolved blockers per shell (display_name, priority, description, parent chain)",
+    "plans":          "Multi-step planning entries per shell (objective, content, status)",
+    "projects":       "Project registry (shortname, title, purpose, standing, status)",
+    "project_shells": "Many-to-many: projects ↔ shells (who works on what)",
+    "project_groups": "Many-to-many: projects ↔ shell_groups",
+
+    # ── skills + tools ────────────────────────────────────────────────────
+    "skills": "Skill library — markdown bodies shipped with the substrate, lazy-loaded by name",
+    "tools":  "Tool registry (skill-scoped) — invocable by the dispatcher / browser-chat",
+
+    # ── models + hardware ─────────────────────────────────────────────────
+    "models":           "Substrate model registry (name, provider, env_key, context_window, status)",
+    "installed_models": "Locally-installed Ollama models — tracked by the model_sync watcher",
+    "user_hardware":    "Per-user GPU/RAM snapshot for local-model viability gating",
+
+    # ── users + API audit + schema lifecycle ──────────────────────────────
+    "users":             "Substrate users (username, scrypt password hash + salt, is_admin)",
+    "app_ui_logs":       "API request audit log — method/path/status/duration per call (per user/shell)",
+    "schema_migrations": "Applied migrations log — one row per migrations/NNN_*.sql via migrate.py",
+}
+
+
+def sync_db(conn: sqlite3.Connection) -> dict:
+    """Sync dr_db from sqlite_master — one row per real substrate table.
+
+    Source: `SELECT name FROM sqlite_master WHERE type='table'`, excluding
+    SQLite internals (`sqlite_%`). Curated purposes come from
+    `_DB_PURPOSE_ENTRIES`; tables not in the map land with `purpose=NULL` so
+    the gap is visible (audit signal) rather than the table being absent
+    from the catalogue.
+
+    Idempotent: UPSERT keyed on `table_name`. Tables dropped from
+    `sqlite_master` retire via _reap.
+    """
+    counts = {"db": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
+
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
+
+    for (table_name,) in rows:
+        purpose = _DB_PURPOSE_ENTRIES.get(table_name)
+        existing = conn.execute(
+            "SELECT db_id FROM dr_db WHERE table_name = ?", (table_name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_db SET purpose = ?, status = 'active', "
+                "last_verified = date('now') WHERE db_id = ?",
+                (purpose, existing[0])
+            )
+            counts["db"]["update"] += 1
+            seen_ids.append(existing[0])
+        else:
+            cur = conn.execute(
+                "INSERT INTO dr_db (table_name, purpose, last_verified) "
+                "VALUES (?, ?, date('now'))",
+                (table_name, purpose)
+            )
+            counts["db"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
+
+    counts["db"]["retire"] = _reap(conn, "dr_db", "db_id", seen_ids)
+    return counts
+
+
 SYNCS = {
     "apis":        sync_routers_and_apis,
     "deps":        sync_dependencies,
@@ -739,6 +845,7 @@ SYNCS = {
     "filepaths":   sync_filepaths,
     "automations": sync_automations,
     "env":         sync_env,
+    "db":          sync_db,
 }
 
 
