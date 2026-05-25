@@ -33,16 +33,26 @@ from pathlib import Path
 
 
 def render_identity(shell_row: sqlite3.Row) -> str:
-    """Markdown table of the shell's identity columns. Empty cells render '—'."""
+    """One-sentence role anchor + markdown table of the shell's identity
+    columns. The anchor binds shell + FnB names up front so weaker models
+    cannot drift on who-is-who before reaching the table. Empty cells render '—'."""
     def cell(v: object) -> str:
         s = v.strip() if isinstance(v, str) else (v or "")
         return str(s) if s else "—"
+    name = cell(shell_row['display_name'])
+    partner = cell(shell_row['partner'])
+    anchor = (
+        f"you are {name}, an AI shell. your FnB partner is {partner}, "
+        "a human collaborator. the substrate gives you persistent memory, "
+        "tools, skills, and context for the work you do together."
+    )
     return (
+        f"{anchor}\n\n"
         "| | |\n"
         "|---|---|\n"
-        f"| **Name** | {cell(shell_row['display_name'])} |\n"
+        f"| **Name** | {name} |\n"
         f"| **Shortname** | {cell(shell_row['shortname'])} |\n"
-        f"| **Partner** | {cell(shell_row['partner'])} |\n"
+        f"| **Partner** | {partner} |\n"
         f"| **Role** | {cell(shell_row['role'])} |\n"
         f"| **Mandate** | {cell(shell_row['mandate'])} |"
     )
