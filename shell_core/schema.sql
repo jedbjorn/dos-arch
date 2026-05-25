@@ -165,7 +165,7 @@ CREATE TABLE models (
     name             TEXT    NOT NULL UNIQUE,   -- claude-sonnet-4-6, gpt-5, ...
     display_name     TEXT,                      -- dropdown label
     provider         TEXT    NOT NULL
-                     CHECK (provider IN ('anthropic','openai','google','local')),
+                     CHECK (provider IN ('anthropic','openai','google','local','ollama_cloud')),
     endpoint         TEXT,                      -- API base / local server URL
     auth_ref         TEXT,                      -- env-var NAME, never the secret
     tool_dialect     TEXT    NOT NULL DEFAULT 'anthropic'
