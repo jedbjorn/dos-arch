@@ -1,28 +1,42 @@
 #!/usr/bin/env bash
-# cron-install.sh — install the daily dr_* catalogue sync cron.
+# cron-install.sh — install dos-arch's daily host-side cron jobs.
 #
 # Run as the operator, once, after the substrate is bootstrapped.
 #
 #   ./install/cron-install.sh
 #
-# Why this exists: the in-container FastAPI-startup sync can't reach `git` or
-# `ecosystem.config.cjs`, so it silently no-ops dr_repo + dr_services — and it
-# only fires on a container restart anyway. Nothing refreshes the catalogue
-# while the container simply stays up. This cron is the only *automatic* full
-# (9/9 surface) sync: host-side, daily, with git + node + the whole repo.
+# Installs two entries, each independently idempotent (own MARKER tag):
 #
-# It runs `make db-sync` with DR_SYNC_TRIGGER=cron so each run lands a row in
-# dr_sync_runs (trigger_kind='cron') — query that table to confirm the cron is
-# alive; a stale newest run_at means it stopped firing.
+#   1. dr_* catalogue sync — 04:00 daily, `make db-sync`. The in-container
+#      FastAPI-startup sync can't reach `git` or `ecosystem.config.cjs` and
+#      only fires on container restart; this host-side cron is the only
+#      *automatic* full (9/9 surface) sync. Runs land in dr_sync_runs with
+#      trigger_kind='cron' (DR_SYNC_TRIGGER=cron) — a stale newest run_at
+#      means the cron stopped firing.
 #
-# Idempotent: re-running replaces the existing entry, never duplicates it.
+#   2. Ollama Cloud model catalog sync — 04:15 daily, `make sync-cloud-models`.
+#      Refreshes the `models` rows for provider='ollama_cloud' from Ollama
+#      Cloud's anonymous /api/tags. Liveness check: SELECT MAX(last_verified)
+#      FROM models WHERE provider='ollama_cloud' — stale means the cron died.
+#      API startup also runs this sync, so a freshly-booted substrate doesn't
+#      wait until 04:15 for a refresh.
+#
+# Re-running this script replaces both entries in place, never duplicates.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "${HERE}/.." && pwd)"
-MARKER="# dos-arch:dr-sync-cron"          # idempotency tag — one line per host
 LOG_DIR="${HOME}/db_backups/dos-arch"
-LOG="${LOG_DIR}/dr_sync_cron.log"
+
+DR_MARKER="# dos-arch:dr-sync-cron"
+DR_LOG="${LOG_DIR}/dr_sync_cron.log"
+DR_CMD="cd ${REPO} && DR_SYNC_TRIGGER=cron make db-sync >> ${DR_LOG} 2>&1"
+DR_LINE="0 4 * * * ${DR_CMD}  ${DR_MARKER}"
+
+CLOUD_MARKER="# dos-arch:cloud-model-sync-cron"
+CLOUD_LOG="${LOG_DIR}/cloud_model_sync_cron.log"
+CLOUD_CMD="cd ${REPO} && make sync-cloud-models >> ${CLOUD_LOG} 2>&1"
+CLOUD_LINE="15 4 * * * ${CLOUD_CMD}  ${CLOUD_MARKER}"
 
 command -v crontab >/dev/null || {
   echo "ERROR: crontab not found — install cron (e.g. 'apt install cron') and retry." >&2
@@ -31,24 +45,26 @@ command -v crontab >/dev/null || {
 
 mkdir -p "${LOG_DIR}"
 
-# 04:00 daily. cd into the repo first so `make` finds the Makefile and the
-# db-sync recipe's relative ./.venv path resolves. stdout/stderr append to the
-# logfile — a belt-and-suspenders signal for the case dr_sync_runs can't catch
-# (process died before its DB write, or cron never fired at all).
-CRON_CMD="cd ${REPO} && DR_SYNC_TRIGGER=cron make db-sync >> ${LOG} 2>&1"
-CRON_LINE="0 4 * * * ${CRON_CMD}  ${MARKER}"
-
-# Rebuild the crontab: keep every line except a prior entry of ours, append the
-# fresh one. `crontab -l` exits non-zero when no crontab exists yet — tolerate.
+# Rebuild the crontab: drop any prior entries we own (by MARKER), append the
+# fresh ones. `crontab -l` exits non-zero when no crontab exists yet — tolerate.
 current="$(crontab -l 2>/dev/null || true)"
-filtered="$(printf '%s\n' "${current}" | grep -vF "${MARKER}" || true)"
+filtered="$(printf '%s\n' "${current}" | grep -vF "${DR_MARKER}" | grep -vF "${CLOUD_MARKER}" || true)"
 {
   [ -n "${filtered}" ] && printf '%s\n' "${filtered}"
-  printf '%s\n' "${CRON_LINE}"
+  printf '%s\n' "${DR_LINE}"
+  printf '%s\n' "${CLOUD_LINE}"
 } | crontab -
 
-echo "==> dr_* catalogue sync cron installed (dos-arch crontab)"
-echo "    schedule : 04:00 daily"
-echo "    command  : ${CRON_CMD}"
-echo "    verify   : crontab -l | grep dr-sync-cron"
-echo "    runs log : SELECT run_at, trigger_kind, had_error FROM dr_sync_runs ORDER BY run_id DESC;"
+echo "==> dos-arch cron jobs installed"
+echo
+echo "    [1] dr_* catalogue sync"
+echo "        schedule : 04:00 daily"
+echo "        command  : ${DR_CMD}"
+echo "        verify   : crontab -l | grep dr-sync-cron"
+echo "        runs log : SELECT run_at, trigger_kind, had_error FROM dr_sync_runs ORDER BY run_id DESC;"
+echo
+echo "    [2] Ollama Cloud model catalog sync"
+echo "        schedule : 04:15 daily"
+echo "        command  : ${CLOUD_CMD}"
+echo "        verify   : crontab -l | grep cloud-model-sync-cron"
+echo "        liveness : SELECT MAX(last_verified) FROM models WHERE provider='ollama_cloud';"
