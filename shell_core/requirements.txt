@@ -1,0 +1,11 @@
+# Substrate API runtime deps — installed into .venv by `make install`.
+# Declared manifest: this file is the source of truth for dr_dependencies
+# (project='substrate'). Keep direct deps only; transitives are resolved by
+# pip and enriched at sync time from importlib.metadata.
+fastapi
+uvicorn
+pydantic
+anthropic
+openai
+httpx
+psutil
