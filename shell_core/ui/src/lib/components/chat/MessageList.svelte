@@ -101,10 +101,8 @@
       onclick={() => scrollToBottom()}
       title="Jump to latest"
       aria-label="Jump to latest"
-      class="absolute bottom-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full border border-white/[0.10] hover:border-white/[0.20] flex items-center justify-center text-white/60 hover:text-white/90 transition z-[5]"
-      style="background: rgba(255,255,255,0.05);
-             backdrop-filter: blur(var(--glass-blur-soft));
-             -webkit-backdrop-filter: blur(var(--glass-blur-soft));
+      class="absolute bottom-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full border border-white/[0.12] hover:border-white/[0.22] flex items-center justify-center text-white/60 hover:text-white/90 transition z-[5]"
+      style="background: #4a4a4a;
              box-shadow: 0 4px 24px rgba(0,0,0,0.3);"
     >
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
