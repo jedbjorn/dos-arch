@@ -97,18 +97,25 @@ def sync(con: sqlite3.Connection, base: str) -> tuple[int, int, int]:
         # display_name carries a "(cloud)" suffix so the picker's group
         # header reads cleanly — the frontend modelLabel strips it (same
         # convention as `model_sync` for local rows).
+        # source_url points at the model's library page on ollama.com so the UI
+        # can offer a "read up on it" link per row. The library lives at
+        # <base>/library/<name> — the full name including the `:tag` suffix
+        # lands on the tagged page; Ollama redirects to the repo page if the
+        # tag is unknown. Derived here rather than in the UI so non-cloud rows
+        # could carry curated URLs later without a parallel resolver.
+        source_url = f"{base}/library/{name}"
         con.execute(
             """
             INSERT INTO models
                 (name, display_name, provider, endpoint, auth_ref,
                  tool_dialect, locality, status,
                  supports_tools, accepts_substrate_system,
-                 version, last_verified)
+                 version, source_url, last_verified)
             VALUES
                 (:name, :display, 'ollama_cloud', :endpoint, :auth_ref,
                  'openai', 'remote', 'inactive',
                  1, 1,
-                 :version, datetime('now'))
+                 :version, :source_url, datetime('now'))
             ON CONFLICT(name) DO UPDATE SET
                 provider='ollama_cloud',
                 endpoint=excluded.endpoint,
@@ -118,11 +125,12 @@ def sync(con: sqlite3.Connection, base: str) -> tuple[int, int, int]:
                 supports_tools=1,
                 accepts_substrate_system=1,
                 version=excluded.version,
+                source_url=excluded.source_url,
                 last_verified=datetime('now')
             """,
             {"name": name, "display": f"{name} (cloud)",
              "endpoint": base, "auth_ref": _AUTH_REF,
-             "version": digest},
+             "version": digest, "source_url": source_url},
         )
         if prior is None:
             inserted += 1

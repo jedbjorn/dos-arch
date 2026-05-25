@@ -72,7 +72,7 @@ def list_cloud_models(con = Depends(get_db)):
     rows = con.execute(
         """
         SELECT model_id, name, display_name, status, version,
-               last_verified
+               source_url, last_verified
           FROM models
          WHERE provider='ollama_cloud'
          ORDER BY (status='active') DESC, name
