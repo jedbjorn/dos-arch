@@ -639,7 +639,9 @@ CREATE VIEW v_dr_catalogue AS
     UNION ALL
     SELECT 'dr_automations', automation_id, name, description_short FROM dr_automations WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_env', env_id, name, description_short FROM dr_env WHERE status = 'active';
+    SELECT 'dr_env', env_id, name, description_short FROM dr_env WHERE status = 'active'
+    UNION ALL
+    SELECT 'dr_db', db_id, table_name, purpose FROM dr_db WHERE status = 'active';
 
 -- Per-shell catalogue: filtered through shell_dr_link, includes the shell's role
 -- annotation. Lazy-load surface — query when a shell needs the index of what's
