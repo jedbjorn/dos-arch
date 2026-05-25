@@ -86,9 +86,11 @@ nano ~/.config/dos-arch/.env
 
 In `nano`: arrow keys move the cursor; type each value right after the `=`
 sign (no spaces, no quotes); `Ctrl+O` then `Enter` to save, `Ctrl+X` to
-exit. The two lines to fill:
+exit. Two values are required (`ANTHROPIC_API_KEY` and `GITHUB_TOKEN`);
+two more are optional, only needed if you want browser-chat to reach
+non-Anthropic providers (`OPENAI_API_KEY`, `OLLAMA_CLOUD_API_KEY`).
 
-**`ANTHROPIC_API_KEY`** — create one in the Anthropic Console:
+**`ANTHROPIC_API_KEY`** *(required)* — create one in the Anthropic Console:
 [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
 It looks like `sk-ant-…`:
 
@@ -96,7 +98,7 @@ It looks like `sk-ant-…`:
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
 ```
 
-**`GITHUB_TOKEN`** — a GitHub token the broker uses for git-over-HTTPS
+**`GITHUB_TOKEN`** *(required)* — a GitHub token the broker uses for git-over-HTTPS
 (clone / pull / push) on behalf of shell containers. Two ways to get one:
 
 - *Recommended — a fine-grained PAT.* Create one at
@@ -121,6 +123,18 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
   ```bash
   sed -i "s|^GITHUB_TOKEN=.*|GITHUB_TOKEN=$(gh auth token)|" ~/.config/dos-arch/.env
   ```
+
+**`OPENAI_API_KEY`** *(optional)* — only needed if you want browser-chat to
+reach GPT models. Create one at
+[platform.openai.com/api-keys](https://platform.openai.com/api-keys); leave
+the line blank to skip OpenAI entirely.
+
+**`OLLAMA_CLOUD_API_KEY`** *(optional)* — only needed if you want
+browser-chat to reach Ollama Cloud's hosted models (gpt-oss, deepseek,
+kimi, qwen, glm, …). Create one at
+[ollama.com/settings/keys](https://ollama.com/settings/keys); see the
+**[Cloud models](#cloud-models-ollama-cloud)** section below for how to
+populate and activate cloud rows.
 
 ### Run setup
 
@@ -192,6 +206,36 @@ hands-free after the first sync.
 Pick models the Ollama library tags as **"Tools"** — the browser-chat
 dispatcher needs tool calls. Models without that capability still sync,
 just registered as `status='inactive'`.
+
+### Cloud models (Ollama Cloud)
+
+dos-arch's browser-chat can also reach Ollama's hosted service — same
+native `/api/chat` protocol as the local daemon, just with a bearer
+token. Useful when you want a frontier-class model (gpt-oss:120b,
+deepseek-v3.1:671b, kimi-k2, …) that won't fit in local VRAM.
+
+Set `OLLAMA_CLOUD_API_KEY` in `~/.config/dos-arch/.env` (see Step 0),
+then `pm2 restart dosarch-dispatch` so the dispatcher reloads it.
+
+Populate the catalog from Ollama Cloud's public listing:
+
+```bash
+make sync-cloud-models            # anonymous /api/tags read — no key needed
+```
+
+That inserts one `provider='ollama_cloud'` row per cloud model, all
+`status='inactive'` by default. To activate, open the **Ollama Cloud**
+link in the UI's hamburger drawer (`/ollamacloudconfig`) — each row has a
+single-click activate / deactivate toggle, and the page's **Refresh
+catalog** button re-runs the sync without dropping to the shell.
+
+Activated rows appear under **Ollama Cloud** in the chat sidebar's model
+picker, alongside the local and Anthropic groups.
+
+The down-sweep is conservative: a cloud row gets auto-deactivated only if
+it was previously synced from `/api/tags` (`last_verified IS NOT NULL`)
+and the latest catalog no longer lists it. Rows that were hand-inserted
+or pre-date the sync stay put.
 
 ### Troubleshooting
 
