@@ -32,7 +32,10 @@ def compose_boot_document(con: sqlite3.Connection, chat_session_id: str) -> str:
     dispatcher, and re-materialized in place on a model switch."""
     sess = con.execute(
         "SELECT cs.shell_id, s.active_archive_id, m.name AS model_name, "
-        "m.tool_dialect "
+        "m.tool_dialect, "
+        "(SELECT COUNT(*) FROM chat_sessions cs2 "
+        " WHERE cs2.shell_id = cs.shell_id AND cs2.started_at <= cs.started_at"
+        ") AS session_rank "
         "FROM chat_sessions cs "
         "JOIN shells s ON s.shell_id = cs.shell_id "
         "LEFT JOIN models m ON m.model_id = cs.model_id "
@@ -43,7 +46,10 @@ def compose_boot_document(con: sqlite3.Connection, chat_session_id: str) -> str:
         raise ValueError(f"chat session {chat_session_id} not found")
     runtime_ctx = {
         "datetime": datetime.now(),  # host-local — the BOOT line labels it "local"
-        "session_id": chat_session_id,
+        # Per-shell numeric rank by started_at, zero-padded. Parallels the CLI
+        # launcher's shell_memory_archives.session_id (0001, 0002...) — same
+        # human-readable shape, different table (chat_sessions has no archive row).
+        "session_id": f"{sess['session_rank']:04d}",
         # archive_id stays deferred — shell_memory_archives is unpopulated and
         # the session-narrative writer is a separate parallel agent (CC-069).
         "archive_id": sess["active_archive_id"] or "—",

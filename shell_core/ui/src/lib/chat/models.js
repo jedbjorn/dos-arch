@@ -1,9 +1,9 @@
 // Model registry helpers for the chat sidebar.
 
 export const PROVIDERS = [
+  { key: 'ollama_cloud', label: 'Ollama Cloud' },
   { key: 'anthropic',    label: 'Anthropic' },
   { key: 'openai',       label: 'OpenAI' },
-  { key: 'ollama_cloud', label: 'Ollama Cloud' },
   { key: 'local',        label: 'Local' },
 ]
 
