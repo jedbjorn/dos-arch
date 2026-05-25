@@ -623,23 +623,23 @@ CREATE INDEX idx_shell_dr_link_shell ON shell_dr_link(shell_id);
 -- Substrate-wide catalogue: all typed entries projected to (name, description_short).
 -- Lazy-load surface — query when a shell needs the full index of what exists.
 CREATE VIEW v_dr_catalogue AS
-    SELECT 'dr_repo' AS ref_table, repo_id AS ref_id, name, description_short FROM dr_repo
+    SELECT 'dr_repo' AS ref_table, repo_id AS ref_id, name, description_short FROM dr_repo WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_filepath', filepath_id, name, description_short FROM dr_filepath
+    SELECT 'dr_filepath', filepath_id, name, description_short FROM dr_filepath WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_router', router_id, name, description_short FROM dr_router
+    SELECT 'dr_router', router_id, name, description_short FROM dr_router WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_api', api_id, name, description_short FROM dr_api
+    SELECT 'dr_api', api_id, name, description_short FROM dr_api WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_lib', lib_id, name, description_short FROM dr_lib
+    SELECT 'dr_lib', lib_id, name, description_short FROM dr_lib WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_dependencies', dep_id, name, description_short FROM dr_dependencies
+    SELECT 'dr_dependencies', dep_id, name, description_short FROM dr_dependencies WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_services', service_id, name, description_short FROM dr_services
+    SELECT 'dr_services', service_id, name, description_short FROM dr_services WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_automations', automation_id, name, description_short FROM dr_automations
+    SELECT 'dr_automations', automation_id, name, description_short FROM dr_automations WHERE status = 'active'
     UNION ALL
-    SELECT 'dr_env', env_id, name, description_short FROM dr_env;
+    SELECT 'dr_env', env_id, name, description_short FROM dr_env WHERE status = 'active';
 
 -- Per-shell catalogue: filtered through shell_dr_link, includes the shell's role
 -- annotation. Lazy-load surface — query when a shell needs the index of what's
@@ -647,39 +647,39 @@ CREATE VIEW v_dr_catalogue AS
 CREATE VIEW v_shell_catalogue AS
     SELECT l.shell_id, 'dr_repo' AS ref_table, l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_repo x ON l.ref_id = x.repo_id
-        WHERE l.ref_table = 'dr_repo'
+        WHERE l.ref_table = 'dr_repo' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_filepath', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_filepath x ON l.ref_id = x.filepath_id
-        WHERE l.ref_table = 'dr_filepath'
+        WHERE l.ref_table = 'dr_filepath' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_router', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_router x ON l.ref_id = x.router_id
-        WHERE l.ref_table = 'dr_router'
+        WHERE l.ref_table = 'dr_router' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_api', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_api x ON l.ref_id = x.api_id
-        WHERE l.ref_table = 'dr_api'
+        WHERE l.ref_table = 'dr_api' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_lib', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_lib x ON l.ref_id = x.lib_id
-        WHERE l.ref_table = 'dr_lib'
+        WHERE l.ref_table = 'dr_lib' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_dependencies', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_dependencies x ON l.ref_id = x.dep_id
-        WHERE l.ref_table = 'dr_dependencies'
+        WHERE l.ref_table = 'dr_dependencies' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_services', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_services x ON l.ref_id = x.service_id
-        WHERE l.ref_table = 'dr_services'
+        WHERE l.ref_table = 'dr_services' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_automations', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_automations x ON l.ref_id = x.automation_id
-        WHERE l.ref_table = 'dr_automations'
+        WHERE l.ref_table = 'dr_automations' AND x.status = 'active'
     UNION ALL
     SELECT l.shell_id, 'dr_env', l.ref_id, x.name, x.description_short, l.role
         FROM shell_dr_link l JOIN dr_env x ON l.ref_id = x.env_id
-        WHERE l.ref_table = 'dr_env';
+        WHERE l.ref_table = 'dr_env' AND x.status = 'active';
 
 -- ── Existing views ────────────────────────────────────────────────────────────
 
