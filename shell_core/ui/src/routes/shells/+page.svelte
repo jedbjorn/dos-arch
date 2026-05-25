@@ -200,6 +200,13 @@
     { title: 'General',        items: sections.filter(s => s.scope === 'universal') },
     { title: 'Shell Specific', items: sections.filter(s => s.scope === 'shell') },
   ])
+
+  // Aggregate stats — full rendered harness (sum of every section body) and
+  // the currently-displayed skill. Reuses approxTokens.
+  const harnessChars  = $derived(sections.reduce((n, s) => n + (s.body?.length ?? 0), 0))
+  const harnessTokens = $derived(approxTokens(sections.map(s => s.body ?? '').join('')))
+  const skillChars    = $derived(activeSkill?.content?.length ?? 0)
+  const skillTokens   = $derived(approxTokens(activeSkill?.content ?? ''))
 </script>
 
 <!-- Sticky identity sub-header — sits below the TopBar (h-[52px]).
@@ -255,6 +262,10 @@
           >↓</a>
         </div>
       {/if}
+    </div>
+    <div class="flex items-baseline gap-4 px-1 text-[10px] uppercase tracking-[0.15em]">
+      <span class="text-white/30">Char Count <span class="text-white/60">{harnessChars.toLocaleString()}</span></span>
+      <span class="text-white/30">Est. Tokens <span class="text-white/60">~{harnessTokens.toLocaleString()}</span></span>
     </div>
     <div
       class="rounded-2xl border border-white/[0.08] overflow-hidden"
@@ -377,6 +388,10 @@
           class="ml-auto px-2 py-0.5 text-white/40 hover:text-white text-xs leading-none transition"
         >✎</button>
       {/if}
+    </div>
+    <div class="flex items-baseline gap-4 px-1 text-[10px] uppercase tracking-[0.15em]">
+      <span class="text-white/30">Char Count <span class="text-white/60">{skillChars.toLocaleString()}</span></span>
+      <span class="text-white/30">Est. Tokens <span class="text-white/60">~{skillTokens.toLocaleString()}</span></span>
     </div>
     <div
       class="rounded-2xl border border-white/[0.08] p-4 min-h-[12rem] text-[12px]"
