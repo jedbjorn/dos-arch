@@ -502,6 +502,18 @@ CREATE TABLE dr_lib (
     UNIQUE(kind, location)
 );
 
+CREATE TABLE dr_page (
+    page_id           INTEGER PRIMARY KEY,
+    name              TEXT NOT NULL,
+    description_short TEXT NOT NULL CHECK (LENGTH(description_short) <= 100),
+    location          TEXT NOT NULL UNIQUE,
+    purpose           TEXT,
+    status            TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active','deprecated','planned','retired')),
+    last_verified     DATE,
+    notes             TEXT
+);
+
 CREATE TABLE dr_dependencies (
     dep_id            INTEGER PRIMARY KEY,
     project           TEXT NOT NULL,
@@ -632,6 +644,8 @@ CREATE VIEW v_dr_catalogue AS
     SELECT 'dr_api', api_id, name, description_short FROM dr_api WHERE status = 'active'
     UNION ALL
     SELECT 'dr_lib', lib_id, name, description_short FROM dr_lib WHERE status = 'active'
+    UNION ALL
+    SELECT 'dr_page', page_id, name, description_short FROM dr_page WHERE status = 'active'
     UNION ALL
     SELECT 'dr_dependencies', dep_id, name, description_short FROM dr_dependencies WHERE status = 'active'
     UNION ALL
