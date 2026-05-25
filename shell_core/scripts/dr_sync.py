@@ -577,18 +577,20 @@ def sync_filepaths(conn: sqlite3.Connection) -> dict:
 
 _AUTOMATION_ENTRIES = [
     # (name, trigger_kind, schedule, description_short)
-    ("catalogue_startup_sync", "api",    None,             "Refresh dr_* catalogue on FastAPI startup (api/main.py @on_event)"),
-    ("catalogue_cron_sync",    "cron",   "daily 04:00",    "Full host-side dr_* catalogue sync via cron; runs db-sync, logs to dr_sync_runs"),
-    ("boot_db_snapshot",       "manual", "on make launch", "DB snapshot before each shell boot; rolling-5 retention in ~/db_backups/dos-arch"),
-    ("missing_db_tripwire",    "manual", "on make launch", "Abort launch if shell_db.db missing or 0 bytes; restore from snapshot"),
-    ("forge_self_heal",        "manual", "on make launch", "Re-seed Forge if missing from DB (run.py calls ensure_forge each boot)"),
+    ("catalogue_startup_sync",  "api",     None,             "Refresh dr_* catalogue on FastAPI startup (api/main.py @on_event)"),
+    ("dosarch-dr-sync.timer",   "systemd", "daily 04:00",    "Daily dr_* catalogue sync via systemd user timer (Persistent=true → catch-up on boot)"),
+    ("boot_db_snapshot",        "manual",  "on make launch", "DB snapshot before each shell boot; rolling-5 retention in ~/db_backups/dos-arch"),
+    ("missing_db_tripwire",     "manual",  "on make launch", "Abort launch if shell_db.db missing or 0 bytes; restore from snapshot"),
+    ("forge_self_heal",         "manual",  "on make launch", "Re-seed Forge if missing from DB (run.py calls ensure_forge each boot)"),
 ]
 
 
 def sync_automations(conn: sqlite3.Connection) -> dict:
     """Sync curated dr_automations entries — scheduled or trigger-driven jobs.
-    Idempotent: UPSERT keyed on `name`."""
-    counts = {"automations": {"insert": 0, "update": 0}}
+    Idempotent: UPSERT keyed on `name`. Rows absent from the curated list are
+    retired via _reap."""
+    counts = {"automations": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids = []
     for name, kind, schedule, desc in _AUTOMATION_ENTRIES:
         existing = conn.execute(
             "SELECT automation_id FROM dr_automations WHERE name = ?", (name,)
@@ -596,17 +598,20 @@ def sync_automations(conn: sqlite3.Connection) -> dict:
         if existing:
             conn.execute(
                 "UPDATE dr_automations SET description_short = ?, trigger_kind = ?, schedule = ?, "
-                "last_verified = date('now') WHERE automation_id = ?",
+                "status = 'active', last_verified = date('now') WHERE automation_id = ?",
                 (_truncate(desc), kind, schedule, existing[0])
             )
             counts["automations"]["update"] += 1
+            seen_ids.append(existing[0])
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO dr_automations (name, description_short, trigger_kind, schedule, last_verified) "
                 "VALUES (?, ?, ?, ?, date('now'))",
                 (name, _truncate(desc), kind, schedule)
             )
             counts["automations"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
+    counts["automations"]["retire"] = _reap(conn, "dr_automations", "automation_id", seen_ids)
     return counts
 
 
