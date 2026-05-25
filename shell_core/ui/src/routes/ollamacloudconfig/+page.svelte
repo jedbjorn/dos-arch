@@ -9,6 +9,48 @@
   import { getCloudModels, setModelStatus, syncCloudModels } from '$lib/api.js'
   import { refreshModels } from '$lib/chat/modelsStore.js'
 
+  // Family resolver — Ollama Cloud's /api/tags returns empty `family`/`families`
+  // fields for every cloud entry, so we infer the maker from the name prefix
+  // for the group headers below. Purely presentational; if a new family lands
+  // upstream and falls into 'Other', add a rule here.
+  const FAMILY_RULES = [
+    [/^(mistral|ministral|mixtral|devstral|magistral)/i, 'Mistral'],
+    [/^(gemma|gemini)/i,        'Google'],
+    [/^deepseek/i,              'DeepSeek'],
+    [/^qwen/i,                  'Alibaba'],
+    [/^llama/i,                 'Meta'],
+    [/^glm/i,                   'Z.ai'],
+    [/^kimi/i,                  'Moonshot'],
+    [/^gpt-oss/i,               'OpenAI'],
+    [/^nemotron/i,              'NVIDIA'],
+    [/^cogito/i,                'DeepCogito'],
+    [/^minimax/i,               'MiniMax'],
+  ]
+  function familyOf(name) {
+    for (const [re, label] of FAMILY_RULES) if (re.test(name)) return label
+    return 'Other'
+  }
+
+  // Group an array of model rows into [{ family, rows }, …] sorted by group
+  // size descending so the densest families (Qwen, DeepSeek, …) lead. 'Other'
+  // is always pushed to the bottom regardless of size so unknown rows don't
+  // crowd the top.
+  function groupByFamily(rows) {
+    const buckets = new Map()
+    for (const r of rows) {
+      const f = familyOf(r.name)
+      if (!buckets.has(f)) buckets.set(f, [])
+      buckets.get(f).push(r)
+    }
+    return [...buckets.entries()]
+      .map(([family, rows]) => ({ family, rows }))
+      .sort((a, b) => {
+        if (a.family === 'Other') return 1
+        if (b.family === 'Other') return -1
+        return b.rows.length - a.rows.length
+      })
+  }
+
   let models  = $state([])
   let loading = $state(true)
   let syncing = $state(false)
@@ -61,8 +103,9 @@
 
   onMount(load)
 
-  const active   = $derived(models.filter(m => m.status === 'active'))
-  const inactive = $derived(models.filter(m => m.status !== 'active'))
+  const active         = $derived(models.filter(m => m.status === 'active'))
+  const inactive       = $derived(models.filter(m => m.status !== 'active'))
+  const inactiveGroups = $derived(groupByFamily(inactive))
 </script>
 
 <div class="px-6 pt-6 pb-12 max-w-[860px]">
@@ -104,7 +147,16 @@
         <ul class="divide-y divide-white/[0.06] border border-white/[0.08] rounded">
           {#each active as m (m.model_id)}
             <li class="flex items-center px-3 py-2.5">
-              <span class="flex-1 text-[12px] font-mono text-white/85 truncate">{m.name}</span>
+              {#if m.source_url}
+                <a
+                  href={m.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex-1 text-[12px] font-mono text-white/85 hover:text-white truncate hover:underline underline-offset-2"
+                >{m.name}</a>
+              {:else}
+                <span class="flex-1 text-[12px] font-mono text-white/85 truncate">{m.name}</span>
+              {/if}
               <button
                 type="button"
                 onclick={() => toggle(m)}
@@ -124,19 +176,35 @@
       {#if inactive.length === 0}
         <div class="text-[12px] text-white/30 italic">Everything is active.</div>
       {:else}
-        <ul class="divide-y divide-white/[0.06] border border-white/[0.08] rounded">
-          {#each inactive as m (m.model_id)}
-            <li class="flex items-center px-3 py-2.5">
-              <span class="flex-1 text-[12px] font-mono text-white/60 truncate">{m.name}</span>
-              <button
-                type="button"
-                onclick={() => toggle(m)}
-                class="text-[11px] text-white/50 hover:text-white/90 transition px-2 py-1"
-                aria-label="Activate {m.name}"
-              >Activate</button>
-            </li>
-          {/each}
-        </ul>
+        {#each inactiveGroups as g (g.family)}
+          <div class="mb-3 last:mb-0">
+            <div class="text-[10px] uppercase tracking-[0.15em] text-white/40 mb-1.5">
+              {g.family} <span class="text-white/25">({g.rows.length})</span>
+            </div>
+            <ul class="divide-y divide-white/[0.06] border border-white/[0.08] rounded">
+              {#each g.rows as m (m.model_id)}
+                <li class="flex items-center px-3 py-2.5">
+                  {#if m.source_url}
+                    <a
+                      href={m.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="flex-1 text-[12px] font-mono text-white/60 hover:text-white/90 truncate hover:underline underline-offset-2"
+                    >{m.name}</a>
+                  {:else}
+                    <span class="flex-1 text-[12px] font-mono text-white/60 truncate">{m.name}</span>
+                  {/if}
+                  <button
+                    type="button"
+                    onclick={() => toggle(m)}
+                    class="text-[11px] text-white/50 hover:text-white/90 transition px-2 py-1"
+                    aria-label="Activate {m.name}"
+                  >Activate</button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
       {/if}
     </section>
   {/if}
