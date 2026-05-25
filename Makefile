@@ -52,7 +52,7 @@ install:
 	@python3 -m venv .venv
 	@echo "Installing python deps into .venv..."
 	@./.venv/bin/pip install --quiet --upgrade pip
-	@./.venv/bin/pip install --quiet fastapi uvicorn pydantic anthropic openai httpx psutil
+	@./.venv/bin/pip install --quiet -r $(CORE)/requirements.txt
 	@echo "Installing UI deps..."
 	@cd $(CORE)/ui && npm install --silent
 	@echo "Done. Next: make bootstrap && make up"

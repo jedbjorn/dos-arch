@@ -194,13 +194,52 @@ def sync_routers_and_apis(conn: sqlite3.Connection, app=None) -> dict:
     return counts
 
 
-def sync_dependencies(conn: sqlite3.Connection) -> dict:
-    """Sync dr_dependencies from package.json (npm, project='ui') +
-    importlib.metadata in the running interpreter (pip, project='substrate').
+_PIP_MANIFESTS = [
+    # (project, manifest_path_relative_to_ROOT)
+    ("substrate", "shell_core/requirements.txt"),
+    ("broker",    "shell_core/broker/requirements.txt"),
+]
 
-    Idempotent: UPSERT keyed on (project, name).
+
+def _parse_requirements(path: Path) -> list[tuple[str, str]]:
+    """Parse a pip requirements file → [(name, pin_or_empty)]. Ignores
+    comments, blank lines, and `-r`/`-c` includes. Strips environment
+    markers (`; python_version>='3.10'`) and extras (`pkg[foo]`)."""
+    out: list[tuple[str, str]] = []
+    if not path.exists():
+        return out
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        # Drop environment marker
+        line = line.split(";", 1)[0].strip()
+        # Split name and pin (==, >=, <=, ~=, >, <, !=)
+        for op in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+            if op in line:
+                name, _, version = line.partition(op)
+                out.append((name.strip().split("[", 1)[0], op + version.strip()))
+                break
+        else:
+            out.append((line.split("[", 1)[0], ""))
+    return out
+
+
+def sync_dependencies(conn: sqlite3.Connection) -> dict:
+    """Sync dr_dependencies from declared manifests:
+      - shell_core/ui/package.json           → npm,  project='ui'
+      - shell_core/requirements.txt          → pip,  project='substrate'
+      - shell_core/broker/requirements.txt   → pip,  project='broker'
+
+    Pip rows are enriched with version + summary from importlib.metadata
+    when the package is installed in the current interpreter; unenriched
+    rows still appear with the declared pin (or empty version).
+
+    Idempotent: UPSERT keyed on (project, name). Rows whose declaration
+    is gone from the manifests are retired via _reap.
     """
-    counts = {"deps": {"insert": 0, "update": 0}}
+    counts = {"deps": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
 
     def _upsert(project: str, name: str, kind: str, version: str, desc: str):
         existing = conn.execute(
@@ -209,16 +248,20 @@ def sync_dependencies(conn: sqlite3.Connection) -> dict:
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE dr_dependencies SET kind = ?, version = ?, description_short = ? WHERE dep_id = ?",
+                "UPDATE dr_dependencies SET kind = ?, version = ?, description_short = ?, "
+                "status = 'active' WHERE dep_id = ?",
                 (kind, version, desc, existing[0])
             )
             counts["deps"]["update"] += 1
+            seen_ids.append(existing[0])
         else:
-            conn.execute(
-                "INSERT INTO dr_dependencies (project, name, kind, version, description_short) VALUES (?, ?, ?, ?, ?)",
+            cur = conn.execute(
+                "INSERT INTO dr_dependencies (project, name, kind, version, description_short) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (project, name, kind, version, desc)
             )
             counts["deps"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
 
     # ── NPM (UI project) ───────────────────────────────────────────────────
     ui_pkg_path = ROOT / "shell_core" / "ui" / "package.json"
@@ -228,8 +271,8 @@ def sync_dependencies(conn: sqlite3.Connection) -> dict:
             pkg = json.loads(ui_pkg_path.read_text())
         except json.JSONDecodeError:
             pkg = {}
-        for kind in ("dependencies", "devDependencies"):
-            for dep_name, dep_ver in (pkg.get(kind) or {}).items():
+        for section in ("dependencies", "devDependencies"):
+            for dep_name, dep_ver in (pkg.get(section) or {}).items():
                 desc = None
                 dep_pkg_json = node_modules / dep_name / "package.json"
                 if dep_pkg_json.exists():
@@ -240,21 +283,30 @@ def sync_dependencies(conn: sqlite3.Connection) -> dict:
                 desc = _truncate(desc or f"npm package: {dep_name}")
                 _upsert("ui", dep_name, "npm", dep_ver, desc)
 
-    # ── pip (substrate venv) ───────────────────────────────────────────────
+    # ── pip (declared manifests; enriched from importlib.metadata) ─────────
     try:
         import importlib.metadata as importlib_metadata
+        meta_index = {
+            dist.metadata["Name"].lower(): dist
+            for dist in importlib_metadata.distributions()
+            if dist.metadata and dist.metadata["Name"]
+        }
     except ImportError:
-        return counts
+        meta_index = {}
 
-    for dist in importlib_metadata.distributions():
-        meta = dist.metadata
-        name = meta["Name"] if meta else None
-        if not name:
-            continue
-        version = dist.version or ""
-        summary = (meta.get("Summary") if meta else None) or f"pip package: {name}"
-        _upsert("substrate", name, "pip", version, _truncate(summary))
+    for project, rel_path in _PIP_MANIFESTS:
+        for name, declared_pin in _parse_requirements(ROOT / rel_path):
+            dist = meta_index.get(name.lower())
+            if dist is not None:
+                version = dist.version or declared_pin
+                summary = (dist.metadata.get("Summary") if dist.metadata else None) \
+                    or f"pip package: {name}"
+            else:
+                version = declared_pin
+                summary = f"pip package: {name} (declared, not installed in current interpreter)"
+            _upsert(project, name, "pip", version, _truncate(summary))
 
+    counts["deps"]["retire"] = _reap(conn, "dr_dependencies", "dep_id", seen_ids)
     return counts
 
 
