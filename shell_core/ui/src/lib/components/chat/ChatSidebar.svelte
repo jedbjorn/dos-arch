@@ -14,11 +14,12 @@
   // sibling files in lib/components/chat/.
   import { onDestroy, tick } from 'svelte'
   import {
-    getModels, getMyShells, activateShell, getShellChat, getShellChatSession,
+    getMyShells, activateShell, getShellChat, getShellChatSession,
     createShellChatSession, postShellChat, clearShellSession, setSessionModel,
     routeModelToAgents,
   } from '$lib/api.js'
   import { defaultModelId as pickDefaultModel } from '$lib/chat/models.js'
+  import { chatModels, refreshModels } from '$lib/chat/modelsStore.js'
   import { computeChatTokens } from '$lib/chat/tokens.js'
 
   import ShellSwitcher  from './ShellSwitcher.svelte'
@@ -33,7 +34,6 @@
   let switching     = $state(false)
   let SHELL_ID      = $state(null)
 
-  let models        = $state([])
   let selectedModel = $state('')
 
   let messages      = $state([])
@@ -52,7 +52,7 @@
 
   const activeShell   = $derived(myShells.find(s => s.shell_id === SHELL_ID))
   const shellName     = $derived(activeShell?.display_name ?? 'Shell')
-  const activeModel   = $derived(models.find(m => String(m.model_id) === selectedModel))
+  const activeModel   = $derived($chatModels.find(m => String(m.model_id) === selectedModel))
   const contextWindow = $derived(activeModel?.context_window ?? null)
   const chatTokens    = $derived(computeChatTokens(messages))
 
@@ -67,7 +67,7 @@
     // Born with the model already in use — fall back to the default only
     // on first use. Passing the model at creation (not a follow-up PATCH)
     // keeps the dialect right from turn one.
-    const modelId = selectedModel ? Number(selectedModel) : pickDefaultModel(models)
+    const modelId = selectedModel ? Number(selectedModel) : pickDefaultModel($chatModels)
     return adoptSession(await createShellChatSession(SHELL_ID, modelId))
   }
 
@@ -180,7 +180,7 @@
     if (myShells.length && !SHELL_ID) {
       SHELL_ID = (myShells.find(s => s.browser_chat) ?? myShells[0]).shell_id
     }
-    try { models = await getModels() } catch {}
+    await refreshModels()
     await ensureSession()
     await load()
     await tick(); scrollToBottom()
@@ -190,12 +190,12 @@
 
 <aside class="chat-sidebar relative z-10 flex shrink-0 mt-[14px] mr-[14px] mb-[14px] ml-[10px] rounded-2xl border border-white/[0.10] overflow-hidden">
   <ModelPicker
-    {models}
+    models={$chatModels}
     {selectedModel}
     onChange={changeModel}
     onRouteToAgents={async (model_id) => {
       try { await routeModelToAgents(model_id) } catch {}
-      try { models = await getModels() } catch {}
+      await refreshModels()
     }}
   />
 

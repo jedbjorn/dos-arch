@@ -7,6 +7,7 @@
   // come back in the response and surface in a transient status line.
   import { onMount } from 'svelte'
   import { getCloudModels, setModelStatus, syncCloudModels } from '$lib/api.js'
+  import { refreshModels } from '$lib/chat/modelsStore.js'
 
   let models  = $state([])
   let loading = $state(true)
@@ -33,6 +34,10 @@
     models = [...models]
     try {
       await setModelStatus(m.model_id, next)
+      // Notify the persistent chat sidebar — its model picker filters to
+      // active rows, so flipping status here must reach there without a
+      // page reload.
+      await refreshModels()
     } catch (e) {
       m.status = prior
       models = [...models]
@@ -46,6 +51,7 @@
       const r = await syncCloudModels()
       status = `Catalog refreshed — ${r.inserted} new, ${r.refreshed} unchanged, ${r.deactivated} dropped.`
       await load()
+      await refreshModels()
     } catch (e) {
       error = e?.message ?? String(e)
     } finally {
