@@ -112,9 +112,7 @@
         style="top: {hoveredTop}px;
                left: {hoveredLeft - 8}px;
                margin-left: -8px;
-               background: rgba(20, 20, 30, 0.92);
-               backdrop-filter: blur(24px);
-               -webkit-backdrop-filter: blur(24px);
+               background: rgba(20, 20, 30, 0.96);
                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);"
       >{hoveredDesc}</div>
     {/if}

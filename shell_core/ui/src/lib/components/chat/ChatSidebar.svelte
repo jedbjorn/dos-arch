@@ -232,7 +232,5 @@
     width: 50vw;        /* 1/2 window width — redline: chat redline.png */
     min-width: 518px;
     background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
   }
 </style>
