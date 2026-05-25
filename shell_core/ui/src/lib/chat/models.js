@@ -1,15 +1,16 @@
 // Model registry helpers for the chat sidebar.
 
 export const PROVIDERS = [
-  { key: 'anthropic', label: 'Anthropic' },
-  { key: 'openai',    label: 'OpenAI' },
-  { key: 'local',     label: 'Local' },
+  { key: 'anthropic',    label: 'Anthropic' },
+  { key: 'openai',       label: 'OpenAI' },
+  { key: 'ollama_cloud', label: 'Ollama Cloud' },
+  { key: 'local',        label: 'Local' },
 ]
 
-// Local rows sit under the "Local" header — the "(local)" suffix the DB
-// carries on their display_name is redundant in the list.
+// Per-provider header rows carry redundant "(local)" / "(cloud)" suffixes
+// on display_name from the DB; strip them in the list.
 export const modelLabel = (m) =>
-  (m?.display_name ?? '').replace(/\s*\(local\)\s*$/i, '')
+  (m?.display_name ?? '').replace(/\s*\((local|cloud)\)\s*$/i, '')
 
 export const modelsByProvider = (models) =>
   Object.fromEntries(PROVIDERS.map(p => [p.key, models.filter(m => m.provider === p.key)]))
