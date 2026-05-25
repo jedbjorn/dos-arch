@@ -669,16 +669,43 @@ def sync_automations(conn: sqlite3.Connection) -> dict:
 
 _ENV_ENTRIES = [
     # (name, scope, location, is_secret, description_short)
-    ("ANTHROPIC_API_KEY", "system",   "shell environment / ~/.bashrc", 1, "Anthropic API key — used by Claude Code CLI (rotated 2026-04-28 per CC-014)"),
-    ("HOME",              "system",   "OS standard",                    0, "User home dir — launcher resolves ~/db_backups/dos-arch and ~/.claude from this"),
-    ("PATH",              "system",   "OS standard",                    0, "Must include claude, gh, node, npm, pm2, python3 — see Dependencies in README"),
+
+    # ── system / shell environment ────────────────────────────────────────
+    ("ANTHROPIC_API_KEY",        "system",   "shell environment / ~/.bashrc",          1, "Anthropic API key — used by Claude Code CLI (rotated 2026-04-28 per CC-014)"),
+    ("HOME",                     "system",   "OS standard",                            0, "User home dir — launcher resolves ~/db_backups/dos-arch and ~/.claude from this"),
+    ("PATH",                     "system",   "OS standard",                            0, "Must include claude, gh, node, npm, pm2, python3 — see Dependencies in README"),
+
+    # ── dotenv (~/.config/dos-arch/.env) — read host-side, never enters container ──
+    ("OPENAI_API_KEY",           "dotenv",   "~/.config/dos-arch/.env",                1, "OpenAI API key — read by openai SDK + broker; required for GPT-* registry models"),
+    ("GITHUB_TOKEN",             "dotenv",   "~/.config/dos-arch/.env",                1, "GitHub PAT — broker injects on git-over-HTTPS; lets shells clone/push credential-free"),
+
+    # ── runtime (process-env knobs read at startup) ───────────────────────
+    ("DR_SYNC_TRIGGER",          "runtime",  "systemd dosarch-dr-sync.service",        0, "Tag for dr_sync_runs row: cron/startup/manual (default manual)"),
+    ("DOS_API_TOKEN",            "runtime",  "set per-session by scripts/run.py",      1, "Per-shell API token; minted by launcher and injected into the spawned process env"),
+
+    # ── dispatcher tuning (shell_core/services/dispatch_live.py) ──────────
+    ("DISPATCH_DB_PATH",         "runtime",  "shell_core/services/dispatch_live.py",   0, "Override DB path for dispatcher; default shell_core/shell_db.db"),
+    ("DISPATCH_API_BASE",        "runtime",  "shell_core/services/dispatch_live.py",   0, "Override API base for dispatcher; default http://127.0.0.1:8001"),
+    ("DISPATCH_MODEL",           "runtime",  "shell_core/services/dispatch_live.py",   0, "Fallback model when no per-shell choice set; default claude-sonnet-4-6"),
+    ("DISPATCH_POOL_WORKERS",    "runtime",  "shell_core/services/dispatch_live.py",   0, "Concurrent worker count for the dispatch pool; default 5"),
+    ("DISPATCH_TOOL_CONCURRENCY","runtime",  "shell_core/services/dispatch_live.py",   0, "Tool-call concurrency cap per dispatch run; default 20"),
+    ("LOCAL_UNLOAD_SWEEP_SEC",   "runtime",  "shell_core/services/dispatch_live.py",   0, "Idle local-model unload sweep interval (seconds); default 30"),
+
+    # ── Ollama integration (model_sync + provider adapter) ────────────────
+    ("OLLAMA_HOST",              "runtime",  "shell_core/scripts/model_sync.py",       0, "Ollama daemon address for the model watcher; default 127.0.0.1:11434"),
+    ("OLLAMA_API_BASE",          "runtime",  "shell_core/services/providers/ollama_adapter.py", 0, "Ollama API base for provider adapter; default derived from OLLAMA_HOST"),
+    ("OLLAMA_NUM_CTX",           "runtime",  "shell_core/services/providers/ollama_adapter.py", 0, "Override Ollama context window size for chat completions"),
+    ("OLLAMA_KEEP_ALIVE",        "runtime",  "shell_core/services/providers/ollama_adapter.py", 0, "Ollama model keep-alive duration (e.g. 30m, -1 for forever)"),
+    ("MODEL_WATCH_INTERVAL",     "runtime",  "shell_core/scripts/model_sync.py",       0, "Model watcher polling interval (seconds); default 30"),
 ]
 
 
 def sync_env(conn: sqlite3.Connection) -> dict:
     """Sync curated dr_env entries — env vars the substrate uses or expects.
-    Values are NOT stored — registry only. Idempotent: UPSERT keyed on `name`."""
-    counts = {"env": {"insert": 0, "update": 0}}
+    Values are NOT stored — registry only. Idempotent: UPSERT keyed on `name`.
+    Rows absent from the curated list are retired via _reap."""
+    counts = {"env": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
     for name, scope, location, secret, desc in _ENV_ENTRIES:
         existing = conn.execute(
             "SELECT env_id FROM dr_env WHERE name = ?", (name,)
@@ -686,17 +713,20 @@ def sync_env(conn: sqlite3.Connection) -> dict:
         if existing:
             conn.execute(
                 "UPDATE dr_env SET description_short = ?, scope = ?, location = ?, is_secret = ?, "
-                "last_verified = date('now') WHERE env_id = ?",
+                "status = 'active', last_verified = date('now') WHERE env_id = ?",
                 (_truncate(desc), scope, location, secret, existing[0])
             )
             counts["env"]["update"] += 1
+            seen_ids.append(existing[0])
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO dr_env (name, description_short, scope, location, is_secret, last_verified) "
                 "VALUES (?, ?, ?, ?, ?, date('now'))",
                 (name, _truncate(desc), scope, location, secret)
             )
             counts["env"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
+    counts["env"]["retire"] = _reap(conn, "dr_env", "env_id", seen_ids)
     return counts
 
 
