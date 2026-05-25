@@ -635,6 +635,7 @@ def sync_repos(conn: sqlite3.Connection) -> dict:
 _FILEPATH_ENTRIES = [
     # (name, path, kind, description_short)
     ("schema",        ROOT / "shell_core" / "schema.sql",                "file", "Canonical SQLite schema (~25 tables + triggers + 2 catalogue views)"),
+    ("migrations",    ROOT / "shell_core" / "migrations",                "dir",  "Schema migrations — one .sql per version, applied via scripts/migrate.py"),
     ("shell_db",      ROOT / "shell_core" / "shell_db.db",               "file", "Live SQLite store — gitignored, local-only, bootstrap via make bootstrap"),
     ("catalog_template", ROOT / "shell_core" / "templates" / "catalog_universal.md", "file", "Baked universal catalog layer (Laws, Memory protocol, Communication) — render-chain input"),
     ("render_chain",  ROOT / "shell_core" / "shell_render.py",           "file", "Typed section catalog — assemble_catalog, the shared boot-prompt renderer"),
@@ -864,47 +865,55 @@ _DB_PURPOSE_ENTRIES = {
     "users":             "Substrate users (username, scrypt password hash + salt, is_admin)",
     "app_ui_logs":       "API request audit log — method/path/status/duration per call (per user/shell)",
     "schema_migrations": "Applied migrations log — one row per migrations/NNN_*.sql via migrate.py",
+
+    # ── views (kind='view') ───────────────────────────────────────────────
+    "flag_schedule":     "Recursive walk over flags: computes effective_start / effective_end per parent chain",
+    "v_cache_health":    "Per-chat-session prompt-cache hit-rate aggregation (cache_hit/miss tokens, hit_rate)",
+    "v_dr_catalogue":    "Substrate-wide catalogue projection: UNION ALL of active dr_* rows (name + description)",
+    "v_shell_catalogue": "Per-shell catalogue via shell_dr_link join: includes role; only active rows surface",
 }
 
 
 def sync_db(conn: sqlite3.Connection) -> dict:
-    """Sync dr_db from sqlite_master — one row per real substrate table.
+    """Sync dr_db from sqlite_master — one row per real substrate table OR
+    view.
 
-    Source: `SELECT name FROM sqlite_master WHERE type='table'`, excluding
-    SQLite internals (`sqlite_%`). Curated purposes come from
-    `_DB_PURPOSE_ENTRIES`; tables not in the map land with `purpose=NULL` so
-    the gap is visible (audit signal) rather than the table being absent
-    from the catalogue.
+    Source: `SELECT name, type FROM sqlite_master WHERE type IN ('table','view')`,
+    excluding SQLite internals (`sqlite_%`). Curated purposes come from
+    `_DB_PURPOSE_ENTRIES`; objects not in the map land with `purpose=NULL`
+    so the gap is visible (audit signal) rather than the object being
+    absent from the catalogue.
 
-    Idempotent: UPSERT keyed on `table_name`. Tables dropped from
+    Idempotent: UPSERT keyed on `table_name`. Objects dropped from
     `sqlite_master` retire via _reap.
     """
     counts = {"db": {"insert": 0, "update": 0, "retire": 0}}
     seen_ids: list[int] = []
 
     rows = conn.execute(
-        "SELECT name FROM sqlite_master "
-        "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        "SELECT name, type FROM sqlite_master "
+        "WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' "
+        "ORDER BY type, name"
     ).fetchall()
 
-    for (table_name,) in rows:
+    for table_name, obj_type in rows:
         purpose = _DB_PURPOSE_ENTRIES.get(table_name)
         existing = conn.execute(
             "SELECT db_id FROM dr_db WHERE table_name = ?", (table_name,)
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE dr_db SET purpose = ?, status = 'active', "
+                "UPDATE dr_db SET purpose = ?, kind = ?, status = 'active', "
                 "last_verified = date('now') WHERE db_id = ?",
-                (purpose, existing[0])
+                (purpose, obj_type, existing[0])
             )
             counts["db"]["update"] += 1
             seen_ids.append(existing[0])
         else:
             cur = conn.execute(
-                "INSERT INTO dr_db (table_name, purpose, last_verified) "
-                "VALUES (?, ?, date('now'))",
-                (table_name, purpose)
+                "INSERT INTO dr_db (table_name, purpose, kind, last_verified) "
+                "VALUES (?, ?, ?, date('now'))",
+                (table_name, purpose, obj_type)
             )
             counts["db"]["insert"] += 1
             seen_ids.append(cur.lastrowid)

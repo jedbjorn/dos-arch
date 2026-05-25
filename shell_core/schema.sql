@@ -482,6 +482,8 @@ CREATE TABLE dr_db (
     table_name    TEXT NOT NULL UNIQUE,
     purpose       TEXT,
     owner_shell   INTEGER REFERENCES shells(shell_id),
+    kind          TEXT NOT NULL DEFAULT 'table'
+                  CHECK (kind IN ('table','view')),
     status        TEXT NOT NULL DEFAULT 'active'
                   CHECK (status IN ('active','deprecated','planned','retired')),
     last_verified DATE,
