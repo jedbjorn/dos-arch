@@ -187,3 +187,42 @@ async def _populate_catalogue() -> None:
     finally:
         if str(scripts_dir) in _sys.path:
             _sys.path.remove(str(scripts_dir))
+
+
+# ── Cloud model catalog sync on startup ──────────────────────────────────────
+# Refresh the `models` rows for provider='ollama_cloud' from Ollama Cloud's
+# anonymous /api/tags on every API restart. Best-effort: a network failure
+# (Ollama Cloud unreachable) must not block startup. The daily refresh comes
+# from cron (install/cron-install.sh); this hook just ensures a freshly-booted
+# substrate doesn't serve a stale catalog until 04:15.
+
+@app.on_event("startup")
+async def _sync_cloud_models() -> None:
+    import sqlite3
+    import sys as _sys
+    from pathlib import Path
+    here        = Path(__file__).resolve()
+    scripts_dir = here.parents[1] / "scripts"
+    db_path     = here.parents[2] / "shell_core" / "shell_db.db"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from cloud_model_sync import sync as _sync, _cloud_base, CatalogFetchError  # type: ignore[import-not-found]
+        conn = sqlite3.connect(db_path)
+        try:
+            try:
+                inserted, refreshed, deactivated = _sync(conn, _cloud_base())
+                print(
+                    f"[cloud-models] startup sync: "
+                    f"{inserted} inserted, {refreshed} refreshed, "
+                    f"{deactivated} deactivated.",
+                    flush=True,
+                )
+            except CatalogFetchError as e:
+                print(f"[cloud-models] startup sync skipped: {e}", flush=True)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[cloud-models] startup sync FAILED: {e!r}", flush=True)
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))
