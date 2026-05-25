@@ -1,10 +1,19 @@
 <script>
   // Slide-out left drawer triggered from the hamburger in TopBar.
-  // Currently stashes the theme selector; the body above is reserved
-  // for future switching options (account, layout, etc.).
+  // Hosts secondary navigation (config pages) above and the theme
+  // selector at the bottom.
+  import { goto } from '$app/navigation'
   import { theme, setTheme, THEMES } from '$lib/theme.js'
 
   let { open = $bindable(false) } = $props()
+
+  // Secondary nav rows — kept in the drawer rather than the TopBar so the
+  // bar stays focused on the main surfaces (Shells / Flags / Plans).
+  const NAV = [
+    { label: 'Ollama Cloud', href: '/ollamacloudconfig' },
+  ]
+
+  function go(href) { close(); goto(href) }
 
   let themeOpen = $state(false)
   let themeWrapEl = $state(null)
@@ -45,8 +54,17 @@
         <div class="text-[10px] tracking-[0.25em] uppercase text-white/40">Options</div>
       </div>
 
-      <!-- placeholder for future switching options -->
-      <div class="flex-1 overflow-y-auto"></div>
+      <div class="flex-1 overflow-y-auto py-2">
+        {#each NAV as item}
+          <button
+            type="button"
+            onclick={() => go(item.href)}
+            class="w-full text-left px-5 py-2.5 text-[12px] text-white/70 hover:text-white hover:bg-white/[0.05] transition"
+          >
+            {item.label}
+          </button>
+        {/each}
+      </div>
 
       <!-- theme selector pinned at bottom -->
       <div class="px-5 py-4 border-t border-white/[0.08]">

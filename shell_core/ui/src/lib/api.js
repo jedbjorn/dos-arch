@@ -52,6 +52,12 @@ export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${
 
 export const getModels             = ()                => get('/models')
 export const routeModelToAgents    = (model_id)        => post(`/models/${model_id}/route-to-agents`)
+
+// Ollama Cloud config — list includes inactive rows (the activation surface).
+export const getCloudModels        = ()                => get('/models/cloud')
+export const setModelStatus        = (model_id, status) =>
+  patch(`/models/${model_id}/status`, { status })
+export const syncCloudModels       = ()                => post('/models/cloud/sync')
 export const getMyShells           = ()                => get('/shells/mine')
 export const activateShell         = (shell_id)        => patch(`/shells/${shell_id}/activate`)
 export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)
