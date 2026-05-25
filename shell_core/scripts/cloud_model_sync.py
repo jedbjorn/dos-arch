@@ -43,6 +43,15 @@ _AUTH_REF     = "OLLAMA_CLOUD_API_KEY"
 _TIMEOUT      = 30
 
 
+class CatalogFetchError(RuntimeError):
+    """The /api/tags read failed — network error, HTTP error, or empty payload.
+
+    Raised by `_fetch_catalog` so callers can decide how to surface it: the
+    CLI `main` prints and exits non-zero; the API endpoint catches it and
+    returns a 502 with the message intact.
+    """
+
+
 def _cloud_base() -> str:
     return os.environ.get("OLLAMA_CLOUD_BASE", _DEFAULT_BASE).rstrip("/")
 
@@ -54,13 +63,14 @@ def _fetch_catalog(base: str) -> list[dict]:
         with urllib.request.urlopen(url, timeout=_TIMEOUT) as resp:
             payload = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        sys.exit(f"cloud_model_sync: HTTP {e.code} from {url}: "
-                 f"{e.read().decode(errors='replace')[:200]}")
+        raise CatalogFetchError(
+            f"HTTP {e.code} from {url}: "
+            f"{e.read().decode(errors='replace')[:200]}") from e
     except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
-        sys.exit(f"cloud_model_sync: unreachable {url}: {e}")
+        raise CatalogFetchError(f"unreachable {url}: {e}") from e
     models = payload.get("models") or []
     if not models:
-        sys.exit(f"cloud_model_sync: {url} returned empty model list")
+        raise CatalogFetchError(f"{url} returned empty model list")
     return models
 
 
@@ -150,7 +160,10 @@ def main() -> None:
     base = _cloud_base()
     con = sqlite3.connect(args.db)
     try:
-        inserted, refreshed, deactivated = sync(con, base)
+        try:
+            inserted, refreshed, deactivated = sync(con, base)
+        except CatalogFetchError as e:
+            sys.exit(f"cloud_model_sync: {e}")
     finally:
         con.close()
     print(f"cloud_model_sync ({base}): "
