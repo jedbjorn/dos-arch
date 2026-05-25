@@ -420,6 +420,19 @@ def _first_svelte_comment(text: str) -> str | None:
     return _join_comment_block(inner) if inner else None
 
 
+def _first_html_comment(text: str) -> str | None:
+    """First top-level `<!-- ... -->` HTML comment. Used as a fallback for
+    .svelte files that have no opening `<script>` block (markup-only pages).
+    Returns the comment body stripped of whitespace, or None."""
+    start = text.find("<!--")
+    if start < 0:
+        return None
+    end = text.find("-->", start + 4)
+    if end < 0:
+        return None
+    return text[start + 4:end].strip() or None
+
+
 def sync_libs(conn: sqlite3.Connection) -> dict:
     """Sync dr_lib from backend (api/common/*.py) and frontend (ui/src/lib/
     recursive — .js helpers + .svelte components).
@@ -485,6 +498,69 @@ def sync_libs(conn: sqlite3.Connection) -> dict:
             _upsert("frontend", _name_from(f), f, desc)
 
     counts["libs"]["retire"] = _reap(conn, "dr_lib", "lib_id", seen_ids)
+    return counts
+
+
+def _route_name_from(page_file: Path, routes_root: Path) -> str:
+    """Derive the URL route from a `+page.svelte` path.
+      routes/+page.svelte               → "/"
+      routes/flags/+page.svelte         → "/flags"
+      routes/shells/[id]/+page.svelte   → "/shells/[id]"
+    """
+    rel = page_file.relative_to(routes_root).parent
+    parts = [p for p in rel.parts if p]
+    return "/" + "/".join(parts) if parts else "/"
+
+
+def sync_pages(conn: sqlite3.Connection) -> dict:
+    """Sync dr_page from `shell_core/ui/src/routes/**/+page.svelte`.
+
+    Each `+page.svelte` is one row. `name` is the URL route derived from
+    the route folder structure; `location` is the repo-relative file path
+    (UNIQUE). Description preference:
+      1. First `//` block inside the opening `<script>` (same convention
+         as dr_lib for .svelte components).
+      2. First `<!-- ... -->` HTML comment (for markup-only pages).
+      3. Generic `SvelteKit page: <route>` placeholder.
+
+    Idempotent: UPSERT keyed on `location`. Pages whose file is gone retire
+    via _reap.
+    """
+    counts = {"pages": {"insert": 0, "update": 0, "retire": 0}}
+    seen_ids: list[int] = []
+
+    routes_root = ROOT / "shell_core" / "ui" / "src" / "routes"
+    if not routes_root.exists():
+        return counts
+
+    for f in sorted(routes_root.rglob("+page.svelte")):
+        text = f.read_text()
+        comment = _first_svelte_comment(text) or _first_html_comment(text)
+        name = _route_name_from(f, routes_root)
+        desc = _truncate(comment or f"SvelteKit page: {name}")
+        location = str(f.relative_to(ROOT))
+
+        existing = conn.execute(
+            "SELECT page_id FROM dr_page WHERE location = ?", (location,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE dr_page SET name = ?, description_short = ?, "
+                "status = 'active', last_verified = date('now') WHERE page_id = ?",
+                (name, desc, existing[0])
+            )
+            counts["pages"]["update"] += 1
+            seen_ids.append(existing[0])
+        else:
+            cur = conn.execute(
+                "INSERT INTO dr_page (name, description_short, location, last_verified) "
+                "VALUES (?, ?, ?, date('now'))",
+                (name, desc, location)
+            )
+            counts["pages"]["insert"] += 1
+            seen_ids.append(cur.lastrowid)
+
+    counts["pages"]["retire"] = _reap(conn, "dr_page", "page_id", seen_ids)
     return counts
 
 
@@ -744,6 +820,7 @@ _DB_PURPOSE_ENTRIES = {
     "dr_env":          "Catalogue: env-var contract (scope, location, is_secret) — values not stored",
     "dr_filepath":     "Catalogue: notable files + dirs across the substrate (curated)",
     "dr_lib":          "Catalogue: backend modules + frontend UI libs (kind=backend|frontend)",
+    "dr_page":         "Catalogue: SvelteKit pages (one row per ui/src/routes/**/+page.svelte; route as name)",
     "dr_log":          "Catalogue: lifecycle change events for dr_* entries (create/update/delete/note)",
     "dr_repo":         "Catalogue: git repos (name, remote, description) — populated from git + gh",
     "dr_router":       "Catalogue: FastAPI router files (one row per shell_core/api/routers/*.py)",
@@ -841,6 +918,7 @@ SYNCS = {
     "deps":        sync_dependencies,
     "services":    sync_services,
     "libs":        sync_libs,
+    "pages":       sync_pages,
     "repos":       sync_repos,
     "filepaths":   sync_filepaths,
     "automations": sync_automations,
