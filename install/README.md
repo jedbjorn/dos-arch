@@ -74,7 +74,7 @@ partial install or rebuilding one component.
 
 | # | Script / target               | What it does |
 |---|--------------------------------|---|
-| 1 | `sudo ./install/host-setup.sh` | pacman: `git base-devel python nodejs npm cronie docker docker-buildx slirp4netns fuse-overlayfs`; npm -g pm2 (if missing); enable cronie; add the operator's subuid/subgid range; enable-linger so the user systemd manager (and rootless Docker) survive logout. |
+| 1 | `sudo ./install/host-setup.sh` | pacman: `git base-devel python nodejs npm cronie docker docker-buildx slirp4netns fuse-overlayfs`; npm -g pm2 (if missing); enable cronie; add the operator's subuid/subgid range; enable-linger so the user systemd manager (and rootless Docker) survive logout; if `ollama.service` is present, write the dos-arch tuning drop-in (flash attention + q8_0 KV cache). |
 | 2 | `make bootstrap`               | Apply `schema.sql`, seed skills + tools + remote models, seed Forge, prompt for the first user (username + password), seed Sys-Admin owned by that user. |
 | 3 | `make install`                 | Create `.venv` with pip deps (`fastapi uvicorn pydantic anthropic openai httpx psutil`); `npm install` in `shell_core/ui`. |
 | 4 | `./install/rootless-setup.sh`  | Fetch version-matched rootless-extras into `~/bin`, run `dockerd-rootless-setuptool.sh install`, `systemctl --user enable --now docker.service`, `docker context use rootless`, verify with `docker run hello-world`. |
@@ -111,7 +111,14 @@ sudo pacman -S --needed ollama-cuda     # NVIDIA
 sudo pacman -S --needed ollama-rocm     # AMD
 sudo pacman -S --needed ollama          # CPU-only
 sudo systemctl enable --now ollama
+sudo ./install/ollama-tune.sh           # flash attention + q8_0 KV cache
 ```
+
+`ollama-tune.sh` writes `/etc/systemd/system/ollama.service.d/dos-arch.conf`
+with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` — typically
+10–30% faster prefill+decode and half the KV memory at near-zero quality
+cost. If Ollama was already installed when you ran `setup.sh`, this drop-in
+is already in place; if you install Ollama later, run it by hand.
 
 Verify with `ollama --version` and, if a GPU is expected, `nvidia-smi`.
 
@@ -253,7 +260,8 @@ survives.
 
 | Script | Runs as | Does |
 |---|---|---|
-| `host-setup.sh`     | operator (sudo) | Packages, subuid/subgid, linger, cronie. The only step needing root. |
+| `host-setup.sh`     | operator (sudo) | Packages, subuid/subgid, linger, cronie; calls `ollama-tune.sh` if Ollama is installed. The only step needing root. |
+| `ollama-tune.sh`    | operator (sudo) | Systemd drop-in for `ollama.service` — flash attention + q8_0 KV cache. Run by hand after a late Ollama install. |
 | `rootless-setup.sh` | operator        | Install + start rootless Docker. |
 | `build-image.sh`    | operator        | Build `dos-shell` + `dos-broker` + `dos-api` (rolling history). |
 | `broker-up.sh`      | operator        | `dos-net` network + `dos-broker` container. |

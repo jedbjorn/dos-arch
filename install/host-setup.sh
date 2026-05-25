@@ -15,6 +15,7 @@
 set -euo pipefail
 
 RANGE=65536
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "ERROR: run with sudo — installs packages and edits subuid/subgid." >&2
@@ -47,11 +48,11 @@ else
   npm install -g pm2
 fi
 
-echo "==> [3/4] enable the cron daemon (for the nightly catalogue sync)"
+echo "==> [3/5] enable the cron daemon (for the nightly catalogue sync)"
 systemctl enable --now cronie
 echo "    cronie enabled"
 
-echo "==> [4/4] operator rootless prerequisites"
+echo "==> [4/5] operator rootless prerequisites"
 # subuid/subgid — rootless Docker maps container UIDs into this range.
 if grep -q "^${OPERATOR}:" /etc/subuid && grep -q "^${OPERATOR}:" /etc/subgid; then
   echo "    subuid/subgid present: $(grep "^${OPERATOR}:" /etc/subuid)"
@@ -67,6 +68,18 @@ fi
 # Docker daemon) alive after logout, so the substrate runs unattended.
 loginctl enable-linger "${OPERATOR}"
 echo "    linger enabled for ${OPERATOR}"
+
+echo "==> [5/5] ollama tuning (if installed)"
+# Ollama install is BYO (GPU-variant dependent — cuda/rocm/cpu). If the
+# service is already present, drop in the dos-arch defaults now; otherwise
+# print the pointer and move on. ollama-tune.sh is idempotent and safe to
+# run by hand after a late Ollama install.
+if systemctl cat ollama.service >/dev/null 2>&1; then
+  "${SCRIPT_DIR}/ollama-tune.sh"
+else
+  echo "    ollama.service not present — skip. After installing Ollama, run:"
+  echo "    sudo ${SCRIPT_DIR}/ollama-tune.sh"
+fi
 
 cat <<EOF
 
