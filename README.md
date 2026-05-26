@@ -1,6 +1,6 @@
 # dos-arch
 
-Shell-infrastructure substrate for running persistent Claude Code "shells"
+Shell-infrastructure substrate for running persistent "shells"
 on a single host — each shell in its own rootless-Docker container as an
 OS-enforced sandbox. A shell is an AI agent with stable identity, its own
 memory, and a workspace directory. The substrate handles authentication,
