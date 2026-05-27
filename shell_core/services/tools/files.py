@@ -206,3 +206,85 @@ def handle_move(params):
         return ToolError("permission_denied", str(e))
     return ToolResult(content=f"moved {src} -> {dst}",
                       meta={"src": str(src), "dst": str(dst)})
+
+
+def handle_copy(params):
+    if (e := require(params, "src", "dst")):
+        return e
+    src = Path(params["src"]).expanduser()
+    dst = Path(params["dst"]).expanduser()
+    if not src.exists():
+        return ToolError("not_found", f"source does not exist: {src}")
+    if not src.is_file():
+        return ToolError("not_a_file", f"source is not a file: {src}")
+    if dst.exists():
+        return ToolError("exists", f"destination already exists: {dst}")
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(src), str(dst))
+    except PermissionError as e:
+        return ToolError("permission_denied", str(e))
+    return ToolResult(content=f"copied {src} -> {dst}",
+                      meta={"src": str(src), "dst": str(dst)})
+
+
+def handle_mkdir(params):
+    if (e := require(params, "path")):
+        return e
+    path = Path(params["path"]).expanduser()
+    if path.exists() and not path.is_dir():
+        return ToolError("exists", f"path exists and is not a directory: {path}")
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except PermissionError as e:
+        return ToolError("permission_denied", str(e))
+    return ToolResult(content=f"created {path}", meta={"path": str(path)})
+
+
+def handle_apply_patch(params):
+    hunks = params.get("hunks")
+    if not isinstance(hunks, list) or not hunks:
+        return ToolError("bad_params", "hunks must be a non-empty array")
+    # Pre-flight every hunk against an in-memory copy of each touched file;
+    # only write to disk once all hunks resolve cleanly. All-or-nothing across
+    # the batch — a single failure aborts before any file is mutated.
+    file_cache: dict[str, str] = {}
+    for i, h in enumerate(hunks):
+        if not isinstance(h, dict):
+            return ToolError("bad_params", f"hunk {i}: not an object")
+        for k in ("path", "old_str", "new_str"):
+            if k not in h:
+                return ToolError("bad_params", f"hunk {i}: missing {k}")
+        old_str = h["old_str"]
+        new_str = h["new_str"]
+        if not isinstance(old_str, str) or not isinstance(new_str, str):
+            return ToolError("bad_params", f"hunk {i}: old_str and new_str must be strings")
+        path = Path(h["path"]).expanduser()
+        key = str(path)
+        if key not in file_cache:
+            if not path.is_file():
+                return ToolError("not_found", f"hunk {i}: not a file: {path}")
+            try:
+                file_cache[key] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                return ToolError("binary_file", f"hunk {i}: not utf-8 text: {path}")
+            except PermissionError as e:
+                return ToolError("permission_denied", f"hunk {i}: {e}")
+        text = file_cache[key]
+        count = text.count(old_str)
+        if count == 0:
+            return ToolError("no_match", f"hunk {i}: old_str not found in {path}")
+        if count > 1:
+            return ToolError("not_unique", f"hunk {i}: old_str matches {count} times in {path} — make it unique")
+        file_cache[key] = text.replace(old_str, new_str, 1)
+    for key, new_text in file_cache.items():
+        try:
+            Path(key).write_text(new_text, encoding="utf-8")
+        except PermissionError as e:
+            return ToolError("permission_denied", f"write {key}: {e}")
+    paths = sorted(file_cache)
+    return ToolResult(
+        content=f"applied {len(hunks)} hunk(s) across {len(paths)} file(s): "
+                + ", ".join(paths),
+        meta={"hunks": len(hunks), "files": paths},
+    )
