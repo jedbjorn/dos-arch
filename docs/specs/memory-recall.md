@@ -43,6 +43,17 @@ Out of scope, owned by the agnostic-runtime spec: the dispatcher, the
 `ProviderAdapter` seam, `chat_messages` capture, per-message `body_compact`
 compaction, and the `models` registry. Where this spec needs them it points.
 
+## Where this sits ##
+
+dos-arch decomposes AI implementation into four primitives — **model**,
+**harness**, **agent**, **shell** (see README). This spec defines how the
+**shell** primitive's memory and recall work: capture, summarization, and
+recall mechanics that make a shell's history recallable without burdening
+the active model. The **agent** primitive is owned by
+`docs/specs/cold-agents.md` (this spec uses three named agents — see §2);
+the **harness** primitive is owned by `docs/specs/agnostic-runtime.md`
+(this spec depends on its dispatcher and `chat_messages` capture).
+
 ---
 
 # 2. Terminology #
@@ -57,9 +68,9 @@ here, and the redefinition is the spine of this spec.
 | **Session** | **The span of one conversation between two summary checkpoints.** A conversation is an ordered sequence of sessions. Each session, when it closes, is summarized; the summary seeds the next session. One `sessions` row. |
 | **Summary checkpoint** | The event that closes a session: a model load/unload swap (local models — forced) or a token-cadence mark (cloud models — chosen). Same event, two triggers. |
 | **Provider session** | A model provider's own server-side session/cache feature. Optional, cloud-only, an optimisation — never something the system's correctness depends on. Distinct from a Session above. |
-| **summarizer-agent** | A cold agent (agnostic-runtime §3.2) that summarizes a closed session into `sessions.summary`. Dispatcher-triggered; the warm shell is unaware of it. Pinned to a small model. |
+| **summarizer-agent** | A cold agent (defined per `docs/specs/cold-agents.md`) that summarizes a closed session into `sessions.summary`. Dispatcher-triggered; the shell is unaware of it. Pinned to a small model. |
 | **decision-expander-agent** | A cold agent that expands a `‹decision›` marker into a full `shell_decisions` record. Dispatcher-triggered; background. Pinned to a small model. |
-| **recall-agent** | A cold agent the warm shell spawns (via `remember`) to search memory and report distilled findings — read-only, possibly fanned out. Runs the search in its own context so the working shell's stays clean. Pinned small–mid. |
+| **recall-agent** | A cold agent the shell spawns (via `remember`) to search memory and report distilled findings — read-only, possibly fanned out. Runs the search in its own context so the working shell's stays clean. Pinned small–mid. |
 
 A Session is the **summarization unit**. Everything downstream — recall,
 the rolling `current_state`, the narrative — is built from sessions.
@@ -77,7 +88,7 @@ to push as much as possible up the table, away from the active model.
 |---|---|---|---|
 | **Programmatic** | the dispatcher / a service | `chat_messages`, token & cost accounting, message indices, the `current_state` mirror | zero |
 | **Parallel agent** | summarizer / decision-expander cold agents | session summaries, expanded decision records | zero |
-| **Active model** | the warm shell itself | seed & L&S (identity); a one-line decision marker | one inline marker; identity entries are rare |
+| **Active model** | the shell itself | seed & L&S (identity); a one-line decision marker | one inline marker; identity entries are rare |
 
 The active model's deliberate memory surface drops from seven write targets
 (`current_state`, narrative, decisions, flags, connections, seed, L&S) to
@@ -93,31 +104,32 @@ The active model's deliberate memory surface drops from seven write targets
 
 ## 3.2 The cold agents ##
 
-Three cold agents (agnostic-runtime §3.2) carry the offloaded work. They
-divide on **who triggers them** — and that divide decides what the warm
-shell must know about.
+Three cold agents (defined per `docs/specs/cold-agents.md`) carry the
+offloaded work. They divide on **who triggers them** — and that divide
+decides what the shell must know about.
 
-| Agent | Triggered by | Warm shell aware? | Job |
+| Agent | Triggered by | Shell aware? | Job |
 |---|---|---|---|
 | **summarizer-agent** | the dispatcher, at a summary checkpoint | **no** — fully background | summarize a closed session → `sessions.summary` |
 | **decision-expander-agent** | the dispatcher, harvesting a `‹decision›` marker | **no** — fully background | marker → full `shell_decisions` record |
-| **recall-agent** | the warm shell, via the `remember` skill | **yes** — the shell spawns it, possibly several (§7.2) | search memory → distilled report |
+| **recall-agent** | the shell, via the `remember` skill | **yes** — the shell spawns it, possibly several (§7.2) | search memory → distilled report |
 
 Two trigger paths, deliberately:
 
 - **Service-triggered** — summarizer-agent and decision-expander-agent hook
   to the **dispatcher**, the component that owns the message flow and
   therefore knows when a session closes and when a marked reply lands. They
-  run unseen; the warm shell never spawns them and never waits on them.
-  Offload is total.
-- **Shell-spawned** — the recall-agent is the one memory act the warm shell
+  run unseen; the shell never spawns them and never waits on them. Offload
+  is total.
+- **Shell-spawned** — the recall-agent is the one memory act the shell
   *initiates*. The shell must know it exists and be able to spawn it — once,
   or as a bounded fan-out (§7.2). It is a tool the shell reaches for, not a
   background process.
 
-This refines the agnostic-runtime cold-agent model: a cold agent is spawned
-by a warm shell **or** by the dispatcher. Both are ephemeral, identity-less,
-single-task workers — only the trigger differs.
+These are the **dispatcher** and **shell** halves of cold-agents.md's
+four-trigger taxonomy (§6 — dispatcher / shell / manual / scheduled). All
+four trigger kinds produce ephemeral, identity-less, single-task runs;
+only the trigger differs.
 
 **Tooling.** A cold agent is not toolless; each needs a scoped grant —
 
@@ -367,7 +379,7 @@ not a reason to use them everywhere — small task, small model.
 
 | Role | Model class | Pin |
 |---|---|---|
-| Active warm shell — conversation, judgement, the decision marker | strong (Claude / GPT / Gemini, or a large local model) | `shells.model_id`; per-conversation override |
+| Active shell — conversation, judgement, the decision marker | strong (Claude / GPT / Gemini, or a large local model) | `shells.model_id`; per-conversation override |
 | Summarizer cold agent | small | gemma or mistral — **test and pin** |
 | Decision-expander cold agent | small | clerical/structured output — small; mistral may edge gemma here — test and pin |
 | Recall agent — `remember`'s search + relevance pass | small–mid | relevance judgement is more than keyword work, less than the active shell's job — test and pin |

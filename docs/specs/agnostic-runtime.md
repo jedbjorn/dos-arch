@@ -6,8 +6,8 @@ Supersedes `docs/archive/harness-spec.md`. That earlier draft sketched the
 model-agnostic harness at a lower level of detail and predated two working
 implementations (KinLive, ExpLive). This document replaces it: it carries
 forward the parts that held up — the `models` registry, the provider layer,
-tools-as-data, warm/cold tiers, the isolation model — and adds the full
-browser-chat product design that the earlier draft did not cover.
+tools-as-data, the shell/agent distinction, the isolation model — and adds
+the full browser-chat product design that the earlier draft did not cover.
 
 ---
 
@@ -52,6 +52,20 @@ Two prior systems are consolidated by this spec:
 | **ExpLive** (`designs_os`) | The dispatcher: an agent loop calling the Anthropic SDK directly, with DB-owned history, a rolling window, and `api_*` tools. The own-runtime — already working. | **Host.** Generalize it. |
 | **KLV** (`Alpha`) | Two-surface auth, atomic shell activation, per-shell containers, security hardening. Its re-enter mechanism delegated context to Claude Code session files. | Auth + container model reused; re-enter mechanism **retired** (replaced by DB-owned replay). |
 
+## Where this sits ##
+
+dos-arch decomposes AI implementation into four primitives — **model**,
+**harness**, **agent**, **shell** (see README). This spec defines the
+**harness** primitive (the dispatcher, the provider layer, the tool layer)
+and the **model** primitive's substrate-level concerns (the `models`
+registry, the `ProviderAdapter` seam). The **shell** primitive is referenced
+as existing-and-canonical (substrate identity + memory; §1 Scope), and the
+**agent** primitive is owned by the peer spec `docs/specs/cold-agents.md` —
+this spec uses cold agents (§7.3) but does not define them.
+
+The substrate has no separate workflow primitive; workflow is what emerges
+when shells compose agents and other shells.
+
 ---
 
 # 2. Terminology #
@@ -60,11 +74,11 @@ Two prior systems are consolidated by this spec:
 |---|---|
 | Substrate | The DB-backed identity / memory / render layer. Exists today. |
 | Runtime | The **dispatcher** — composes context, calls a model, executes tools, loops. The thing that *runs* a shell. |
-| Warm shell | A persistent agent: a `shells` row, stable identity, the full memory system, a browser chat. Dev-capable. |
-| Cold agent | An ephemeral task worker: no identity, no memory. One task, execute, report, discard. Spawned by a warm shell. |
+| Shell | A persistent agent — a `shells` row, stable instance-managed identity (seed, L&S), the full memory system, a browser chat. Dev-capable. The persistent execution primitive. |
+| Cold agent | An ephemeral task worker — no identity, no memory. One task, execute, report, discard. The ephemeral execution primitive (defined in `docs/specs/cold-agents.md`). |
 | Provider | A model backend — Anthropic, OpenAI, Google, or a local server. |
 | `ProviderAdapter` | The component that makes one provider speak the runtime's normalized contract. The single agnostic seam. |
-| Conversation | One chat thread between a user and a warm shell — a `chat_sessions` row plus its `chat_messages`. |
+| Conversation | One chat thread between a user and a shell — a `chat_sessions` row plus its `chat_messages`. |
 | Boot document | The composed system-prompt context handed to a shell at session start. |
 
 ---
@@ -83,28 +97,29 @@ The layers are decoupled: the State layer is provider-blind, the Transport
 layer is provider-blind, and only one component inside the Runtime layer is
 provider-aware.
 
-## 3.2 Warm shells and cold agents ##
+## 3.2 Shells and cold agents ##
 
-The system has two kinds of agent. The distinction is **statefulness**, not
-model size and not locality.
+The runtime executes against two primitives — **shell** and **agent** (see
+§1, Where this sits). The distinction is **statefulness**, not model size and
+not locality.
 
-| Aspect | Warm shell | Cold agent |
+| Aspect | Shell | Cold agent |
 |---|---|---|
 | Identity | Stable — a `shells` row | None |
 | Memory | Full DB memory system | None |
 | Lifetime | Persistent across sessions | A single task |
 | Interface | Browser chat | None — spawned, reports back |
 | DB writes | Yes — the memory protocol | None to identity/memory; narrow functional writes only (see §7.3) |
-| Spawned by | The launcher / operator | A warm shell |
+| Spawned by | The launcher / operator | A shell, the dispatcher, an operator, or the scheduler (see cold-agents.md §6) |
 
 A cold agent structurally cannot touch identity or memory — it has no write
 path to those tables. The compaction agent (§7.3) is the first cold agent.
 
-> [!NOTE] One shell model, capability-gated
+> [!NOTE] One shell architecture, capability-gated
 > An earlier draft split "browser shells" from "dev shells" as separate
-> architectures. That split is dropped. There is **one** warm-shell
-> architecture; every warm shell is dev-capable. `shells.kind` now gates *tool
-> grants* (which tools a shell may use), not which runtime runs it.
+> architectures. That split is dropped. There is **one** shell architecture;
+> every shell is dev-capable. `shells.kind` now gates *tool grants* (which
+> tools a shell may use), not which runtime runs it.
 
 ## 3.3 The dispatcher is the runtime ##
 
@@ -283,15 +298,22 @@ ALTER TABLE shells ADD COLUMN model_id INTEGER REFERENCES models(model_id);
 
 `shells.model_id` is the shell's **default** model. A conversation may override
 it (`chat_sessions.model_id`); the dropdown writes the override. This revises
-the earlier draft's "a warm shell binds exactly one model" — selection is
+the earlier draft's "a shell binds exactly one model" — selection is
 per-conversation, with a per-shell default.
 
-## 4.6 Cold agents are not stored ##
+## 4.6 Cold agent storage ##
 
-A cold agent has no row. It is a runtime tuple — `(task_brief, model_id,
-[tool_id], [skill_id])` — executed and discarded. An optional `cold_agent_runs`
-log may record spawns for observability; it logs *runs*, never *state*. Keeping
-it is an open decision (§12).
+> [!NOTE] Superseded — see `docs/specs/cold-agents.md`
+> An earlier draft of this section ("Cold agents are not stored") said cold
+> agents have no row and are runtime tuples discarded after each run. That
+> is now wrong. Cold agents are **named, stored definitions** in an `agents`
+> table; runs are recorded append-only in `agent_runs`. Only the *run* is
+> ephemeral. See cold-agents.md for the asset format, schema, auth model,
+> the four trigger kinds, and the run contract.
+
+The cold-agent layer is owned by `docs/specs/cold-agents.md`. This spec
+references it for dispatcher-triggered runs (§7.3, compaction) and for the
+`cold_portable` flag on tools (§4.4), but no longer defines its storage.
 
 ---
 
@@ -390,7 +412,7 @@ Two tool families:
   confers no extra privilege. This is the whole tool surface a shell needs for
   DB/system work — no MCP required.
 - **dev tools** — `bash`, `read`, `write`, `edit`, `git` — executed into the
-  shell's own container (§9). These make warm shells genuinely dev-capable.
+  shell's own container (§9). These make shells genuinely dev-capable.
 
 ## 5.5 Token accounting and cost ##
 
@@ -533,7 +555,7 @@ wrong thing.
 - **Capability** — any shell with `bash` / network / `git push` is a
   blast-radius risk regardless of where its model runs.
 
-Each warm shell runs in its **own rootless-Docker container** — the workspace
+Each shell runs in its **own rootless-Docker container** — the workspace
 for its dev tools and the capability boundary. The dispatcher executes dev
 tools *into* that container; it owns the loop, the container is the sandbox.
 
@@ -606,7 +628,7 @@ provided by the UI and passed with the skill as a prompt.
 | Compaction model — fixed cheap cloud model, or always local? | Cost and offline behavior |
 | Model fallback — may a conversation fail over if its model is unavailable? | Resilience vs complexity |
 | Keep `cold_agent_runs` log? | Observability vs write overhead |
-| Do warm shells and the local fleet run concurrently? | VRAM budget → hardware spec |
+| Do shells and the local fleet run concurrently? | VRAM budget → hardware spec |
 
 ---
 
@@ -623,7 +645,7 @@ agnosticism is extracted, not built from zero.
 | **3 — compaction** | `body`/`body_compact`, the cold-agent executor, the compaction agent. | Long messages compact automatically; the window re-feeds compacted history. |
 | **4 — modes + controls** | The three persistence modes, in-conversation controls, the 80% budget warning. | The full chat product. |
 | **5 — dev tools** | Per-shell container + `bash`/`read`/`write`/`edit`/`git` tools executed into it. | A shell does real coding work from the browser. |
-| **6 — local fleet** | Rent a GPU, validate a local 70B against the memory protocol, then buy hardware, then containerize the GPU fleet. | The fleet runs on bare metal; warm shells run on local models. |
+| **6 — local fleet** | Rent a GPU, validate a local 70B against the memory protocol, then buy hardware, then containerize the GPU fleet. | The fleet runs on bare metal; shells run on local models. |
 
 **Alpha = Phases 0–3**: the dispatcher generalized across all four providers,
 the model dropdown, windowed mode, compaction, agnostic token logging. That

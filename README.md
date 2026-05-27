@@ -1,18 +1,65 @@
 # dos-arch
 
-Shell-infrastructure substrate for running persistent "shells"
-on a single host — each shell in its own rootless-Docker container as an
-OS-enforced sandbox. A shell is an AI agent with stable identity, its own
-memory, and a workspace directory. The substrate handles authentication,
-identity rendering, session management, the SQLite-backed memory store
-that keeps a shell coherent across runs, and a credential broker that lets
-shell containers run without secrets of their own.
+A host-level substrate for building AI implementations on top of —
+designed to host any harness, any agent, any workflow against any model
+the operator can reach. Shells are today's concrete instance and the
+proving ground: persistent AI agents, each in its own rootless-Docker
+container, each with stable identity, its own memory, and a workspace
+directory. A shell is defined by its identity + memory contract, not
+by which CLI or loop runs inside the container — the Claude Code CLI
+ships as the first in-container runtime because it's the one we use
+day-to-day, but the substrate's auth, identity, memory, and broker
+surfaces don't depend on that choice. The substrate handles
+authentication, identity rendering, session management, a SQLite-backed
+memory store that keeps shells coherent across runs, and a credential
+broker that lets shell containers run without secrets of their own.
+
+The agnostic layer underneath has four primitives, at different stages
+of build-out:
+
+- **Model** — the material. Stateless on its own, opinionated in shape, expensive in ways the layers above have to plan around. dos-arch is model-agnostic by design: the `models` registry + `ProviderAdapter` seam let a conversation be pinned to Anthropic, OpenAI, or (next) Ollama local/cloud, with the tool dialect resolved per model.
+- **Harness** — the software layer around the model: data records, output shape, automation, human-in-the-loop review, programmatic verification. Two harnesses ship today as prototypes: the Claude Code CLI baked into the `dos-shell` image (the `make launch` path), and the browser-chat dispatcher (`shell_core/services/dispatch_live.py`), which *is* its own harness running the model loop. The dispatcher is where model-agnosticism is proved end-to-end. The full scope above is the direction, not the shipped surface. See `docs/specs/agnostic-runtime.md`.
+- **Agent** — an AI instance with a specific directive, tool grant, and output shape, pinned to a model verified to handle it. Named, regression-testable (task, model, tools) triples invokable manually, by schedule, or by a shell. Specced in `docs/specs/cold-agents.md`.
+- **Shell** — an AI instance equipped with persistent identity the instance itself manages and revises against the ongoing work (lessons, stances, a seed), stored in the harness's memory store. Identity is the differentiator — not "memory for an AI" but identity that gets curated by the instance against its directive and the work it's doing.
+
+Workflows are what emerges when you compose those four — event- or
+schedule-driven sequences of agents and shells acting on each other and
+on the surrounding system. Workflows are what the substrate is *for*;
+they aren't a fifth primitive.
+
+## Mission
+
+The shape of what gets built is usually revealed in the building. Truth
+to materials: you find out what the material wants to be by working with
+it. dos-arch treats AI primitives as the materials, and the work is
+figuring out what new workflows want to become when you actually work
+them.
+
+Of the four primitives, the shell concept is the one most
+under-articulated in the broader conversation: identity that the
+instance itself manages and revises against the work it's doing, not
+just memory storage. Memory systems exist; identity-as-instance-curated
+against an ongoing directive is a different unit of abstraction, and
+the difference is load-bearing.
+
+dos-arch is itself an iteration — a synthesis of earlier prototype
+efforts, refined by what those efforts revealed. The harness here is a
+prototype too: what ships today is a starting surface, not the
+destination. The destination, in the broadest framing: a substrate
+where humans and AI together can do more and better work than either
+does alone. The dominant conversation about AI in 2026 has narrowed to
+"can AI replace human workers." dos-arch is built around a different
+question — what do these workflows want to become when you work the
+material seriously — and bets the answer is more interesting and more
+humane than the replacement frame allows.
 
 dos-arch is the dockerized, Arch-host variant of the substrate.
 
 This README is a tour of how it works. If you want to read code: the
-launcher (`shell_core/scripts/run.py`) is the load-bearing piece — it ties
-everything together.
+launcher (`shell_core/scripts/run.py`) is the load-bearing piece for
+the shell path; the dispatcher
+(`shell_core/services/dispatch_live.py`) is the load-bearing piece for
+the agnostic-runtime path.
 
 ---
 
