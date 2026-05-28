@@ -15,7 +15,7 @@ def admin_get_shells(request: Request, con = Depends(get_db)):
     _require_admin(request)
     shells = con.execute(
         """SELECT sh.shell_id, sh.display_name, sh.user_id, sh.browser_chat,
-                  u.display_name AS partner_name
+                  u.username AS partner_name
            FROM shells sh
            LEFT JOIN users u ON sh.user_id = u.user_id
            WHERE sh.shell_id > 0
