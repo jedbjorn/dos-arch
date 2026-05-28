@@ -20,6 +20,7 @@ from pathlib import Path
 import psutil
 
 from .base import ToolError, ToolResult, require
+from .shared import resolve_path
 
 _DEFAULT_TIMEOUT = 30                       # seconds
 _MAX_TIMEOUT     = 300                      # hard ceiling (spec §06.3)
@@ -29,7 +30,7 @@ _MAX_PROCS       = 500                      # cap on proc_list rows
 
 def _resolve_cwd(params):
     """(cwd_str, error) — default to the dispatcher's cwd, never `/`."""
-    cwd = Path(params.get("cwd") or os.getcwd()).expanduser()
+    cwd = resolve_path(params.get("cwd") or os.getcwd())
     if not cwd.is_dir():
         return None, ToolError("not_found", f"cwd is not a directory: {cwd}")
     return str(cwd), None

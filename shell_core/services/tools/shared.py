@@ -23,8 +23,28 @@ from .base import ToolError, ToolResult, require
 # Mirror of shared_dirs.SHARED_ROOT / shared_dir_name(). Inlined rather than
 # imported so this package stays self-contained (scripts/ is not on the
 # dispatcher's sys.path; see services/__init__.py).
-_SHARED_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "dos-arch-shared"
+SHARED_ROOT = Path(pwd.getpwuid(os.getuid()).pw_dir) / "dos-arch-shared"
 _SUBDIRS = ("redlines", "review", "repos", "backups")
+
+# Legacy path prefixes the model still emits from the container era, when
+# host SHARED_ROOT was bind-mounted into the shell container at ~/shared
+# (HOME=/root). The dispatcher now runs host-side, so expanduser() would
+# resolve ~/shared to /home/<user>/shared — a separate tree from SHARED_ROOT.
+# resolve_path() rebinds these prefixes to SHARED_ROOT before expansion.
+_LEGACY_SHARED_PREFIXES = ("~/shared", "/root/shared")
+
+
+def resolve_path(p) -> Path:
+    """Tool-handler path normalizer. Rebinds legacy ~/shared/* paths to
+    SHARED_ROOT, then expanduser()s the result. Use everywhere a tool
+    handler accepts a path argument from the model."""
+    s = str(p)
+    for prefix in _LEGACY_SHARED_PREFIXES:
+        if s == prefix:
+            return SHARED_ROOT
+        if s.startswith(prefix + "/"):
+            return SHARED_ROOT / s[len(prefix) + 1:]
+    return Path(s).expanduser()
 
 
 def _summarize(subdir: Path) -> dict:
@@ -47,7 +67,7 @@ def handle_inspect(params: dict):
         return ToolError("bad_params", "shell_id must be an integer")
     shortname = params["shortname"]
 
-    root = _SHARED_ROOT / f"{shell_id:02d}-{shortname}"
+    root = SHARED_ROOT / f"{shell_id:02d}-{shortname}"
     if not root.is_dir():
         return ToolError(
             "not_found",

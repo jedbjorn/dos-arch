@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 
 from .base import ToolError, ToolResult, require
+from .shared import resolve_path
 
 _MAX_SEARCH_HITS = 200    # cap on file_search matches returned to the model
 _MAX_ENTRIES     = 1000   # cap on file_list / file_find entries
@@ -22,7 +23,7 @@ _MAX_ENTRIES     = 1000   # cap on file_list / file_find entries
 def handle_read(params):
     if (e := require(params, "path")):
         return e
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if not path.exists():
         return ToolError("not_found", f"path does not exist: {path}")
     if not path.is_file():
@@ -49,7 +50,7 @@ def handle_write(params):
     content = params.get("content")
     if content is None:
         return ToolError("bad_params", "missing required parameter: content")
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if path.exists():
         return ToolError("exists", f"path already exists — use file_edit: {path}")
     try:
@@ -67,7 +68,7 @@ def handle_edit(params):
     new_str = params.get("new_str")
     if new_str is None:
         return ToolError("bad_params", "missing required parameter: new_str")
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if not path.is_file():
         return ToolError("not_found", f"not a file: {path}")
     try:
@@ -91,7 +92,7 @@ def handle_append(params):
     content = params.get("content")
     if content is None:
         return ToolError("bad_params", "missing required parameter: content")
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     try:
         with path.open("a", encoding="utf-8") as fh:
             n = fh.write(content)
@@ -108,7 +109,7 @@ def handle_append(params):
 def handle_list(params):
     if (e := require(params, "path")):
         return e
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if not path.is_dir():
         return ToolError("not_found", f"not a directory: {path}")
     walk = path.rglob("*") if params.get("recursive") else path.iterdir()
@@ -127,7 +128,7 @@ def handle_list(params):
 def handle_search(params):
     if (e := require(params, "pattern")):
         return e
-    root = Path(params.get("path") or ".").expanduser()
+    root = resolve_path(params.get("path") or ".")
     if not root.exists():
         return ToolError("not_found", f"path does not exist: {root}")
     use_regex = bool(params.get("regex"))
@@ -162,7 +163,7 @@ def handle_search(params):
 def handle_find(params):
     if (e := require(params, "name_pattern")):
         return e
-    root = Path(params.get("path") or ".").expanduser()
+    root = resolve_path(params.get("path") or ".")
     if not root.is_dir():
         return ToolError("not_found", f"not a directory: {root}")
     matches = []
@@ -178,7 +179,7 @@ def handle_find(params):
 def handle_delete(params):
     if (e := require(params, "path")):
         return e
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if not path.exists():
         return ToolError("not_found", f"path does not exist: {path}")
     if path.is_dir():
@@ -193,8 +194,8 @@ def handle_delete(params):
 def handle_move(params):
     if (e := require(params, "src", "dst")):
         return e
-    src = Path(params["src"]).expanduser()
-    dst = Path(params["dst"]).expanduser()
+    src = resolve_path(params["src"])
+    dst = resolve_path(params["dst"])
     if not src.exists():
         return ToolError("not_found", f"source does not exist: {src}")
     if dst.exists():
@@ -211,8 +212,8 @@ def handle_move(params):
 def handle_copy(params):
     if (e := require(params, "src", "dst")):
         return e
-    src = Path(params["src"]).expanduser()
-    dst = Path(params["dst"]).expanduser()
+    src = resolve_path(params["src"])
+    dst = resolve_path(params["dst"])
     if not src.exists():
         return ToolError("not_found", f"source does not exist: {src}")
     if not src.is_file():
@@ -231,7 +232,7 @@ def handle_copy(params):
 def handle_mkdir(params):
     if (e := require(params, "path")):
         return e
-    path = Path(params["path"]).expanduser()
+    path = resolve_path(params["path"])
     if path.exists() and not path.is_dir():
         return ToolError("exists", f"path exists and is not a directory: {path}")
     try:
@@ -259,7 +260,7 @@ def handle_apply_patch(params):
         new_str = h["new_str"]
         if not isinstance(old_str, str) or not isinstance(new_str, str):
             return ToolError("bad_params", f"hunk {i}: old_str and new_str must be strings")
-        path = Path(h["path"]).expanduser()
+        path = resolve_path(h["path"])
         key = str(path)
         if key not in file_cache:
             if not path.is_file():

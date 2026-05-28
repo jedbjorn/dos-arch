@@ -7,9 +7,9 @@ platform, so there is nothing to normalize (spec §06.1). Every handler takes
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from .base import ToolError, ToolResult, require
+from .shared import resolve_path
 
 _TIMEOUT = 120   # seconds — pull / push can be slow
 
@@ -18,7 +18,7 @@ def _resolve_cwd(params):
     """(cwd_str, error) — validate the repo working-dir param."""
     if (e := require(params, "cwd")):
         return None, e
-    cwd = Path(params["cwd"]).expanduser()
+    cwd = resolve_path(params["cwd"])
     if not cwd.is_dir():
         return None, ToolError("not_found", f"cwd is not a directory: {cwd}")
     return str(cwd), None
