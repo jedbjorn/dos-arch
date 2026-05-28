@@ -221,23 +221,33 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
 def seed_tools(con: sqlite3.Connection) -> list[str]:
     """INSERT every tool in `assets/tools/` not already present, then scope
     each skill-bound tool to its skill via the [skill_map] table in the tools
-    seed manifest — it maps a tool handler-family prefix to the skill that
-    carries it (file.* -> file-ops, proc.* -> process-exec, …). A tool whose
-    prefix is unlisted (the api_* verbs) stays general. Returns the names
-    newly seeded. Caller commits. Tools need no per-shell grant — a general
-    tool (skill_id NULL) is universal, a skill-bound tool comes with its skill."""
+    seed manifest. Entries without a dot are handler-family prefixes
+    (`file` matches `file.*`, scoping the whole family to one skill). Entries
+    with a dot are exact handler matches, used when one family splits across
+    skills (`flag.create` vs `flag.resolve`). A tool whose handler matches
+    nothing in the map stays general (skill_id NULL — the api_* verbs).
+    Returns the names newly seeded. Caller commits. Tools need no per-shell
+    grant — a general tool is universal, a skill-bound tool comes with its
+    skill."""
     seeded = seed_from_assets(con, "tools")
     skill_map = tomllib.loads(
         (ASSETS / "tools" / "_seed.toml").read_text()).get("skill_map", {})
-    for prefix, skill_name in skill_map.items():
+    for key, skill_name in skill_map.items():
         row = con.execute(
             "SELECT skill_id FROM skills WHERE name=? AND is_deleted=0",
             (skill_name,),
         ).fetchone()
-        if row:
+        if not row:
+            continue
+        if "." in key:
+            con.execute(
+                "UPDATE tools SET skill_id=? WHERE skill_id IS NULL AND handler=?",
+                (row[0], key),
+            )
+        else:
             con.execute(
                 "UPDATE tools SET skill_id=? WHERE skill_id IS NULL AND handler LIKE ?",
-                (row[0], prefix + ".%"),
+                (row[0], key + ".%"),
             )
     return seeded
 

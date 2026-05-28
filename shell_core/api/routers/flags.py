@@ -301,7 +301,10 @@ def put_flag_notes(flag_id: int, body: RawNotesBody, con = Depends(get_db)):
 
 @router.patch("/flags/{flag_id}/resolve", summary="Resolve, reopen, or set tracking on a flag")
 def resolve_flag(flag_id: int, body: ResolveBody, con = Depends(get_db)):
-    status = body.effective_status
+    try:
+        status = body.effective_status
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     if status not in (0, 1, 2):
         raise HTTPException(status_code=422, detail="status must be 0, 1, or 2")
     flag = con.execute("SELECT resolved, resolution_notes FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()

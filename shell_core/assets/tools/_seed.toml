@@ -11,14 +11,21 @@ body        = "spec"
 body_format = "json"
 
 # ── skill scoping ────────────────────────────────────────────────────────────
-# Consumed by seed_tools() in db_init.py, not the generic seeder. Each entry
-# maps a tool handler-family prefix to the skill that carries that family: a
-# tool whose `handler` starts "<prefix>." is scoped to that skill. A tool
-# whose prefix is unlisted (the api_* verbs, handler 'api') stays general
-# (skill_id NULL). Adding a tool family is a line here — no code change.
+# Consumed by seed_tools() in db_init.py, not the generic seeder. Two key
+# shapes:
+#   • bare name (no dot) — handler-family prefix. A tool whose handler starts
+#     "<key>." is scoped to that skill. Use when one skill carries the whole
+#     family (file.*, proc.*, git.*, net.*, shared).
+#   • dotted name — exact handler match. Use when one family splits across
+#     skills (flag.create → create_flag skill; flag.resolve → resolve_flag
+#     skill). Exact entries take precedence in the lookup.
+# A tool whose handler matches nothing here stays general (skill_id NULL —
+# the api_* verbs). Adding a tool family is a line here — no code change.
 [skill_map]
-file   = "file-ops"
-proc   = "process-exec"
-git    = "git-workflow"
-net    = "web-fetch"
-shared = "shared"
+file           = "file-ops"
+proc           = "process-exec"
+git            = "git-workflow"
+net            = "web-fetch"
+shared         = "shared"
+"flag.create"  = "create_flag"
+"flag.resolve" = "resolve_flag"
