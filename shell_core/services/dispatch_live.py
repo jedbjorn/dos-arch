@@ -34,6 +34,7 @@ import concurrent.futures
 import fcntl
 import json
 import os
+import re
 import signal
 import sqlite3
 import sys
@@ -91,8 +92,15 @@ METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_d
 # entries narrow ("one tool, one route"); the generic api_* surface stays
 # the right tool for anything ad-hoc.
 NAMED_API_ROUTES: dict[str, tuple[str, str]] = {
-    "flag.create": ("POST", "/flags"),
+    "flag.create":  ("POST",  "/flags"),
+    "flag.resolve": ("PATCH", "/flags/{flag_id}/resolve"),
 }
+
+# {placeholder} → value substitution for NAMED_API_ROUTES paths. Consumed
+# params are popped from the body so they aren't sent twice. No URL-encoding
+# or type coercion — fine for integer ids; revisit if a future route ever
+# needs a path param that could contain a slash.
+_PATH_PARAM = re.compile(r"\{(\w+)\}")
 
 # One cached adapter per (provider, endpoint) — adapters are thread-safe and
 # reused across shell threads. Built lazily. Endpoint matters for `local`
@@ -315,8 +323,13 @@ def execute_tool(name: str, params: dict, handler: str | None, token: str | None
             return _request(method, path, body=params.get("body"), timeout=30, token=token)
     if handler in NAMED_API_ROUTES:
         method, path = NAMED_API_ROUTES[handler]
+        body = dict(params)
+        for ph in _PATH_PARAM.findall(path):
+            if ph not in body:
+                return f"tool '{name}' missing required path param '{ph}'", True
+            path = path.replace("{" + ph + "}", str(body.pop(ph)))
         with TOOL_SEMAPHORE:
-            return _request(method, path, body=params, timeout=30, token=token)
+            return _request(method, path, body=body, timeout=30, token=token)
     if not handler:
         return f"tool '{name}' has no handler registered", True
     return run_tool(handler, params)
