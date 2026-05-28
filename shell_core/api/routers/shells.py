@@ -474,6 +474,7 @@ def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_d
         (body.rationale or "").strip() or None,
         body.parent_decision_id,
     ))
+    rerender_shell_sessions(con, shell_id)
     con.commit()
     row = con.execute(
         "SELECT * FROM shell_decisions WHERE decision_id = ?",
@@ -546,6 +547,7 @@ def update_decision(shell_id: int, decision_id: int, body: UpdateDecisionBody, c
     if fields:
         args.extend([shell_id, decision_id])
         con.execute(f"UPDATE shell_decisions SET {', '.join(fields)} WHERE shell_id = ? AND decision_id = ?", args)
+        rerender_shell_sessions(con, shell_id)
         con.commit()
     row = con.execute(
         "SELECT * FROM shell_decisions WHERE decision_id = ?",
