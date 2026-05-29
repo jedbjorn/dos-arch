@@ -5,7 +5,7 @@
 #
 #   ./install/cron-install.sh
 #
-# Installs two entries, each independently idempotent (own MARKER tag):
+# Installs three entries, each independently idempotent (own MARKER tag):
 #
 #   1. dr_* catalogue sync — 04:00 daily, `make db-sync`. The in-container
 #      FastAPI-startup sync can't reach `git` or `ecosystem.config.cjs` and
@@ -21,7 +21,14 @@
 #      API startup also runs this sync, so a freshly-booted substrate doesn't
 #      wait until 04:15 for a refresh.
 #
-# Re-running this script replaces both entries in place, never duplicates.
+#   3. Anthropic + OpenAI catalog sync — 04:30 daily, `make sync-remote-models`.
+#      Refreshes the `models` rows for the first-party SDK providers from each
+#      provider's /v1/models. Unlike the cloud sync this read needs the
+#      provider API keys; the script loads them from ~/.config/dos-arch/.env.
+#      Liveness check: SELECT MAX(last_verified) FROM models WHERE provider IN
+#      ('anthropic','openai'). API startup also runs this sync.
+#
+# Re-running this script replaces all entries in place, never duplicates.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,6 +45,11 @@ CLOUD_LOG="${LOG_DIR}/cloud_model_sync_cron.log"
 CLOUD_CMD="cd ${REPO} && make sync-cloud-models >> ${CLOUD_LOG} 2>&1"
 CLOUD_LINE="15 4 * * * ${CLOUD_CMD}  ${CLOUD_MARKER}"
 
+REMOTE_MARKER="# dos-arch:remote-model-sync-cron"
+REMOTE_LOG="${LOG_DIR}/remote_model_sync_cron.log"
+REMOTE_CMD="cd ${REPO} && make sync-remote-models >> ${REMOTE_LOG} 2>&1"
+REMOTE_LINE="30 4 * * * ${REMOTE_CMD}  ${REMOTE_MARKER}"
+
 command -v crontab >/dev/null || {
   echo "ERROR: crontab not found — install cron (e.g. 'apt install cron') and retry." >&2
   exit 1
@@ -48,11 +60,12 @@ mkdir -p "${LOG_DIR}"
 # Rebuild the crontab: drop any prior entries we own (by MARKER), append the
 # fresh ones. `crontab -l` exits non-zero when no crontab exists yet — tolerate.
 current="$(crontab -l 2>/dev/null || true)"
-filtered="$(printf '%s\n' "${current}" | grep -vF "${DR_MARKER}" | grep -vF "${CLOUD_MARKER}" || true)"
+filtered="$(printf '%s\n' "${current}" | grep -vF "${DR_MARKER}" | grep -vF "${CLOUD_MARKER}" | grep -vF "${REMOTE_MARKER}" || true)"
 {
   [ -n "${filtered}" ] && printf '%s\n' "${filtered}"
   printf '%s\n' "${DR_LINE}"
   printf '%s\n' "${CLOUD_LINE}"
+  printf '%s\n' "${REMOTE_LINE}"
 } | crontab -
 
 echo "==> dos-arch cron jobs installed"
@@ -68,3 +81,9 @@ echo "        schedule : 04:15 daily"
 echo "        command  : ${CLOUD_CMD}"
 echo "        verify   : crontab -l | grep cloud-model-sync-cron"
 echo "        liveness : SELECT MAX(last_verified) FROM models WHERE provider='ollama_cloud';"
+echo
+echo "    [3] Anthropic + OpenAI catalog sync"
+echo "        schedule : 04:30 daily"
+echo "        command  : ${REMOTE_CMD}"
+echo "        verify   : crontab -l | grep remote-model-sync-cron"
+echo "        liveness : SELECT MAX(last_verified) FROM models WHERE provider IN ('anthropic','openai');"

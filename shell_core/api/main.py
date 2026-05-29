@@ -226,3 +226,41 @@ async def _sync_cloud_models() -> None:
     finally:
         if str(scripts_dir) in _sys.path:
             _sys.path.remove(str(scripts_dir))
+
+
+# ── First-party remote model catalog sync on startup ─────────────────────────
+# Refresh the Anthropic + OpenAI `models` rows from each provider's /v1/models
+# on every API restart, so a freshly-booted substrate discovers a new Opus/GPT
+# release without waiting for the nightly cron. Best-effort and per-provider:
+# a missing key (the API container may not carry one) or an unreachable
+# provider is logged and skipped — never blocks startup. The keys reach this
+# process via the dos-api container's --env-file (install/api-up.sh).
+
+@app.on_event("startup")
+async def _sync_remote_models() -> None:
+    import sqlite3
+    import sys as _sys
+    from pathlib import Path
+    here        = Path(__file__).resolve()
+    scripts_dir = here.parents[1] / "scripts"
+    db_path     = here.parents[2] / "shell_core" / "shell_db.db"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from remote_model_sync import sync as _sync  # type: ignore[import-not-found]
+        conn = sqlite3.connect(db_path)
+        try:
+            for prov, r in _sync(conn).items():
+                if "skipped" in r:
+                    print(f"[remote-models] startup sync ({prov}) skipped: "
+                          f"{r['skipped']}", flush=True)
+                else:
+                    print(f"[remote-models] startup sync ({prov}): "
+                          f"{r['inserted']} inserted, {r['refreshed']} refreshed, "
+                          f"{r['deactivated']} deactivated.", flush=True)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[remote-models] startup sync FAILED: {e!r}", flush=True)
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))

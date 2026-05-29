@@ -8,6 +8,7 @@ nothing to exfiltrate.
 
 Routes (path prefix -> upstream):
   /anthropic/...   -> https://api.anthropic.com     (injects x-api-key)
+  /openai/...      -> https://api.openai.com         (injects Authorization: Bearer)
   /gh/...          -> https://github.com            (injects Authorization)
   /ghcodeload/...  -> https://codeload.github.com   (injects Authorization)
 
@@ -44,13 +45,18 @@ _STRIP = {
 # container is started with `--env-file .env`; the keys are never written
 # to the image.
 _SECRETS = {k: os.environ.get(k, "")
-            for k in ("ANTHROPIC_API_KEY", "GITHUB_TOKEN")}
+            for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN")}
 
 
 # ── auth injectors — mutate the outbound header dict in place ─────────────
 def _inject_anthropic(headers: dict[str, str]) -> None:
     headers.pop("authorization", None)
     headers["x-api-key"] = _SECRETS.get("ANTHROPIC_API_KEY", "")
+
+
+def _inject_openai(headers: dict[str, str]) -> None:
+    headers.pop("x-api-key", None)
+    headers["authorization"] = "Bearer " + _SECRETS.get("OPENAI_API_KEY", "")
 
 
 def _inject_github(headers: dict[str, str]) -> None:
@@ -64,6 +70,7 @@ def _inject_github(headers: dict[str, str]) -> None:
 # ── route map: prefix -> (upstream base, required secret, injector) ───────
 ROUTES: dict[str, tuple] = {
     "anthropic":  ("https://api.anthropic.com",   "ANTHROPIC_API_KEY", _inject_anthropic),
+    "openai":     ("https://api.openai.com",      "OPENAI_API_KEY",    _inject_openai),
     "gh":         ("https://github.com",          "GITHUB_TOKEN",      _inject_github),
     "ghcodeload": ("https://codeload.github.com", "GITHUB_TOKEN",      _inject_github),
 }

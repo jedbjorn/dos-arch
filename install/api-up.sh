@@ -19,6 +19,7 @@ NET="dos-net"
 NAME="dos-api"
 IMAGE="dos-api:latest"
 CORE="${REPO}/shell_core"
+BROKER_BASE="http://dos-broker:8788"
 
 command -v docker >/dev/null || {
   echo "ERROR: docker not on PATH — run ./install/rootless-setup.sh first." >&2
@@ -65,10 +66,18 @@ DRSYNC_PY="${REPO}/.venv/bin/python3"
 "${DRSYNC_PY}" "${CORE}/scripts/dr_sync.py" \
   || echo "    WARNING: catalogue sync reported errors (non-fatal)" >&2
 
+# The remote model-catalog sync (Anthropic/OpenAI /v1/models) runs from the
+# API — at startup and behind the /anthropicconfig + /openaiconfig "Refresh"
+# button — and those reads need the provider API keys. The API stays
+# CREDENTIAL-FREE: it routes the reads through the broker (the one
+# secret-holding component, already on dos-net), which injects the key on
+# egress. We hand the API only the broker URL — not a secret — so the sync
+# has somewhere to send the request. No key ever lands in this container.
 echo "==> [5/6] start ${NAME}"
 docker run -d --name "${NAME}" --network "${NET}" \
   -v "${CORE}:/substrate/shell_core" \
   -p 127.0.0.1:8001:8000 \
+  -e "BROKER_BASE=${BROKER_BASE}" \
   --restart unless-stopped "${IMAGE}" >/dev/null
 echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8001"
 
