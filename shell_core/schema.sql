@@ -41,7 +41,12 @@ CREATE TABLE IF NOT EXISTS "shells" (
     is_shared             INTEGER NOT NULL DEFAULT 0,
     is_admin              INTEGER NOT NULL DEFAULT 0,
     api_auth              INTEGER NOT NULL DEFAULT 0,
-    api_key_hash          TEXT
+    api_key_hash          TEXT,
+    -- api_key: plaintext Bearer alongside the hash (migration 031). Alpha
+    -- simplification — the dispatcher reads it per turn to set Authorization
+    -- so the API can resolve request.state.shell_id. Beta moves plaintext to
+    -- the broker/keystore; the hash stays here.
+    api_key               TEXT
 );
 -- api_auth: 0 = CLI shell — interactive Claude Code, browser-auth on first
 --   launch (subscription billing), no Anthropic env, bypasses the broker's

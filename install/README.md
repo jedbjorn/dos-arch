@@ -4,13 +4,14 @@ Reproducible setup of the dos-arch substrate on a fresh Arch-based host
 (Arch, CachyOS, EndeavourOS, Manjaro, …). Takes a clean system to:
 
 - the operator running **rootless Docker** — no service user, zero sudo on
-  the daily launch path
-- the **`dos-shell:latest`** shell-instance, **`dos-broker:latest`**
-  credential-broker, and **`dos-api:latest`** substrate-API images, built
-- the **`dos-broker`** and **`dos-api`** containers running on the
-  **`dos-net`** network
-- **pm2** supervising the SvelteKit UI, the browser-chat dispatcher, and the
-  Ollama model-sync watcher
+  the daily path
+- the **`dos-broker:latest`** credential-broker image, built (the only
+  container image — dos-arch is an API system, so the API runs on the host,
+  not in a container, and there are no per-shell containers)
+- the **`dos-broker`** container running on the **`dos-net`** network
+- **pm2** supervising the substrate **API** (uvicorn on `127.0.0.1:8001`),
+  the SvelteKit UI, the browser-chat dispatcher, and the Ollama model-sync
+  watcher
 - a **04:00 daily cron** refreshing the `dr_*` catalogue
 
 Tested on CachyOS, kernel 7.0, Docker 29.4.3, x86_64.
@@ -64,12 +65,9 @@ Two interactive moments, both up front:
 
 Everything after runs unattended. Idempotent — safe to re-run.
 
-**Pin a Claude Code version** into the `dos-shell` image for a fully
-reproducible build: `./install/setup.sh 2.1.133`. Default is `stable`.
-
 ## What setup.sh runs
 
-Nine phases. Each one is also runnable on its own — useful when fixing a
+Eight phases. Each one is also runnable on its own — useful when fixing a
 partial install or rebuilding one component.
 
 | # | Script / target               | What it does |
@@ -78,21 +76,19 @@ partial install or rebuilding one component.
 | 2 | `make bootstrap`               | Apply `schema.sql`, seed skills + tools + remote models, seed Forge, prompt for the first user (username + password), seed Sys-Admin owned by that user. |
 | 3 | `make install`                 | Create `.venv` with pip deps (`fastapi uvicorn pydantic anthropic openai httpx psutil`); `npm install` in `shell_core/ui`. |
 | 4 | `./install/rootless-setup.sh`  | Fetch version-matched rootless-extras into `~/bin`, run `dockerd-rootless-setuptool.sh install`, `systemctl --user enable --now docker.service`, `docker context use rootless`, verify with `docker run hello-world`. |
-| 5 | `./install/build-image.sh`     | Build `dos-shell`, `dos-broker`, `dos-api` images. Rolling history-1..3 per image (no manual pruning); old `:latest` rotates to `:history-1`, etc. Verifies `dos-shell` with `claude --version`. |
+| 5 | `./install/build-image.sh`     | Build the `dos-broker` image (the only container image). Rolling history-1..3 (no manual pruning); old `:latest` rotates to `:history-1`, etc. |
 | 6 | `./install/broker-up.sh`       | Create the `dos-net` network, run `dos-broker` with `--env-file ~/.config/dos-arch/.env`, health-check it. |
-| 7 | `./install/api-up.sh`          | Apply pending DB migrations, backfill any missing shell api keys, run a host-side `dr_sync` (full 9-surface catalogue refresh), start `dos-api` with `shell_core/` bind-mounted, published on `127.0.0.1:8001`. |
-| 8 | `make up`                      | pm2 starts three apps: `dosarch-ui` (SvelteKit on `127.0.0.1:5174`), `dosarch-dispatch` (browser-chat dispatcher), `dosarch-modelsync` (Ollama watcher). |
-| 9 | `./install/cron-install.sh` + `make sync-models` | Install the 04:00 daily `dr_*` catalogue sync cron (idempotent — keyed by a marker comment); `collect_hardware` probes this host into `user_hardware`, then `model_sync` reads Ollama's installed set into `installed_models` and promotes each into the `models` registry. If Ollama is absent, the hardware probe still lands and the model read is skipped non-fatally. |
+| 7 | `make migrate` + `make up`     | Apply pending DB migrations, then pm2 starts four host apps: `dosarch-api` (uvicorn on `127.0.0.1:8001`), `dosarch-ui` (SvelteKit on `127.0.0.1:5174`), `dosarch-dispatch` (browser-chat dispatcher), `dosarch-modelsync` (Ollama watcher). The API runs its catalogue + model-sync at startup. |
+| 8 | `./install/cron-install.sh` + `make sync-models` | Install the 04:00 daily `dr_*` catalogue sync cron (idempotent — keyed by a marker comment); `collect_hardware` probes this host into `user_hardware`, then `model_sync` reads Ollama's installed set into `installed_models` and promotes each into the `models` registry. If Ollama is absent, the hardware probe still lands and the model read is skipped non-fatally. |
 
 All idempotent.
 
 ## Verify
 
 ```bash
-docker ps                                            # dos-api + dos-broker up
-pm2 ls                                               # three dosarch-* apps online
+docker ps                                            # dos-broker up (the only container)
+pm2 ls                                               # four dosarch-* apps online
 curl -fsS http://127.0.0.1:8001/health               # {"status":"ok"}
-docker run --rm dos-shell:latest claude --version    # the shell image's CLI
 crontab -l | grep dr-sync-cron                       # the catalogue cron
 sqlite3 shell_core/shell_db.db \
   "SELECT shortname FROM shells;"                    # forge, sysadmin
@@ -160,30 +156,28 @@ local models and `model_sync` fills it from reality.
 
 ## Updating
 
-Routine updates need no rebuild — the API and UI run from bind-mounted
-source, so `git pull` + a restart picks up code changes:
+Routine updates need no rebuild — the API, UI and dispatcher all run from
+the source tree, so `git pull` + migrate + restart picks up code changes:
 
 ```bash
 cd ~/dos-arch
 git pull
-./install/api-up.sh     # applies migrations, restarts dos-api
-make restart            # bounces dosarch-ui, dosarch-dispatch, dosarch-modelsync
+make db-backup          # migrate.py also snapshots, but an extra one is cheap
+make migrate            # apply any pending migrations BEFORE bouncing services
+make restart            # bounces dosarch-api, dosarch-ui, dosarch-dispatch, dosarch-modelsync
 ```
 
-`api-up.sh` snapshots the DB before migrating (see the path it prints) — no
-manual backup is needed. `make db-backup` is there if you want an extra one.
+Order matters: migrate before restart, so the services don't open a DB whose
+schema a migration is about to change (see CC-071). The API reapplies its
+catalogue + model-sync on restart.
 
-**Rebuild images** only when something under `docker/` changes, or to pin a
-new Claude Code version:
+**Rebuild the image** only when something under `docker/broker/` (or the
+broker source) changes:
 
 ```bash
-./install/build-image.sh         # rolls history-1..3 and builds fresh :latest
+./install/build-image.sh         # rolls history-1..3 and builds fresh dos-broker:latest
 ./install/broker-up.sh           # recreate dos-broker on the new image
-./install/api-up.sh              # recreate dos-api on the new image
 ```
-
-Existing per-shell containers keep running the old `dos-shell` image until
-recreated.
 
 ## Teardown
 
@@ -196,7 +190,7 @@ cd ~/dos-arch
 
 Five operator-side phases:
 
-1. pm2 delete the three `dosarch-*` apps.
+1. pm2 delete the four `dosarch-*` apps.
 2. Remove all containers (`docker rm -f`).
 3. Prune images, networks, volumes, build cache (`docker system prune -af --volumes`).
 4. Uninstall rootless Docker (`dockerd-rootless-setuptool.sh uninstall`,
@@ -263,9 +257,8 @@ survives.
 | `host-setup.sh`     | operator (sudo) | Packages, subuid/subgid, linger, cronie; calls `ollama-tune.sh` if Ollama is installed. The only step needing root. |
 | `ollama-tune.sh`    | operator (sudo) | Systemd drop-in for `ollama.service` — flash attention + q8_0 KV cache. Run by hand after a late Ollama install. |
 | `rootless-setup.sh` | operator        | Install + start rootless Docker. |
-| `build-image.sh`    | operator        | Build `dos-shell` + `dos-broker` + `dos-api` (rolling history). |
+| `build-image.sh`    | operator        | Build `dos-broker` (the only container image; rolling history). |
 | `broker-up.sh`      | operator        | `dos-net` network + `dos-broker` container. |
-| `api-up.sh`         | operator        | Migrate DB, host-side `dr_sync`, run `dos-api` on `127.0.0.1:8001`. |
 | `cron-install.sh`   | operator        | Daily `dr_*` catalogue sync cron (`04:00`, idempotent). |
 | `setup.sh`          | operator        | One-command install — runs all of the above in the right order. |
 | `teardown.sh`       | operator        | Reverse of install (operator-side; leaves packages + secrets in place). |
@@ -282,7 +275,7 @@ All idempotent — safe to re-run.
 | `docker: command not found` (after install, new shell) | rootless-setup writes `~/bin` to your PATH via the setuptool; open a new shell, or `export PATH=$HOME/bin:$PATH`. |
 | `dockerd-rootless-setuptool.sh` warns about cgroup v2 delegation | Create `/etc/systemd/system/user@.service.d/delegate.conf` with `[Service]\nDelegate=cpu cpuset io memory pids`, then `sudo systemctl daemon-reload` and re-run `rootless-setup.sh`. |
 | `unprivileged user namespaces are disabled` | `sudo sysctl -w kernel.unprivileged_userns_clone=1` (persist in `/etc/sysctl.d/`). Arch defaults to enabled. |
-| Daily `make launch` says `connect: permission denied` on Docker | Wrong Docker context — `docker context use rootless`. |
+| `broker-up.sh` says `connect: permission denied` on Docker | Wrong Docker context — `docker context use rootless`. |
 | `pacman -S` reports `failed retrieving file …` | Stale package database on a rolling distro — `sudo pacman -Syu` (reboot if the kernel updates), then re-run. |
 | **Why a single-user model** | Earlier iterations ran rootless Docker under a dedicated `dos-arch` service user; the operational cost of the `machinectl` hop and ACL plumbing on the operator's clone outweighed the sandbox benefit on a single-user host. The OS-level sandbox boundary is now rootless Docker itself, run by the operator. |
 | **The `docker` package has no rootless scripts** | Arch/CachyOS package `dockerd`/`containerd` but not `dockerd-rootless*.sh`. `rootless-setup.sh` fetches the version-matched scripts + `rootlesskit` from `download.docker.com`; `dockerd`/`containerd` stay pacman-managed and auto-update via `pacman -Syu`. |

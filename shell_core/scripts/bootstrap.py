@@ -88,7 +88,8 @@ def main() -> int:
         con.close()
 
     print()
-    print("Bootstrap complete. Next: ./install/api-up.sh, then make up, then make launch.")
+    print("Bootstrap complete. Next: ./install/broker-up.sh, then make up "
+          "(pm2 starts the API/UI/dispatcher/model-sync). Shells run via the UI.")
     return 0
 
 

@@ -3,15 +3,12 @@ DB   := $(CORE)/shell_db.db
 SCHEMA := $(CORE)/schema.sql
 BACKUP_DIR := $(HOME)/db_backups/dos-arch
 
-.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models sync-cloud-models sync-remote-models up down restart status logs health launch set-password create-user gen-api-key dispatch
+.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models sync-cloud-models sync-remote-models up down restart status logs health create-user gen-api-key dispatch
 
 help:
-	@echo "shell-infra — host-level substrate"
+	@echo "shell-infra — host-level substrate (API system; shells run via the dispatcher, not a terminal)"
 	@echo ""
-	@echo "  make launch              auth + pick + boot a shell (renders CLAUDE.md, exec claude)"
-	@echo "  make launch-<shortname>  auth + boot that shell directly (skip picker)"
-	@echo "  make set-password        set/reset a user's launcher password"
-	@echo "  make create-user         create a new substrate user (with password)"
+	@echo "  make create-user         create a new substrate user"
 	@echo "  make gen-api-key ARGS=<shortname>  issue/rotate a shell's substrate-API key"
 	@echo "  make install             pip + npm dependencies"
 	@echo "  make bootstrap           one-shot: schema + skills + Forge + first user + Sys-Admin (refuses if DB exists)"
@@ -23,22 +20,13 @@ help:
 	@echo "  make sync-models         sync the models table from Ollama (runs collect-hardware first)"
 	@echo "  make sync-cloud-models   sync the models table from Ollama Cloud's /api/tags (anonymous)"
 	@echo "  make sync-remote-models  sync the models table from Anthropic + OpenAI /v1/models (needs keys)"
-	@echo "  make up                  pm2 start the UI, dispatcher + model-sync; API + broker are containers"
-	@echo "  make down                pm2 delete the UI, dispatcher + model-sync"
-	@echo "  make restart             pm2 restart the UI, dispatcher + model-sync"
+	@echo "  make up                  pm2 start the API, UI, dispatcher + model-sync; only the broker is a container"
+	@echo "  make down                pm2 delete the API, UI, dispatcher + model-sync"
+	@echo "  make restart             pm2 restart the API, UI, dispatcher + model-sync"
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
 	@echo "  make health              curl http://127.0.0.1:8001/health"
 	@echo "  make dispatch            run the browser-chat dispatcher in the foreground (debug; pm2 runs it normally)"
-
-launch:
-	@python3 $(CORE)/scripts/run.py
-
-launch-%:
-	@python3 $(CORE)/scripts/run.py $*
-
-set-password:
-	@python3 $(CORE)/scripts/set_password.py
 
 create-user:
 	@python3 $(CORE)/scripts/create_user.py
@@ -92,7 +80,7 @@ up:
 	@pm2 start ecosystem.config.cjs
 
 down:
-	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-ui dosarch-dispatch dosarch-modelsync 2>/dev/null || true
+	@pm2 delete ecosystem.config.cjs 2>/dev/null || pm2 delete dosarch-api dosarch-ui dosarch-dispatch dosarch-modelsync 2>/dev/null || true
 
 restart:
 	@pm2 restart ecosystem.config.cjs

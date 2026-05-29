@@ -638,18 +638,17 @@ _FILEPATH_ENTRIES = [
     ("migrations",    ROOT / "shell_core" / "migrations",                "dir",  "Schema migrations — one .sql per version, applied via scripts/migrate.py"),
     ("shell_db",      ROOT / "shell_core" / "shell_db.db",               "file", "Live SQLite store — gitignored, local-only, bootstrap via make bootstrap"),
     ("catalog_template", ROOT / "shell_core" / "templates" / "catalog_universal.md", "file", "Baked universal catalog layer (Laws, Memory protocol, Communication) — render-chain input"),
-    ("render_chain",  ROOT / "shell_core" / "shell_render.py",           "file", "Typed section catalog — assemble_catalog, the shared boot-prompt renderer"),
-    ("launcher",      ROOT / "shell_core" / "scripts" / "run.py",        "file", "Auth → picker → render CLAUDE.md → exec claude"),
+    ("render_chain",  ROOT / "shell_core" / "shell_render.py",           "file", "Typed section catalog — assemble_catalog, the shared boot-prompt renderer (used by the API)"),
     ("dr_sync",       ROOT / "shell_core" / "scripts" / "dr_sync.py",    "file", "Catalogue populator — wired sync targets + dispatch"),
     ("bootstrap",     ROOT / "shell_core" / "scripts" / "bootstrap.py",  "file", "One-shot bootstrapper — schema + skills + Forge + first user + Sys-Admin"),
     ("db_init",       ROOT / "shell_core" / "scripts" / "db_init.py",    "file", "Seeding library — seed_skills / ensure_forge / seed_sys_admin"),
     ("create_user",   ROOT / "shell_core" / "scripts" / "create_user.py","file", "Provision a new substrate user with scrypt password"),
     ("set_password",  ROOT / "shell_core" / "scripts" / "set_password.py","file", "Reset a substrate user's scrypt password"),
     ("assets_dir",    ROOT / "shell_core" / "assets",                    "dir",  "Seed data — skills/*.md + shells/{forge,sys-admin}.md"),
-    ("ecosystem",     ROOT / "ecosystem.config.cjs",                     "file", "pm2 process map — api on 8000, ui on 5173"),
-    ("makefile",      ROOT / "Makefile",                                 "file", "Entry points: install, bootstrap, db-sync, db-backup, launch, up/down"),
-    ("backups",       Path.home() / "db_backups" / "dos-arch",           "dir",  "Manual + boot DB snapshots (rolling-5 retention on boot snapshots)"),
-    ("shared",        Path.home() / "shared",                            "dir",  "Host↔container shared root — per-shell scratch dirs, bind-mounted into shell containers"),
+    ("ecosystem",     ROOT / "ecosystem.config.cjs",                     "file", "pm2 process map — api/ui/dispatcher/model-sync host apps (api on 8001, ui on 5174)"),
+    ("makefile",      ROOT / "Makefile",                                 "file", "Entry points: install, bootstrap, migrate, db-sync, db-backup, up/down/restart"),
+    ("backups",       Path.home() / "db_backups" / "dos-arch",           "dir",  "DB snapshots — make db-backup + pre-migration snapshots from migrate.py"),
+    ("shared",        Path.home() / "shared",                            "dir",  "Per-shell scratch dirs (ensured by db_init for Forge/Sys-Admin)"),
     ("global_claude", Path.home() / ".claude" / "CLAUDE.md",             "file", "Harness-injected universal preamble — laws, system override, shell selection"),
 ]
 
@@ -708,9 +707,6 @@ _AUTOMATION_ENTRIES = [
     # (name, trigger_kind, schedule, description_short)
     ("catalogue_startup_sync",  "api",     None,             "Refresh dr_* catalogue on FastAPI startup (api/main.py @on_event)"),
     ("dosarch-dr-sync.timer",   "systemd", "daily 04:00",    "Daily dr_* catalogue sync via systemd user timer (Persistent=true → catch-up on boot)"),
-    ("boot_db_snapshot",        "manual",  "on make launch", "DB snapshot before each shell boot; rolling-5 retention in ~/db_backups/dos-arch"),
-    ("missing_db_tripwire",     "manual",  "on make launch", "Abort launch if shell_db.db missing or 0 bytes; restore from snapshot"),
-    ("forge_self_heal",         "manual",  "on make launch", "Re-seed Forge if missing from DB (run.py calls ensure_forge each boot)"),
 ]
 
 
@@ -758,7 +754,6 @@ _ENV_ENTRIES = [
 
     # ── runtime (process-env knobs read at startup) ───────────────────────
     ("DR_SYNC_TRIGGER",          "runtime",  "systemd dosarch-dr-sync.service",        0, "Tag for dr_sync_runs row: cron/startup/manual (default manual)"),
-    ("DOS_API_TOKEN",            "runtime",  "set per-session by scripts/run.py",      1, "Per-shell API token; minted by launcher and injected into the spawned process env"),
 
     # ── dispatcher tuning (shell_core/services/dispatch_live.py) ──────────
     ("DISPATCH_DB_PATH",         "runtime",  "shell_core/services/dispatch_live.py",   0, "Override DB path for dispatcher; default shell_core/shell_db.db"),

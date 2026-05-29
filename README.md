@@ -1,5 +1,14 @@
 # dos-arch
 
+> **Reframe in progress (2026-05-29).** dos-arch is an **API system**: shells
+> are created and operated through the API + browser-chat dispatcher, not a
+> terminal launcher. The terminal-launch machinery (`run.py`, the `dos-shell`
+> image, `make launch`) has been removed, and the API now runs as a host pm2
+> process, not a container (WAL coherence — CC-095). Every **command** in this
+> README is current; some **prose** below still describes the older per-shell-
+> container / launcher model and is being rewritten. See decision #138 and
+> `docs/specs/isolation-model.md`.
+
 A host-level substrate for building AI implementations on top of —
 designed to host any harness, any agent, any workflow against any model
 the operator can reach. Shells are today's concrete instance and the
@@ -197,28 +206,20 @@ That's it. Nine phases run in order:
 | 2 | `make bootstrap`               | **Interactive** — prompts for the first substrate user's username + password. |
 | 3 | `make install`                 | `.venv` + pip deps + `npm install`. |
 | 4 | `./install/rootless-setup.sh`  | Fetches rootless-extras into `~/bin`, starts the rootless daemon, selects its CLI context. |
-| 5 | `./install/build-image.sh`     | Builds `dos-shell`, `dos-broker`, `dos-api`. |
+| 5 | `./install/build-image.sh`     | Builds `dos-broker` (the only container image). |
 | 6 | `./install/broker-up.sh`       | `dos-net` network + `dos-broker` container. |
-| 7 | `./install/api-up.sh`          | Migrate DB, host-side `dr_sync`, start `dos-api` on `127.0.0.1:8001`. |
-| 8 | `make up`                      | pm2 starts `dosarch-ui` (5174), `dosarch-dispatch`, `dosarch-modelsync`. |
-| 9 | `./install/cron-install.sh` + `make sync-models` | Daily catalogue cron; hardware probe + Ollama model read (non-fatal if Ollama absent). |
+| 7 | `make migrate` + `make up`     | Apply migrations, then pm2 starts `dosarch-api` (8001), `dosarch-ui` (5174), `dosarch-dispatch`, `dosarch-modelsync`. |
+| 8 | `./install/cron-install.sh` + `make sync-models` | Daily catalogue cron; hardware probe + Ollama model read (non-fatal if Ollama absent). |
 
 Each script is also runnable on its own — useful when fixing a partial
 install. Full per-phase detail in
 **[install/README.md](install/README.md#what-setupsh-runs)**.
 
-**Pin a Claude Code version** into the `dos-shell` image:
-`./install/setup.sh 2.1.133`. Default is `stable`.
+### Then open the UI
 
-### Then launch a shell
-
-```bash
-make launch
-```
-
-The launcher authenticates you, lists your shells (owned + shared), opens
-or starts the picked shell's container, and `docker exec`s `claude` into
-it. See **[Daily commands](#daily-commands)** below.
+dos-arch is an API system — shells are created and operated through the
+browser-chat UI, not a terminal. Open **http://127.0.0.1:5174**, sign in,
+and create or pick a shell. See **[Daily commands](#daily-commands)** below.
 
 ### Local models (Ollama)
 
@@ -294,38 +295,31 @@ or pre-date the sync stay put.
 | `XDG_RUNTIME_DIR unset` (rootless-setup) | Running in a detached session. Use a desktop terminal, a tty, or `ssh -t`. |
 | `docker: command not found` (after install, new shell) | `~/bin` not on PATH — open a fresh shell, or `export PATH=$HOME/bin:$PATH`. |
 | `connect: permission denied` on Docker socket | Wrong Docker context — `docker context use rootless`. |
-| Daily `make launch` errors immediately | Check `pm2 ls` (the three `dosarch-*` apps), `docker ps` (`dos-api` + `dos-broker`), and `curl http://127.0.0.1:8001/health`. |
+| UI / chat errors immediately | Check `pm2 ls` (the four `dosarch-*` apps online), `docker ps` (`dos-broker` up), and `curl http://127.0.0.1:8001/health`. |
 
 More cases — cgroup v2 delegation, user namespaces, etc. — in
 **[install/README.md → Notes / troubleshooting](install/README.md#notes--troubleshooting)**.
 
 ### Updating procedure
 
-Routine updates need no rebuild — the API and UI run from bind-mounted
-source, so `git pull` + a restart picks up code changes. As the operator:
+Routine updates need no rebuild — the API, UI and dispatcher run from the
+source tree, so `git pull` + migrate + restart picks up code changes. As
+the operator:
 
 ```bash
 cd ~/dos-arch
 git pull
-./install/api-up.sh     # applies migrations, restarts dos-api
-make restart            # bounces dosarch-ui, dosarch-dispatch, dosarch-modelsync
+make db-backup          # migrate.py also snapshots; an extra one is cheap
+make migrate            # apply pending migrations BEFORE bouncing services (CC-071)
+make restart            # bounces dosarch-api, dosarch-ui, dosarch-dispatch, dosarch-modelsync
 ```
 
-`api-up.sh` snapshots the DB automatically before migrating (see the path
-it prints) — no manual backup is needed. `make db-backup` is there if you
-want an extra one.
-
-**Rebuild images** only when something under `docker/` changes, or to pin
-a new Claude Code version:
+**Rebuild the image** only when something under `docker/broker/` changes:
 
 ```bash
-./install/build-image.sh         # rolls history-1..3, builds fresh :latest
+./install/build-image.sh         # rolls history-1..3, builds fresh dos-broker:latest
 ./install/broker-up.sh           # recreate dos-broker on the new image
-./install/api-up.sh              # recreate dos-api on the new image
 ```
-
-Existing per-shell containers keep running the old `dos-shell` image until
-recreated.
 
 ### Teardown procedure
 
@@ -392,13 +386,10 @@ All run as the operator, from anywhere in `~/dos-arch`:
 ```bash
 cd ~/dos-arch
 
-make launch                       # picker: auth, pick a shell, launch it in its container
-make launch-<shortname>           # boot that shell directly (skip picker)
 make create-user                  # provision a new substrate user
-make set-password                 # reset a user's launcher password
 make gen-api-key ARGS=<shortname> # issue/rotate a shell's substrate-API key
-make up                           # pm2 start the UI + dispatcher + modelsync
-make down                         # pm2 delete the same three
+make up                           # pm2 start the API + UI + dispatcher + modelsync
+make down                         # pm2 delete the same four
 make restart                      # bounce them
 make status                       # pm2 ls
 make logs                         # pm2 logs (Ctrl-C to detach)
@@ -411,26 +402,9 @@ make catalogue ARGS='flag'        # print the catalogue (substring filter)
 make sync-models                  # re-read Ollama into the registry
 ```
 
-The `dos-api` + `dos-broker` containers stay up between sessions; only
-per-shell containers spin up at `make launch` and stay running across
-re-launches of the same shell.
-
-The launcher runs as you, the operator — no `sudo`, no session hop.
-Convenience alias if you want to launch from any directory:
-
-**fish:**
-```fish
-function dosarch
-    cd ~/dos-arch && make launch
-end
-funcsave dosarch
-```
-
-**bash:**
-```bash
-echo 'dosarch() { (cd ~/dos-arch && make launch); }' >> ~/.bashrc
-source ~/.bashrc
-```
+Shells are created and operated through the browser-chat UI at
+**http://127.0.0.1:5174**, not a terminal. The `dos-broker` container and
+the four `dosarch-*` pm2 apps stay up between sessions.
 
 ---
 
