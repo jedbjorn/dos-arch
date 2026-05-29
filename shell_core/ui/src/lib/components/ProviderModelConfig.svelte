@@ -11,10 +11,17 @@
   import { onMount } from 'svelte'
   import { getProviderModels, setModelStatus, syncProviderModels } from '$lib/api.js'
   import { refreshModels } from '$lib/chat/modelsStore.js'
+  import { apiKeys, refreshKeys } from '$lib/chat/keysStore.js'
 
   // provider: registry key ('anthropic'|'openai'); title: page heading;
-  // keyEnv: the env var named in the help line.
+  // keyEnv: the secret name this provider's models depend on.
   let { provider, title, keyEnv } = $props()
+
+  // A provider's models are only meaningful once its key is in the broker
+  // store: the chat picker can't reach the provider without it, and the
+  // catalog sync needs it. So gate the whole list on key presence and react
+  // live to add/rotate/delete on the Keys page (apiKeys is the shared store).
+  const hasKey = $derived($apiKeys.some(k => k.name === keyEnv))
 
   let models  = $state([])
   let loading = $state(true)
@@ -65,7 +72,7 @@
     }
   }
 
-  onMount(load)
+  onMount(() => { refreshKeys(); load() })
 
   const active   = $derived(models.filter(m => m.status === 'active'))
   const inactive = $derived(models.filter(m => m.status !== 'active'))
@@ -77,7 +84,7 @@
     <button
       type="button"
       onclick={refresh}
-      disabled={syncing}
+      disabled={syncing || !hasKey}
       class="text-[11px] uppercase tracking-[0.15em] text-white/50 hover:text-white/90 transition disabled:opacity-40 disabled:cursor-wait"
     >
       {syncing ? 'Refreshing…' : 'Refresh catalog'}
@@ -85,7 +92,7 @@
   </div>
   <p class="text-[12px] text-white/40 mb-6">
     Activate models to make them available in the chat picker.
-    Refreshing the catalog requires <code class="text-white/60">{keyEnv}</code> in the API's environment.
+    Refreshing the catalog requires <code class="text-white/60">{keyEnv}</code> in the broker's key store.
   </p>
 
   {#if status}
@@ -97,6 +104,12 @@
 
   {#if loading}
     <div class="text-white/40 text-sm">Loading…</div>
+  {:else if !hasKey}
+    <div class="text-[13px] text-white/55 border border-white/[0.08] rounded px-4 py-6 text-center">
+      No <code class="text-white/75">{keyEnv}</code> in the key store yet.
+      <a href="/keysconfig" class="text-white/85 underline underline-offset-2 hover:text-white">Add a key</a>
+      to display available {title} models.
+    </div>
   {:else if models.length === 0}
     <div class="text-white/40 text-sm">No {title} models in the registry. Click <em>Refresh catalog</em> to populate.</div>
   {:else}

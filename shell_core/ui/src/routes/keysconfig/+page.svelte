@@ -6,12 +6,14 @@
   // — the list only ever shows the last four characters.
   import { onMount } from 'svelte'
   import { getKeys, setKey, deleteKey } from '$lib/api.js'
+  import { apiKeys } from '$lib/chat/keysStore.js'
 
   // The secrets the broker injects on egress — offered as quick picks; a custom
   // name is allowed for anything else stored.
   const KNOWN = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OLLAMA_CLOUD_API_KEY', 'GITHUB_TOKEN']
 
-  let keys    = $state([])
+  // This page is the authority for the stored-keys list; it writes the shared
+  // apiKeys store so provider config pages react to a set/rotate/delete here.
   let loading = $state(true)
   let status  = $state('')
   let error   = $state('')
@@ -22,7 +24,7 @@
 
   async function load() {
     try {
-      keys = await getKeys()
+      apiKeys.set(await getKeys())
       error = ''
     } catch (e) {
       error = e?.message ?? String(e)
@@ -110,15 +112,15 @@
   <!-- stored -->
   <section>
     <div class="text-[10px] uppercase tracking-[0.2em] text-white/30 mb-3">
-      Stored ({keys.length})
+      Stored ({$apiKeys.length})
     </div>
     {#if loading}
       <div class="text-white/40 text-sm">Loading…</div>
-    {:else if keys.length === 0}
+    {:else if $apiKeys.length === 0}
       <div class="text-[12px] text-white/30 italic">No secrets stored yet.</div>
     {:else}
       <ul class="divide-y divide-white/[0.06] border border-white/[0.08] rounded">
-        {#each keys as k (k.name)}
+        {#each $apiKeys as k (k.name)}
           <li class="flex items-center gap-3 px-3 py-2.5">
             <span class="flex-1 text-[12px] font-mono text-white/85 truncate">{k.name}</span>
             <span class="text-[11px] font-mono text-white/40">…{k.last_four}</span>
