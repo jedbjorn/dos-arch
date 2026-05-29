@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Ensure every shell carries a substrate-API key (generate-if-absent).
 
-CC-102 Phase 1. A fresh bootstrap seeds forge + sysadmin with NO
-api_key/api_key_hash — `ensure_forge`/`seed_sys_admin` don't mint, and the
+CC-102 Phase 1. A fresh bootstrap seeds forge + exprime with NO
+api_key/api_key_hash — `ensure_forge`/`seed_exp_prime` don't mint, and the
 old runtime mint path (run.py) was removed in the API-system cutover. The
 result: token-scoped calls (caller resolved from the Bearer token, e.g.
 flag.create/resolve) fail against a freshly-installed substrate.
@@ -14,7 +14,7 @@ vault in CC-102 Phase 2) and `api_key_hash` (sha256, what the
 auth_passthrough middleware verifies against). Idempotent: a shell with
 both columns set is left untouched, so re-running is a no-op.
 
-Wired as an API-startup hook (api/main.py) so forge/sysadmin get keyed on
+Wired as an API-startup hook (api/main.py) so forge/exprime get keyed on
 first `make up` — the startup hook runs AFTER broker-up, unlike bootstrap.py
 which runs before it. The same generate-if-absent control flow is kept in
 Phase 2; only the plaintext storage backend changes (DB column → vault).

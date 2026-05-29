@@ -12,7 +12,7 @@ rows. Skills and tools seed this way.
     assets/skills/   _seed.toml + one *.md per skill
     assets/tools/    _seed.toml + one *.md per tool (body = JSON spec)
 
-Shells are the documented exception — `ensure_forge` / `seed_sys_admin`
+Shells are the documented exception — `ensure_forge` / `seed_exp_prime`
 stay bespoke because they need boot-time values (the first user's id, a
 rendered template, skill attachment) an asset file can't carry. Models
 stay an inline literal (`_MODELS`) — a small, stable set.
@@ -280,11 +280,17 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
     return forge_id, True
 
 
-def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
-    """Seed the resident admin/dev shell, owned by `user_id`. Returns
-    (shell_id, created). sys-admin.md's frontmatter carries the identity
-    columns; its body is the shell's connections (catalog Operating Context)."""
-    meta, body = parse_frontmatter((SHELLS_DIR / "sys-admin.md").read_text())
+def seed_exp_prime(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
+    """Seed Exp-Prime — the standardized assistant shell, owned by `user_id`.
+    Returns (shell_id, created). exp-prime.md's frontmatter carries the identity
+    columns; its body is the shell's connections (catalog Operating Context).
+
+    This is the resident shell on a fresh substrate, replacing the former
+    Sys-Admin. It is NOT a dev/admin shell: substrate administration is owned
+    externally by the sysadmin, so is_admin=0. It is web-facing (browser-chat +
+    dispatcher), so api_auth=1 routes it through the credential broker, which
+    Anthropic's ToS requires for any shell backing a web app."""
+    meta, body = parse_frontmatter((SHELLS_DIR / "exp-prime.md").read_text())
     shortname = meta["shortname"]
 
     existing = con.execute(
@@ -296,19 +302,19 @@ def seed_sys_admin(con: sqlite3.Connection, user_id: int) -> tuple[int, bool]:
     username = con.execute(
         "SELECT username FROM users WHERE user_id=?", (user_id,)
     ).fetchone()[0]
-    # is_admin=1 — Sys-Admin is the substrate's one admin shell; its API key
-    # carries the admin scope. Worker shells created later default to 0.
-    # browser_chat=1 — chat-enabled from cold boot, so the dispatcher (started
-    # by `make up`) serves it immediately; browser chat works on a fresh
-    # install with no post-install activation step.
+    # is_admin=0 — no in-substrate admin shell; the sysadmin administers the
+    # substrate externally. api_auth=1 — web-facing shell, broker-routed per
+    # Anthropic ToS. browser_chat=1 — chat-enabled from cold boot, so the
+    # dispatcher (started by `make up`) serves it immediately with no
+    # post-install activation step.
     cur = con.execute(
         "INSERT INTO shells (display_name, shortname, partner, role, mandate, "
-        "connections, user_id, is_shared, is_admin, browser_chat) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1)",
+        "connections, user_id, is_shared, is_admin, api_auth, browser_chat) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, 1)",
         (meta["display_name"], shortname, username, meta.get("role"),
          meta.get("mandate"), body.strip(), user_id),
     )
-    sa_id = cur.lastrowid
-    _attach_skills(con, sa_id, meta.get("skills", ""))
-    ensure_shared_dirs(sa_id, shortname)
-    return sa_id, True
+    ep_id = cur.lastrowid
+    _attach_skills(con, ep_id, meta.get("skills", ""))
+    ensure_shared_dirs(ep_id, shortname)
+    return ep_id, True

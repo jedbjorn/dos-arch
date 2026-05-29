@@ -2,7 +2,7 @@
 name: surface_catalogue
 description: Surface the substrate catalogue (dr_*) on demand — routes, routers, deps, libs, services, repos, files, automations, env. Query it before grepping the codebase.
 category: workflow
-common: 1
+common: 0
 ---
 # surface_catalogue
 
