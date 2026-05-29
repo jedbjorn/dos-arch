@@ -78,30 +78,39 @@ echo ">>> [4/8] rootless-setup.sh — install + start rootless Docker"
 
 # ── [5/8] build the broker image ──────────────────────────────────────────────
 echo
-echo ">>> [5/8] build-image.sh — dos-broker image (the only container)"
+echo ">>> [5/9] build-image.sh — dos-broker image (the only container)"
 ./install/build-image.sh
 
-# ── [6/8] credential broker ───────────────────────────────────────────────────
+# ── [6/9] seed the encrypted secret store ─────────────────────────────────────
+# The broker reads provider keys from an envelope-encrypted store, not the
+# environment. Seed it (KEK + store + one-time .env key import) BEFORE broker-up,
+# else the broker comes up empty and egress returns 502. Idempotent and
+# non-clobbering — a re-run keeps existing secrets + BROKER_ADMIN_TOKEN.
 echo
-echo ">>> [6/8] broker-up.sh — credential broker container"
+echo ">>> [6/9] secrets-init.sh — KEK + encrypted store + one-time .env key import"
+./install/secrets-init.sh
+
+# ── [7/9] credential broker ───────────────────────────────────────────────────
+echo
+echo ">>> [7/9] broker-up.sh — credential broker container"
 ./install/broker-up.sh
 
-# ── [7/8] host services (pm2) ─────────────────────────────────────────────────
+# ── [8/9] host services (pm2) ─────────────────────────────────────────────────
 # make up brings up all four host apps: API (uvicorn on 127.0.0.1:8001), UI,
 # browser-chat dispatcher, and model-sync. migrate runs first so the live
 # schema is current before the API + dispatcher open the DB.
 echo
-echo ">>> [7/8] make migrate + make up — apply migrations, pm2 starts API/UI/dispatcher/model-sync"
+echo ">>> [8/9] make migrate + make up — apply migrations, pm2 starts API/UI/dispatcher/model-sync"
 make migrate
 make up
 
-# ── [8/8] post-install — catalogue cron + hardware/model capture ──────────────
+# ── [9/9] post-install — catalogue cron + hardware/model capture ──────────────
 # Both are cheap and deterministic, so they belong in the install. sync-models
 # probes the host into user_hardware (always works) and reads Ollama's installed
 # set into the models registry (needs Ollama running) — if Ollama is absent the
 # hardware probe still lands and the model read is skipped, never fatal.
 echo
-echo ">>> [8/8] post-install — catalogue cron + hardware/model capture"
+echo ">>> [9/9] post-install — catalogue cron + hardware/model capture"
 ./install/cron-install.sh \
   || echo "    WARNING: cron install failed — run ./install/cron-install.sh by hand"
 make sync-models \
