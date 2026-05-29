@@ -7,12 +7,22 @@
 
   let { open = $bindable(false) } = $props()
 
-  // Secondary nav rows — kept in the drawer rather than the TopBar so the
-  // bar stays focused on the main surfaces (Shells / Flags / Plans).
-  const NAV = [
-    { label: 'Anthropic', href: '/anthropicconfig' },
-    { label: 'OpenAI', href: '/openaiconfig' },
-    { label: 'Ollama Cloud', href: '/ollamacloudconfig' },
+  // Secondary nav — sectioned config surfaces, kept in the drawer so the
+  // TopBar stays focused on the main surfaces (Shells / Flags / Plans).
+  // User: auth is a future flag, stubbed (disabled) for now.
+  // Models: the per-provider activation pages. Keys: secret rotation.
+  const SECTIONS = [
+    { title: 'User', items: [
+      { label: 'Authentication', note: 'coming soon', disabled: true },
+    ] },
+    { title: 'Models', items: [
+      { label: 'Ollama',    href: '/ollamacloudconfig' },
+      { label: 'Anthropic', href: '/anthropicconfig' },
+      { label: 'OpenAI',    href: '/openaiconfig' },
+    ] },
+    { title: 'Keys', items: [
+      { label: 'API Keys', href: '/keysconfig' },
+    ] },
   ]
 
   function go(href) { close(); goto(href) }
@@ -55,14 +65,29 @@
       </div>
 
       <div class="flex-1 overflow-y-auto py-2">
-        {#each NAV as item}
-          <button
-            type="button"
-            onclick={() => go(item.href)}
-            class="w-full text-left px-5 py-2.5 text-[12px] text-white/70 hover:text-white hover:bg-white/[0.05] transition"
-          >
-            {item.label}
-          </button>
+        {#each SECTIONS as section}
+          <div class="px-5 pt-3 pb-1 text-[10px] uppercase tracking-[0.2em] text-white/30">
+            {section.title}
+          </div>
+          {#each section.items as item}
+            {#if item.disabled}
+              <div
+                class="px-5 py-2.5 text-[12px] text-white/25 flex items-center justify-between cursor-default select-none"
+                title="not yet available"
+              >
+                <span>{item.label}</span>
+                {#if item.note}<span class="text-[10px] text-white/20 uppercase tracking-wider">{item.note}</span>{/if}
+              </div>
+            {:else}
+              <button
+                type="button"
+                onclick={() => go(item.href)}
+                class="w-full text-left px-5 py-2.5 text-[12px] text-white/70 hover:text-white hover:bg-white/[0.05] transition"
+              >
+                {item.label}
+              </button>
+            {/if}
+          {/each}
         {/each}
       </div>
 

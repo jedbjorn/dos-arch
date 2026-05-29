@@ -26,7 +26,8 @@ so a browser_chat change (e.g. the UI's shell-switch) takes effect without
 a dispatcher restart.
 
 Run:  python3 shell_core/services/dispatch_live.py
-Env:  ANTHROPIC_API_KEY (required), DISPATCH_API_BASE, DISPATCH_MODEL,
+Env:  BROKER_BASE (route provider calls through the broker; else
+      ANTHROPIC_API_KEY required), DISPATCH_API_BASE, DISPATCH_MODEL,
       DISPATCH_DB_PATH, DISPATCH_POOL_WORKERS, DISPATCH_TOOL_CONCURRENCY
 """
 
@@ -607,8 +608,13 @@ def shell_loop(shell_id: int, stop_event: threading.Event):
 
 
 def main() -> None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
+    # Auth comes from one of two places: the credential broker (BROKER_BASE set
+    # — Phase 1, the dispatcher holds no provider key and routes through it) or,
+    # in the legacy path, ANTHROPIC_API_KEY in the env. Require the key only
+    # when there's no broker to inject it.
+    if not os.environ.get("BROKER_BASE") and not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ERROR: neither BROKER_BASE nor ANTHROPIC_API_KEY set "
+              "(dispatcher has no way to authenticate)", file=sys.stderr)
         sys.exit(1)
 
     # Process-level exclusive lock — abort if another dispatch_live is running.

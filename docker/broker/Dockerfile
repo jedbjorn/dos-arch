@@ -25,13 +25,22 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
  && rm /tmp/requirements.txt
 
 # ── broker code ──────────────────────────────────────────────────────────────
-# Code only — no secrets. ANTHROPIC_API_KEY / GITHUB_TOKEN arrive at
-# `docker run` time from the process environment (--env-file .env).
+# Code only — no secrets. As of Phase 1 the broker owns an envelope-encrypted
+# secret store (secrets_store.py); the KEK + secrets.db live on a mounted
+# /secrets volume at run time, never in the image. Modules are flat at /app, so
+# broker.py does `import secrets_store` and the CLI is `python -m secrets_store`.
 WORKDIR /app
 COPY broker.py /app/broker.py
+COPY secrets_store.py /app/secrets_store.py
 
-# ── non-root ─────────────────────────────────────────────────────────────────
-RUN useradd -m -u 1000 broker
+# ── non-root + secrets mountpoint ─────────────────────────────────────────────
+# /secrets is a docker NAMED VOLUME at run time (KEK + secrets.db). Pre-create
+# it owned by `broker` so a fresh named volume inherits that ownership and this
+# non-root container can write it. (A host bind mount would carry host-user
+# ownership that, under rootless docker, the mapped container uid can't write —
+# which is why we use a named volume here, not a bind mount.)
+RUN useradd -m -u 1000 broker \
+ && mkdir -p /secrets && chown broker:broker /secrets
 USER broker
 
 EXPOSE 8788
