@@ -6,9 +6,12 @@
   import SideDrawer from './SideDrawer.svelte'
 
   const TABS = [
-    { label: 'Shells', href: '/shells' },
-    { label: 'Flags',  href: '/flags'  },
-    { label: 'Plans',  href: '/plans'  },
+    { label: 'Workspace', href: '/workspace' },
+    { label: 'Projects',  href: '/projects'  },
+    { label: 'Flags',     href: '/flags'     },
+    { label: 'Emails',    href: '/emails'    },
+    { label: 'Contacts',  href: '/contacts'  },
+    { label: 'Calendar',  href: '/calendar'  },
   ]
 
   function isActive(href) { return $page.url.pathname.startsWith(href) }

@@ -7,13 +7,13 @@
 
   let { open = $bindable(false) } = $props()
 
-  // Secondary nav — sectioned config surfaces, kept in the drawer so the
-  // TopBar stays focused on the main surfaces (Shells / Flags / Plans).
-  // User: auth is a future flag, stubbed (disabled) for now.
-  // Models: the per-provider activation pages. Keys: secret rotation.
+  // Secondary nav — sectioned surfaces, kept in the drawer so the TopBar
+  // stays focused on the remaining main surfaces (Projects / Flags).
+  // Shells: the shell viewer. Models: per-provider activation pages.
+  // Keys: secret rotation. User: auth is a future flag, stubbed (disabled).
   const SECTIONS = [
-    { title: 'User', items: [
-      { label: 'Authentication', note: 'coming soon', disabled: true },
+    { title: 'Shells', items: [
+      { label: 'Shells', href: '/shells' },
     ] },
     { title: 'Models', items: [
       { label: 'Ollama',    href: '/ollamacloudconfig' },
@@ -22,6 +22,9 @@
     ] },
     { title: 'Keys', items: [
       { label: 'API Keys', href: '/keysconfig' },
+    ] },
+    { title: 'User', items: [
+      { label: 'Authentication', note: 'coming soon', disabled: true },
     ] },
   ]
 
