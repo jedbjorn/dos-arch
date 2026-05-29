@@ -58,6 +58,11 @@ export const getCloudModels        = ()                => get('/models/cloud')
 export const setModelStatus        = (model_id, status) =>
   patch(`/models/${model_id}/status`, { status })
 export const syncCloudModels       = ()                => post('/models/cloud/sync')
+
+// First-party remote providers (Anthropic, OpenAI) — same surface as cloud,
+// one provider per config page. List includes inactive rows.
+export const getProviderModels     = (provider)        => get(`/models/remote/${provider}`)
+export const syncProviderModels    = (provider)        => post(`/models/remote/${provider}/sync`)
 export const getMyShells           = ()                => get('/shells/mine')
 export const activateShell         = (shell_id)        => patch(`/shells/${shell_id}/activate`)
 export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)

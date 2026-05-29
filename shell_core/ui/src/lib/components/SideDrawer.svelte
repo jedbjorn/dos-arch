@@ -10,6 +10,8 @@
   // Secondary nav rows — kept in the drawer rather than the TopBar so the
   // bar stays focused on the main surfaces (Shells / Flags / Plans).
   const NAV = [
+    { label: 'Anthropic', href: '/anthropicconfig' },
+    { label: 'OpenAI', href: '/openaiconfig' },
     { label: 'Ollama Cloud', href: '/ollamacloudconfig' },
   ]
 

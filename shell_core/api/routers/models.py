@@ -130,3 +130,69 @@ def sync_cloud_models(con = Depends(get_db)):
         raise HTTPException(status_code=502, detail=str(e)) from e
     return {"inserted": inserted, "refreshed": refreshed,
             "deactivated": deactivated}
+
+
+# ── First-party remote provider config surface ────────────────────────────────
+# Per-provider twins of the Ollama Cloud surface above, backing /anthropicconfig
+# and /openaiconfig. Same shape: list all rows for the provider (active +
+# inactive) so the page can show and flip them; sync re-reads the provider's
+# /v1/models. Unlike the cloud sync, this read REQUIRES the provider API key —
+# see remote_model_sync.py. The key reaches the API via the dos-api container's
+# --env-file (install/api-up.sh).
+
+_REMOTE_PROVIDERS = ("anthropic", "openai")
+
+
+def _check_remote_provider(provider: str) -> None:
+    if provider not in _REMOTE_PROVIDERS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown remote provider {provider!r} "
+                   f"(expected one of {', '.join(_REMOTE_PROVIDERS)})")
+
+
+@router.get(
+    "/models/remote/{provider}",
+    summary="List every row for a first-party provider (active + inactive)",
+)
+def list_remote_models(provider: str, con = Depends(get_db)):
+    _check_remote_provider(provider)
+    rows = con.execute(
+        """
+        SELECT model_id, name, display_name, status, context_window,
+               source_url, last_verified
+          FROM models
+         WHERE provider=?
+         ORDER BY (status='active') DESC, name
+        """,
+        (provider,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post(
+    "/models/remote/{provider}/sync",
+    summary="Refresh a provider's catalog from its /v1/models listing",
+)
+def sync_remote_models(provider: str, con = Depends(get_db)):
+    """Invoke the same sync `make sync-remote-models` calls, scoped to one
+    provider. Returns counts; 502 on a failed listing read, 503 when the
+    provider's API key is not in the API's environment."""
+    _check_remote_provider(provider)
+    import sys as _sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from remote_model_sync import sync_provider, MissingKeyError, CatalogFetchError
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))
+    try:
+        inserted, refreshed, deactivated = sync_provider(con, provider)
+    except MissingKeyError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except CatalogFetchError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"inserted": inserted, "refreshed": refreshed,
+            "deactivated": deactivated}
