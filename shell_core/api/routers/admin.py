@@ -15,6 +15,8 @@ def admin_get_shells(request: Request, con = Depends(get_db)):
     _require_admin(request)
     shells = con.execute(
         """SELECT sh.shell_id, sh.display_name, sh.user_id, sh.browser_chat,
+                  sh.api_key_rotated_at,
+                  (sh.api_key_hash IS NOT NULL) AS has_key,
                   u.username AS partner_name
            FROM shells sh
            LEFT JOIN users u ON sh.user_id = u.user_id
@@ -74,6 +76,31 @@ def admin_toggle_browser_chat(request: Request, shell_id: int, con = Depends(get
     con.execute("UPDATE shells SET browser_chat=? WHERE shell_id=?", (new_val, shell_id))
     con.commit()
     return {"shell_id": shell_id, "browser_chat": bool(new_val)}
+
+
+@router.post("/admin/shells/{shell_id}/rotate-key", summary="Admin: rotate a shell's substrate-API key")
+def admin_rotate_shell_key(request: Request, shell_id: int, con = Depends(get_db)):
+    _require_admin(request)
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    # rotate_key writes api_key + api_key_hash + api_key_rotated_at atomically.
+    # The new plaintext is NOT returned: the dispatcher reads it straight from
+    # the DB on its next turn, so nothing needs it relayed through HTTP.
+    import sys as _sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from ensure_api_keys import rotate_key  # type: ignore[import-not-found]
+        rotate_key(con, shell_id)
+        con.commit()
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))
+    row = con.execute(
+        "SELECT api_key_rotated_at FROM shells WHERE shell_id=?", (shell_id,)
+    ).fetchone()
+    return {"shell_id": shell_id, "api_key_rotated_at": row["api_key_rotated_at"]}
 
 
 @router.get("/admin/skills/available", summary="Admin: list non-token skills available for assignment")
