@@ -539,7 +539,13 @@ is the canonical schema. Tables, grouped by purpose:
 
 **Projects**
 - `projects` — `shortname`, `title`, `purpose`, `standing`, `status`.
-- `project_shells` — assignment of a project to a shell, with a `role`.
+- `user_projects` — user ↔ project membership (N:M), `role` owner|member. A shell inherits its projects from its user; there is no per-shell assignment.
+
+**Core data model** (contacts / correspondence / calendar / notes — see `docs/core-data-model.md`)
+- `contacts` (+ `contact_projects`) — external people, geocoded location, N:M to projects with an editable default project.
+- `emails` — correspondence, N:1 to a contact; `project_id` seeded from the contact's default, then re-fileable per email.
+- `events` (+ `event_contacts` / `event_users` / `event_projects`) — calendar events, N:M to contacts/users/projects (`is_primary` marks the default project).
+- `notes` — unified annotation feed (`note`/`document`/`meeting_prep`/`meeting_result`) over an exclusive-arc target.
 
 **Tracking**
 - `flags` — open/resolved blockers, with priority and `parent_flag_id` for hierarchies.
@@ -636,7 +642,7 @@ In catalog order:
 | `## IDENTITY ##` | `shells` identity columns + `users` |
 | `## DEFINITIONS ##` | baked — `catalog_universal.md` |
 | `## OPERATING CONTEXT ##` | `shells.connections` |
-| `## ACTIVE PROJECTS ##` | `projects` ⋈ `project_shells` |
+| `## ACTIVE PROJECTS ##` | `projects` ⋈ `user_projects` (via the shell's `user_id`) |
 | `## TOOLS ##` | static common-tool roster, shaped by the model's dialect |
 | `## SKILLS AVAILABLE ##` | `skills` ⋈ `shell_skills` — name + triggers (content lazy-loaded) |
 | `## MEMORY PROTOCOL ##` | baked — `catalog_universal.md` |
@@ -684,7 +690,7 @@ Memory is written *as work happens*, not at session close. The short version:
 | `shell_decisions` | `INSERT` only for major (M) decisions. Supersede via `parent_decision_id`. Never edit a prior row. |
 | `flags` | `INSERT` to open, `UPDATE resolved=1` to close. ID convention: `<SHORT>-###`. |
 | `shells.connections` | `UPDATE` free-form markdown when environment changes (new repo, moved path, deprecated service). Lazy-loaded on demand. |
-| `projects` / `project_shells` | `INSERT` to add a project; `UPDATE projects.standing` when standing rules change. |
+| `projects` / `user_projects` | `INSERT` to add a project; `INSERT` a `user_projects` row to join (creator = `owner`); `UPDATE projects.standing` when standing rules change. |
 
 The seed and L&S **count** caps are load-bearing: they make "curate, don't
 accumulate" mechanical. A shell trying to plant an 11th seed gets
