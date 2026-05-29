@@ -1,0 +1,14 @@
+# gitleaks config (Phase 1, I6). Extends the built-in ruleset; adds an
+# allowlist for documentation placeholders so the CI gate stays meaningful
+# (a gate that always fails on a known fake gets ignored).
+title = "dos-arch gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Obvious doc placeholders in skill assets — illustrative, not real secrets"
+regexes = [
+  # api-design.md example request header: `X-API-Key: sk_live_abc123`
+  '''sk_live_abc123''',
+]

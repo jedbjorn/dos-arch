@@ -1,0 +1,15 @@
+# Pre-commit secret-scanning backstop (Phase 1, I6).
+#
+#   pip install pre-commit && pre-commit install
+#
+# Runs gitleaks on staged changes before every commit, so a key can't be
+# committed in the first place — the lesson from the 2026-05-29 incident:
+# .gitignore + discipline alone weren't enough. CI re-runs the same scan
+# (.github/workflows/gitleaks.yml) over the full history as a second gate.
+#
+# Update `rev` to the latest gitleaks release periodically.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks

@@ -1,0 +1,18 @@
+# Secret-scanning CI gate (Phase 1, I6). Second layer behind the pre-commit
+# hook: scans the full history on every push/PR so a secret that slips past a
+# developer without the hook installed is still caught. dos-arch is public, so
+# gitleaks-action runs without a license.
+name: gitleaks
+on:
+  push:
+  pull_request:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history — gitleaks scans every commit
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
