@@ -124,16 +124,84 @@ def admin_add_shell_skill(request: Request, shell_id: int, body: ShellSkillBody,
     # restriction; the boot document picks the change up on its next render.
     try:
         con.execute("INSERT INTO shell_skills (shell_id, skill_id) VALUES (?,?)", (shell_id, body.skill_id))
-        con.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(409, "Already assigned")
+    # Materialise the skill's required tools into shell_tools (migration 056).
+    # INSERT OR IGNORE so already-granted tools are left alone; the user can
+    # toggle any of these off afterwards (they are plain direct grants now).
+    con.execute(
+        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+        "SELECT ?, tool_id FROM skill_tools WHERE skill_id=?",
+        (shell_id, body.skill_id),
+    )
+    con.commit()
     return {"ok": True}
 
 
 @router.delete("/admin/shells/{shell_id}/skills/{skill_id}", summary="Admin: remove a skill from a shell")
 def admin_remove_shell_skill(request: Request, shell_id: int, skill_id: int, con = Depends(get_db)):
     _require_admin(request)
+    # Only the skill grant is removed. Tools materialised from it stay as
+    # direct shell_tools grants (freely toggleable) — removing a skill does not
+    # strip tools the shell may now depend on. Drop them explicitly in the
+    # Tools tab if unwanted. (Migration 056 grant model.)
     con.execute("DELETE FROM shell_skills WHERE shell_id=? AND skill_id=?", (shell_id, skill_id))
+    con.commit()
+    return {"ok": True}
+
+
+# ── Tool catalogue + per-shell tool grants ────────────────────────────────────
+
+@router.get("/admin/tools/available", summary="Admin: list all active tools available for assignment")
+def admin_available_tools(request: Request, con = Depends(get_db)):
+    _require_admin(request)
+    rows = con.execute(
+        "SELECT tool_id, name, description, kind, is_general, status "
+        "FROM tools WHERE status='active' ORDER BY is_general DESC, name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/admin/tools/{tool_id}", summary="Admin: fetch one tool (incl. spec) for preview")
+def admin_get_tool(request: Request, tool_id: int, con = Depends(get_db)):
+    _require_admin(request)
+    row = con.execute(
+        "SELECT tool_id, name, description, kind, spec, handler, is_general, status "
+        "FROM tools WHERE tool_id=?",
+        (tool_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Tool not found")
+    return dict(row)
+
+
+class ShellToolBody(BaseModel):
+    tool_id: int
+
+
+@router.post("/admin/shells/{shell_id}/tools", summary="Admin: assign a tool to a shell")
+def admin_add_shell_tool(request: Request, shell_id: int, body: ShellToolBody, con = Depends(get_db)):
+    _require_admin(request)
+    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
+        raise HTTPException(404, "Shell not found")
+    tool = con.execute("SELECT is_general FROM tools WHERE tool_id=? AND status='active'",
+                       (body.tool_id,)).fetchone()
+    if not tool:
+        raise HTTPException(404, "Tool not found")
+    if tool["is_general"]:
+        raise HTTPException(409, "General tools are granted to every shell — no per-shell assignment")
+    try:
+        con.execute("INSERT INTO shell_tools (shell_id, tool_id) VALUES (?,?)", (shell_id, body.tool_id))
+        con.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "Already assigned")
+    return {"ok": True}
+
+
+@router.delete("/admin/shells/{shell_id}/tools/{tool_id}", summary="Admin: remove a tool from a shell")
+def admin_remove_shell_tool(request: Request, shell_id: int, tool_id: int, con = Depends(get_db)):
+    _require_admin(request)
+    con.execute("DELETE FROM shell_tools WHERE shell_id=? AND tool_id=?", (shell_id, tool_id))
     con.commit()
     return {"ok": True}
 

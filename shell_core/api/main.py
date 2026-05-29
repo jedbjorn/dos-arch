@@ -131,6 +131,9 @@ app.include_router(users_router)
 from api.routers.skills import router as skills_router
 app.include_router(skills_router)
 
+from api.routers.tools import router as tools_router
+app.include_router(tools_router)
+
 from api.routers.models import router as models_router
 app.include_router(models_router)
 

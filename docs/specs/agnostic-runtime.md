@@ -223,23 +223,38 @@ accounting already depends on that breakdown.
 
 ## 4.2 tools and skill-scoped grants ##
 
-Tooling is data. A tool is either *general* or *skill-bound*.
+Tooling is data. A tool is either *general* or *grantable*.
 
 **`tools`** — the registry: `tool_id` PK, `name` UNIQUE (`bash`, `read`,
-`write`, `edit`, `git`, `api_get`, `spawn_agent`…), `description`, `kind`
+`write`, `edit`, `api_get`, `spawn_agent`…), `description`, `kind`
 (`builtin`/`script`/`mcp`), `spec` (JSON parameter schema), `handler`,
-`status`, `skill_id`.
+`status`, `is_general`.
 
-**`skill_id`** scopes the tool. NULL — *general*: every shell renders and can
-call it (the substrate `api_*` memory verbs). Set — *skill-bound*: rendered
-in the boot prompt and callable only for shells granted that skill. The skill
-is the unit of granting; attaching a skill brings its tools.
+**`is_general`** scopes the tool. `1` — *general*: every shell renders and can
+call it (the substrate `api_*` memory verbs). `0` — *grantable*: reaches a
+shell only through a grant in `shell_tools`.
 
-> [!NOTE] Superseded — `shell_tools` retired
-> Earlier drafts gave each shell explicit per-tool grants via a `shell_tools`
-> join. Migration 025 drops it: the toolset *bundle* is the skill, so the
-> skill grant (`shell_skills`) plus the universal general tools are the whole
-> tool set. See the cache+tooling reconciliation decision.
+**`skill_tools`** (`skill_id`, `tool_id`) — M:N: which tools a skill requires.
+A tool may be required by more than one skill.
+
+**`shell_tools`** (`shell_id`, `tool_id`) — per-shell grants; the single source
+of truth for a shell's non-general tools. A grant lands here two ways:
+assigning a skill *materialises* its `skill_tools` rows into `shell_tools`
+(`INSERT OR IGNORE`), or a tool is assigned to the shell directly. The
+effective set a shell renders and can call is `is_general=1 ∪ shell_tools`.
+
+Grants are freely toggleable: a materialised grant is a plain `shell_tools`
+row afterwards, so it can be revoked individually, and unassigning the skill
+that brought it does **not** cascade-remove it.
+
+> [!NOTE] History — `shell_tools` retired then reinstated
+> Migration 025 dropped `shell_tools` and made the 1:1 `tools.skill_id` the
+> sole scoping signal ("the skill is the unit of granting"). Migration 056
+> reverses that: a tool may be required by several skills (M:N `skill_tools`)
+> and may be granted to a shell independent of any skill (`shell_tools`,
+> reinstated). The skill/tool *layer* split (decision #135) still holds — a
+> tool still rides with its skill — but the *grant* is now per-shell. The
+> `/shells` UI exposes this via a Tools sub-tab. See decision #141.
 
 ## 4.3 chat_sessions and chat_messages ##
 

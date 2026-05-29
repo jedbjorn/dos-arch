@@ -48,6 +48,15 @@ export const updateSkill        = (skill_id, patch)    => request('PATCH', `/adm
 export const addShellSkill      = (shell_id, skill_id) => post(`/admin/shells/${shell_id}/skills`, { skill_id })
 export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${shell_id}/skills/${skill_id}`)
 
+// Tools — general tools (is_general) are universal; the rest are granted per
+// shell via shell_tools (and auto-materialised when a requiring skill is
+// assigned). getShellTools returns the shell's direct grants with `required_by`.
+export const getShellTools      = (shell_id)           => get(`/shells/${shell_id}/tools`)
+export const getAvailableTools  = ()                   => get('/admin/tools/available')
+export const getTool            = (tool_id)            => get(`/admin/tools/${tool_id}`)
+export const addShellTool       = (shell_id, tool_id)  => post(`/admin/shells/${shell_id}/tools`, { tool_id })
+export const removeShellTool    = (shell_id, tool_id)  => del_(`/admin/shells/${shell_id}/tools/${tool_id}`)
+
 // ── Browser chat ─────────────────────────────────────────────────────────────
 
 export const getModels             = ()                => get('/models')

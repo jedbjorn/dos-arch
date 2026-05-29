@@ -191,8 +191,9 @@ def resolve_model(con: sqlite3.Connection, chat_session_id) -> tuple[str, str, s
 
 
 def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
-    """The shell's tool set — general tools (skill_id NULL) plus the tools of
-    every skill the shell is granted, active only — as normalized tool dicts
+    """The shell's tool set — general tools (is_general=1) plus the shell's
+    directly-granted tools (shell_tools, which include those materialised from
+    each granted skill), active only — as normalized tool dicts
     {name, description, spec, handler}. The same effective set render_tools()
     renders, so prompt and runtime agree on what the shell can call. `spec` is
     the parsed JSON-Schema parameter object; each adapter projects it.
@@ -202,8 +203,8 @@ def load_tools(con: sqlite3.Connection, shell_id: int) -> list[dict]:
         "t.handler AS handler "
         "FROM tools t "
         "WHERE t.status='active' "
-        "  AND (t.skill_id IS NULL "
-        "       OR t.skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)) "
+        "  AND (t.is_general=1 "
+        "       OR t.tool_id IN (SELECT tool_id FROM shell_tools WHERE shell_id=?)) "
         "ORDER BY t.tool_id",
         (shell_id,),
     ).fetchall()

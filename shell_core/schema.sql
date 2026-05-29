@@ -137,12 +137,13 @@ CREATE TABLE shell_skills (
 );
 
 -- ── Tools (provider-agnostic tooling-as-data) ─────────────────────────────────
--- The tool registry. A tool is general (skill_id NULL — every shell renders
--- and can call it, e.g. the substrate api_* verbs) or skill-bound (skill_id
--- set — rendered and callable only for shells granted that skill). The skill
--- is the unit of granting; there is no per-shell tool grant table. The
--- dispatcher loads tool definitions from here, not a hard-coded list.
--- (agnostic-runtime §4.2; skill scoping + shell_tools drop — migration 025.)
+-- The tool registry. A tool is general (is_general=1 — every shell renders and
+-- can call it, e.g. the substrate api_* verbs) or grantable. A grantable tool
+-- reaches a shell two ways: it is required by a skill the shell is granted
+-- (skill_tools, materialised into shell_tools on assignment) or it is assigned
+-- to the shell directly (shell_tools). The effective set is is_general=1 ∪
+-- shell_tools. The dispatcher loads tool definitions from here, not a hard-coded
+-- list. (agnostic-runtime §4.2; M:N + per-shell grants — migration 056.)
 
 CREATE TABLE tools (
     tool_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,10 +153,29 @@ CREATE TABLE tools (
                 CHECK (kind IN ('builtin','script','mcp')),
     spec        TEXT,                       -- JSON parameter schema
     handler     TEXT,                       -- executor key (e.g. 'api')
-    skill_id    INTEGER REFERENCES skills(skill_id),  -- NULL = general; else skill-bound
+    is_general  INTEGER NOT NULL DEFAULT 0, -- 1 = granted to every shell
     status      TEXT    NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active','inactive')),
     parsed_example TEXT                      -- parsed-dialect invocation example (spec §05)
+);
+
+-- skill_tools — which tools a skill requires (M:N). Assigning the skill to a
+-- shell materialises these into shell_tools. (Migration 056.)
+CREATE TABLE skill_tools (
+    skill_tool_id INTEGER PRIMARY KEY,
+    skill_id      INTEGER NOT NULL REFERENCES skills(skill_id),
+    tool_id       INTEGER NOT NULL REFERENCES tools(tool_id),
+    UNIQUE (skill_id, tool_id)
+);
+
+-- shell_tools — per-shell tool grants (mirrors shell_skills). Holds both
+-- skill-materialised grants and direct assignments; the single source of truth
+-- for a shell's non-general tools. (Migration 056; reintroduced after 025.)
+CREATE TABLE shell_tools (
+    shell_tool_id INTEGER PRIMARY KEY,
+    shell_id      INTEGER NOT NULL REFERENCES shells(shell_id),
+    tool_id       INTEGER NOT NULL REFERENCES tools(tool_id),
+    UNIQUE (shell_id, tool_id)
 );
 
 -- ── Models (the agnostic-runtime registry) ────────────────────────────────────

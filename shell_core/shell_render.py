@@ -260,8 +260,9 @@ def render_flags_pointer(con: sqlite3.Connection, shell_id: int) -> str:
     return f"{n} open. Invoke `--flags` to surface."
 
 
-# Section E — the tools this shell can call: general tools (skill_id NULL,
-# every shell) plus the tools of each skill the shell is granted. The same
+# Section E — the tools this shell can call: general tools (is_general=1,
+# every shell) plus the shell's directly-granted tools (shell_tools — which
+# include the tools materialised from each skill the shell holds). The same
 # effective set the dispatcher's `load_tools()` resolves, so the prompt and
 # the runtime cannot disagree on what the shell can call. The general tools
 # are generic HTTP verbs against the substrate API; which path is a seed / a
@@ -288,25 +289,29 @@ def _spec_params(spec: str | None) -> list[str]:
 def render_tools(con: sqlite3.Connection, shell_id: int,
                  dialect: str = "anthropic") -> str:
     """Section E — the shell's tools, shaped by tool dialect (spec §05). A tool
-    is general (skill_id NULL — every shell) or skill-bound (rendered only for
-    shells granted the owning skill); skill-bound tools group under their
-    skill, general tools render first. `anthropic` / `openai`: a name +
-    description roster — the provider applies each tool's schema. `parsed`:
-    each tool with its params and a worked `<tool:…>` invocation, for a local
-    model that forms the call as text."""
+    is general (is_general=1 — every shell) or granted to the shell via
+    shell_tools; granted tools group under the skill that requires them (or
+    "granted directly" when no held skill does), general tools render first.
+    `anthropic` / `openai`: a name + description roster — the provider applies
+    each tool's schema. `parsed`: each tool with its params and a worked
+    `<tool:…>` invocation, for a local model that forms the call as text."""
     rows = con.execute(
-        "SELECT t.name, t.description, t.spec, t.skill_id, s.name AS skill_name "
-        "FROM tools t LEFT JOIN skills s ON s.skill_id = t.skill_id "
+        "SELECT t.name, t.description, t.spec, t.is_general, "
+        "  (SELECT s.name FROM skill_tools kt "
+        "     JOIN skills s ON s.skill_id = kt.skill_id "
+        "     JOIN shell_skills ss ON ss.skill_id = kt.skill_id AND ss.shell_id = ? "
+        "    WHERE kt.tool_id = t.tool_id ORDER BY s.name LIMIT 1) AS skill_name "
+        "FROM tools t "
         "WHERE t.status='active' "
-        "  AND (t.skill_id IS NULL "
-        "       OR t.skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)) "
-        "ORDER BY (t.skill_id IS NOT NULL), s.name, t.tool_id",
-        (shell_id,),
+        "  AND (t.is_general=1 "
+        "       OR t.tool_id IN (SELECT tool_id FROM shell_tools WHERE shell_id=?)) "
+        "ORDER BY (t.is_general=0), (skill_name IS NULL), skill_name, t.tool_id",
+        (shell_id, shell_id),
     ).fetchall()
     if not rows:
         return "(none granted)"
-    general = [r for r in rows if r["skill_id"] is None]
-    skilled = [r for r in rows if r["skill_id"] is not None]
+    general = [r for r in rows if r["is_general"]]
+    skilled = [r for r in rows if not r["is_general"]]
 
     if dialect == "parsed":
         out = [
@@ -317,7 +322,7 @@ def render_tools(con: sqlite3.Connection, shell_id: int,
         ]
         last = None
         for r in rows:
-            group = r["skill_name"] or "general"
+            group = "general" if r["is_general"] else (r["skill_name"] or "granted directly")
             if group != last:
                 out.append(f"## {group}")
                 last = group
@@ -348,7 +353,8 @@ def render_tools(con: sqlite3.Connection, shell_id: int,
     last = None
     for r in skilled:
         if r["skill_name"] != last:
-            out.append(f"# {r['skill_name']} (skill)")
+            out.append(f"# {r['skill_name']} (skill)" if r["skill_name"]
+                       else "# granted directly")
             last = r["skill_name"]
         out.append(f"- **{r['name']}** — {r['description']}")
     return "\n".join(out)
