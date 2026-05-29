@@ -11,7 +11,7 @@ both live under services/, resolved on sys.path[0] like the dispatcher's
 own imports."""
 from __future__ import annotations
 
-from . import files, git, network, process, shared
+from . import files, network, process, shared
 from .base import ToolError, ToolResult
 
 # handler key (tools.handler column) -> handler callable.
@@ -33,14 +33,6 @@ _REGISTRY = {
     "proc.check":    process.handle_proc_check,
     "proc.kill":     process.handle_proc_kill,
     "proc.list":     process.handle_proc_list,
-    "git.status":    git.handle_status,
-    "git.diff":      git.handle_diff,
-    "git.log":       git.handle_log,
-    "git.branch":    git.handle_branch,
-    "git.commit":    git.handle_commit,
-    "git.checkout":  git.handle_checkout,
-    "git.pull":      git.handle_pull,
-    "git.push":      git.handle_push,
     "net.http_get":  network.handle_http_get,
     "net.http_post": network.handle_http_post,
     "net.url_fetch": network.handle_url_fetch,
