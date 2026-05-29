@@ -20,12 +20,12 @@ request — so `get_cached` keeps decrypted values in-process for `CACHE_TTL`
 seconds. A rotation lands within the TTL with no restart, and we avoid a
 SQLite open + decrypt per request.
 
-CLI (run inside the broker image; `cwd` = shell_core):
-    python -m broker.secrets_store init
-    python -m broker.secrets_store set NAME [--value V]      # value via stdin if omitted
-    python -m broker.secrets_store import-env NAME [NAME...]  # seed from os.environ (one-time migration)
-    python -m broker.secrets_store list                       # metadata only — never plaintext
-    python -m broker.secrets_store rotate-kek --new PATH      # re-wrap every DEK under a new KEK file
+CLI (run inside the broker image — flat modules at /app):
+    python -m secrets_store init
+    python -m secrets_store set NAME [--value V]      # value via stdin if omitted
+    python -m secrets_store import-env NAME [NAME...]  # seed from os.environ (one-time migration)
+    python -m secrets_store list                       # metadata only — never plaintext
+    python -m secrets_store rotate-kek --new PATH      # re-wrap every DEK under a new KEK file
 
 Env:
     BROKER_SECRETS_DB   path to secrets.db   (default /secrets/secrets.db)

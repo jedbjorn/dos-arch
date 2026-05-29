@@ -27,7 +27,7 @@ only the substrate API holds. Unset token => admin API fails closed (503).
 Reverse proxy, NOT TLS-intercepting: no CA key, no certs in the caller.
 caller -> broker is plain HTTP on dos-net; broker -> internet is real HTTPS.
 
-  uvicorn broker.broker:app --host 0.0.0.0 --port 8788   (cwd: shell_core)
+  uvicorn broker:app --host 0.0.0.0 --port 8788   (image: /app, flat modules)
 
 Env:
   BROKER_ADMIN_TOKEN                   shared token gating the admin API
@@ -46,7 +46,7 @@ from starlette.responses import (JSONResponse, PlainTextResponse, Response,
                                   StreamingResponse)
 from starlette.routing import Route
 
-from broker import secrets_store
+import secrets_store
 
 # Hop-by-hop / recomputed headers — never forwarded verbatim.
 _STRIP = {
