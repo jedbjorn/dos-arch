@@ -51,11 +51,41 @@ def ensure_keys(conn: sqlite3.Connection) -> list[str]:
         token  = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode()).hexdigest()
         conn.execute(
-            "UPDATE shells SET api_key=?, api_key_hash=? WHERE shell_id=?",
+            "UPDATE shells SET api_key=?, api_key_hash=?, "
+            "api_key_rotated_at=datetime('now') WHERE shell_id=?",
             (token, digest, shell_id),
         )
         keyed.append(shortname)
     return keyed
+
+
+def rotate_key(conn: sqlite3.Connection, shell_id: int) -> str:
+    """Replace a shell's key — regenerate plaintext + hash atomically.
+
+    Writes api_key (plaintext, read by the dispatcher), api_key_hash (verified
+    by the auth middleware), and api_key_rotated_at in ONE row UPDATE, so a
+    rotation is atomic: no window where the plaintext and hash disagree. The
+    old key stops working the instant the hash is replaced; the dispatcher
+    re-reads api_key on its next turn and carries the new Bearer (an in-flight
+    turn holding the old key will 401 once — acceptable for a manual rotate).
+
+    Returns the new plaintext token (the CLI prints it once; the API does not
+    relay it — the dispatcher reads it straight from the DB). Caller owns
+    commit/close. Raises ValueError if shell_id is unknown.
+    """
+    row = conn.execute(
+        "SELECT shell_id FROM shells WHERE shell_id=?", (shell_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no shell with shell_id={shell_id}")
+    token  = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    conn.execute(
+        "UPDATE shells SET api_key=?, api_key_hash=?, "
+        "api_key_rotated_at=datetime('now') WHERE shell_id=?",
+        (token, digest, shell_id),
+    )
+    return token
 
 
 def main() -> int:

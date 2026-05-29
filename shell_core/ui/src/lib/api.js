@@ -47,6 +47,8 @@ export const getSkill           = (skill_id)           => get(`/admin/skills/${s
 export const updateSkill        = (skill_id, patch)    => request('PATCH', `/admin/skills/${skill_id}`, patch)
 export const addShellSkill      = (shell_id, skill_id) => post(`/admin/shells/${shell_id}/skills`, { skill_id })
 export const removeShellSkill   = (shell_id, skill_id) => del_(`/admin/shells/${shell_id}/skills/${skill_id}`)
+// Rotate a shell's substrate-API key (api_key + api_key_hash + rotated_at).
+export const rotateShellKey     = (shell_id)           => post(`/admin/shells/${shell_id}/rotate-key`)
 
 // Tools — general tools (is_general) are universal; the rest are granted per
 // shell via shell_tools (and auto-materialised when a requiring skill is

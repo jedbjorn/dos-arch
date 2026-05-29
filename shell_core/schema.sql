@@ -42,11 +42,16 @@ CREATE TABLE IF NOT EXISTS "shells" (
     is_admin              INTEGER NOT NULL DEFAULT 0,
     api_auth              INTEGER NOT NULL DEFAULT 0,
     api_key_hash          TEXT,
-    -- api_key: plaintext Bearer alongside the hash (migration 031). Alpha
-    -- simplification — the dispatcher reads it per turn to set Authorization
-    -- so the API can resolve request.state.shell_id. Beta moves plaintext to
-    -- the broker/keystore; the hash stays here.
-    api_key               TEXT
+    -- api_key: plaintext Bearer alongside the hash (migration 031). The
+    -- dispatcher reads it per turn to set Authorization so the API can resolve
+    -- request.state.shell_id (per-shell, load-bearing for token-scoped tools).
+    -- CC-102 Phase 2 kept the plaintext here rather than the broker vault: the
+    -- broker has no plaintext-read route and a shell key only unlocks the
+    -- loopback-bound API. Rotation is manual (Keys UI / gen_api_key.py).
+    api_key               TEXT,
+    -- api_key_rotated_at: when the current key was last established (mint or
+    -- rotate). Set by ensure_api_keys / rotate_key; surfaced in the Keys UI.
+    api_key_rotated_at    TEXT
 );
 -- api_auth: 0 = CLI shell — interactive Claude Code, browser-auth on first
 --   launch (subscription billing), no Anthropic env, bypasses the broker's
