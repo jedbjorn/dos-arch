@@ -6,12 +6,18 @@ Authorization header differ. So this adapter is a thin subclass of
 `OllamaAdapter`: it inherits format_request, _native_messages, and
 parse_response wholesale, and overrides only the bits that diverge.
 
-── Auth — `OLLAMA_CLOUD_API_KEY` ──────────────────────────────────────────
-The key is read at adapter construction (one call() = one fresh adapter)
-from the env var named by the model row's `auth_ref`, defaulting to
-`OLLAMA_CLOUD_API_KEY`. Missing key raises `ProviderError` at call time —
-not at construction — so the dispatcher can surface a clean per-turn error
-instead of the process refusing to start.
+── Auth — broker-injected, or `OLLAMA_CLOUD_API_KEY` direct ─────────────────
+Two transports, chosen at construction by whether `BROKER_BASE` is set (the
+same seam the anthropic/openai adapters use):
+
+  • Broker mode (BROKER_BASE set — the credential-free dispatcher): the chat
+    URL targets the broker's `/ollama_cloud` prefix and the request carries
+    NO key; the broker injects `Authorization: Bearer` on egress from its
+    encrypted store. The shell process never holds the key.
+  • Direct mode (host CLI / no broker): the key is read at call time from the
+    env var named by the model row's `auth_ref` (default `OLLAMA_CLOUD_API_KEY`)
+    and attached here. Missing key raises `ProviderError` at call time — not
+    construction — so the dispatcher surfaces a clean per-turn error.
 
 ── Trimming ────────────────────────────────────────────────────────────────
 The parent's `_trim` is designed around a local box's finite VRAM
@@ -53,8 +59,17 @@ class OllamaCloudAdapter(OllamaAdapter):
         if base.endswith("/v1"):
             base = base[:-3].rstrip("/")
         self._base = base
-        self._chat_url = base + "/api/chat"
         self._auth_ref = auth_ref or _DEFAULT_AUTH_REF
+        # Broker mode: route the native /api/chat call through the credential
+        # broker's /ollama_cloud prefix (it injects the bearer token on egress);
+        # the dispatcher holds no key. Direct mode: hit the cloud host and add
+        # the key from the env in call(). Mirrors remote_model_sync's transport.
+        broker = os.environ.get("BROKER_BASE")
+        self._via_broker = bool(broker)
+        if broker:
+            self._chat_url = f"{broker.rstrip('/')}/ollama_cloud/api/chat"
+        else:
+            self._chat_url = base + "/api/chat"
         # num_ctx is inherited from the parent for interface uniformity (the
         # `options` block in format_request still sets it) but _trim is a
         # no-op here, so it never gates the history.
@@ -66,19 +81,19 @@ class OllamaCloudAdapter(OllamaAdapter):
     def _trim(self, messages: list, system_text: str) -> list:
         return messages
 
-    # ── call: same wire shape, plus bearer auth ──────────────────────────────
+    # ── call: same wire shape; bearer auth only in direct mode ───────────────
 
     def call(self, request: dict):
-        api_key = os.environ.get(self._auth_ref)
-        if not api_key:
-            raise ProviderError(
-                f"Ollama Cloud key not set — expected env var {self._auth_ref}")
-
         data = json.dumps(request).encode()
-        headers = {
-            "Content-Type":  "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
+        headers = {"Content-Type": "application/json"}
+        if not self._via_broker:
+            # Direct mode: attach the bearer token ourselves. In broker mode the
+            # broker injects Authorization on egress, so we send none.
+            api_key = os.environ.get(self._auth_ref)
+            if not api_key:
+                raise ProviderError(
+                    f"Ollama Cloud key not set — expected env var {self._auth_ref}")
+            headers["Authorization"] = f"Bearer {api_key}"
         last_err = "unknown error"
         for attempt in range(3):
             if attempt:

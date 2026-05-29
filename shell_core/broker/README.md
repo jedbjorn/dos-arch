@@ -29,7 +29,9 @@ host loopback, no Unix socket, no shim.
 
 | Prefix | Upstream | Injects |
 |---|---|---|
-| `/anthropic/…`  | `api.anthropic.com`   | `x-api-key` |
+| `/anthropic/…`    | `api.anthropic.com` | `x-api-key` |
+| `/openai/…`       | `api.openai.com`    | `Authorization: Bearer` |
+| `/ollama_cloud/…` | `ollama.com`        | `Authorization: Bearer` |
 | `/gh/…`         | `github.com`          | `Authorization` (git over HTTPS) |
 | `/ghcodeload/…` | `codeload.github.com` | `Authorization` |
 

@@ -27,7 +27,7 @@ SECRETS_VOL="dos-broker-secrets"   # docker named volume (matches broker-up.sh)
 IMAGE="dos-broker:latest"
 # Provider secrets to migrate from .env on first run. Add names here as new
 # providers are wired; import is non-clobbering so re-runs are safe.
-IMPORT_NAMES=(ANTHROPIC_API_KEY OPENAI_API_KEY GITHUB_TOKEN)
+IMPORT_NAMES=(ANTHROPIC_API_KEY OPENAI_API_KEY OLLAMA_CLOUD_API_KEY GITHUB_TOKEN)
 
 command -v docker >/dev/null || { echo "ERROR: docker not on PATH." >&2; exit 1; }
 docker image inspect "${IMAGE}" >/dev/null 2>&1 || {

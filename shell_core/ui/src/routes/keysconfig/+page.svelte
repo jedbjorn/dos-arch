@@ -9,7 +9,7 @@
 
   // The secrets the broker injects on egress — offered as quick picks; a custom
   // name is allowed for anything else stored.
-  const KNOWN = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GITHUB_TOKEN']
+  const KNOWN = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OLLAMA_CLOUD_API_KEY', 'GITHUB_TOKEN']
 
   let keys    = $state([])
   let loading = $state(true)
