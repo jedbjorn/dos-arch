@@ -114,8 +114,14 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
         "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
         [(new_id, sid) for sid in skill_ids],
     )
-    # Tools need no per-shell grant — general tools are universal, and a
-    # skill-bound tool comes with its skill (attached above).
+    # Materialise the attached skills' required tools into shell_tools
+    # (migration 056) — general tools are universal and need no grant.
+    con.execute(
+        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+        "SELECT ?, tool_id FROM skill_tools "
+        "WHERE skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)",
+        (new_id, new_id),
+    )
 
     # Host-side scratch tree (~/dos-arch-shared/<NN>-<shortname>/). Before
     # commit so a mkdir failure rolls back the shell row rather than leaving

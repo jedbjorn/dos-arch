@@ -11,15 +11,16 @@ body        = "spec"
 body_format = "json"
 
 # ── skill scoping ────────────────────────────────────────────────────────────
-# Consumed by seed_tools() in db_init.py, not the generic seeder. Two key
-# shapes:
+# Consumed by seed_tools() in db_init.py, not the generic seeder. Each entry
+# links a handler to a skill via a skill_tools row (M:N — migration 056). Two
+# key shapes:
 #   • bare name (no dot) — handler-family prefix. A tool whose handler starts
-#     "<key>." is scoped to that skill. Use when one skill carries the whole
+#     "<key>." is required by that skill. Use when one skill carries the whole
 #     family (file.*, proc.*, net.*, shared).
 #   • dotted name — exact handler match. Use when one family splits across
 #     skills (flag.create → create_flag skill; flag.resolve → resolve_flag
 #     skill). Exact entries take precedence in the lookup.
-# A tool whose handler matches nothing here stays general (skill_id NULL —
+# A tool whose handler matches nothing here stays general (is_general=1 —
 # the api_* verbs). Adding a tool family is a line here — no code change.
 [skill_map]
 file           = "file-ops"

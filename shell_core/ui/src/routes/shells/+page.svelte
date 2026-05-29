@@ -8,9 +8,14 @@
     getMyShells, getShell, getShellPromptSections, putShellPromptSection,
     getAvailableSkills, getShellSkills, getSkill, updateSkill,
     addShellSkill, removeShellSkill, promptRenderUrl,
+    getAvailableTools, getShellTools, getTool, addShellTool, removeShellTool,
   } from '$lib/api.js'
   import MarkdownBlock from '$lib/components/MarkdownBlock.svelte'
   import GlassDropdown from '$lib/components/GlassDropdown.svelte'
+
+  // Sub-tabs: the Harness prompt, the Skills viewer, and the Tools viewer all
+  // hang off one shell selection. Default to the harness.
+  let activeTab  = $state('harness')          // 'harness' | 'skills' | 'tools'
 
   let myShells   = $state([])
   let shellId    = $state(null)
@@ -24,6 +29,14 @@
   let activeSkill = $state(null)              // {skill_id, name, description, content}
   let skillsOpen  = $state(false)
   let skillBtnRef = $state(null)
+
+  let allTools     = $state([])               // every active tool (admin list); is_general flag
+  let grantedIds   = $state(new Set())        // tool_ids directly granted (shell_tools)
+  let requiredBy   = $state({})               // tool_id -> [skill names] requiring it (held skills)
+  let activeToolId = $state(null)
+  let activeTool   = $state(null)             // {tool_id, name, description, kind, spec, is_general}
+  let toolsOpen    = $state(false)
+  let toolBtnRef   = $state(null)
 
   let loading    = $state(false)
   let error      = $state('')
@@ -57,21 +70,30 @@
     editModal = null
     activeSkillId = null
     activeSkill = null
+    activeToolId = null
+    activeTool = null
     try {
-      const [sh, secs, available, assigned] = await Promise.all([
+      const [sh, secs, available, assigned, tools, shellTools] = await Promise.all([
         getShell(id),
         getShellPromptSections(id),
         getAvailableSkills(),
         getShellSkills(id),
+        getAvailableTools(),
+        getShellTools(id),
       ])
       shell = sh
       sections = secs
       allSkills = available
       assignedIds = new Set(assigned.map(s => s.skill_id))
+      allTools = tools
+      applyShellTools(shellTools)
       // Default selection: first assigned skill, else first overall.
       const firstAssigned = available.find(s => assignedIds.has(s.skill_id))
       const first = firstAssigned ?? available[0] ?? null
       if (first) selectSkill(first.skill_id)
+      // Default tool selection: first granted, else first overall.
+      const firstTool = tools.find(t => grantedIds.has(t.tool_id)) ?? tools[0] ?? null
+      if (firstTool) selectTool(firstTool.tool_id)
     } catch (e) {
       error = String(e.message ?? e)
     } finally {
@@ -152,7 +174,47 @@
       }
       assignedIds = next
       // Re-render the prompt — SKILLS AVAILABLE section reflects assignment.
+      // A skill carries tools (materialised into shell_tools on assign), so
+      // refresh the granted-tool state too.
       sections = await getShellPromptSections(shellId)
+      applyShellTools(await getShellTools(shellId))
+    } catch (e) {
+      error = String(e.message ?? e)
+    }
+  }
+
+  // Rebuild the granted-tool set + required-by map from a /shells/{id}/tools
+  // payload (the shell's direct grants, each with the held skills requiring it).
+  function applyShellTools(shellTools) {
+    grantedIds = new Set(shellTools.map(t => t.tool_id))
+    requiredBy = Object.fromEntries(shellTools.map(t => [t.tool_id, t.required_by ?? []]))
+  }
+
+  async function selectTool(tool_id) {
+    activeToolId = tool_id
+    try {
+      activeTool = await getTool(tool_id)
+    } catch (e) {
+      activeTool = null
+      error = String(e.message ?? e)
+    }
+  }
+
+  async function toggleToolGrant(tool_id) {
+    if (!shellId) return
+    const next = new Set(grantedIds)
+    try {
+      if (next.has(tool_id)) {
+        await removeShellTool(shellId, tool_id)
+        next.delete(tool_id)
+      } else {
+        await addShellTool(shellId, tool_id)
+        next.add(tool_id)
+      }
+      grantedIds = next
+      // TOOLS harness section reflects the grant; refresh required-by hints.
+      sections = await getShellPromptSections(shellId)
+      applyShellTools(await getShellTools(shellId))
     } catch (e) {
       error = String(e.message ?? e)
     }
@@ -165,9 +227,8 @@
   }
 
   function onDocClick(e) {
-    if (!skillsOpen) return
-    if (skillBtnRef && skillBtnRef.contains(e.target)) return
-    skillsOpen = false
+    if (skillsOpen && !(skillBtnRef && skillBtnRef.contains(e.target))) skillsOpen = false
+    if (toolsOpen && !(toolBtnRef && toolBtnRef.contains(e.target))) toolsOpen = false
   }
 
   onMount(async () => {
@@ -207,6 +268,14 @@
   const harnessTokens = $derived(approxTokens(sections.map(s => s.body ?? '').join('')))
   const skillChars    = $derived(activeSkill?.content?.length ?? 0)
   const skillTokens   = $derived(approxTokens(activeSkill?.content ?? ''))
+
+  // Pretty-print the active tool's JSON spec; fall back to the raw string if it
+  // somehow isn't valid JSON (never throw at render time).
+  const activeToolSpec = $derived.by(() => {
+    if (!activeTool?.spec) return ''
+    try { return JSON.stringify(JSON.parse(activeTool.spec), null, 2) }
+    catch { return activeTool.spec }
+  })
 </script>
 
 <!-- Sticky identity sub-header — sits below the TopBar (h-[52px]).
@@ -235,6 +304,19 @@
     <div class="text-red text-sm">{error}</div>
   {/if}
 
+  <!-- Sub-tabs — Harness / Skills / Tools, all scoped to the selected shell. -->
+  <div class="flex gap-5 relative border-b border-white/[0.08] px-1">
+    {#each [['harness', 'Harness'], ['skills', 'Skills'], ['tools', 'Tools']] as [key, label]}
+      <button
+        type="button"
+        onclick={() => activeTab = key}
+        class="pb-2 text-[12px] uppercase tracking-[0.15em] transition
+               {activeTab === key ? 'active-tab' : 'text-white/40 hover:text-white/70'}"
+      >{label}</button>
+    {/each}
+  </div>
+
+  {#if activeTab === 'harness'}
   <!-- Harness Prompt — single glass panel containing all accordion rows. -->
   <section class="flex flex-col gap-2">
     <div class="flex items-center justify-between px-1">
@@ -313,7 +395,9 @@
       {/each}
     </div>
   </section>
+  {/if}
 
+  {#if activeTab === 'skills'}
   <!-- Skill Viewer — header row + glass-panel body. -->
   <section class="flex flex-col gap-2">
     <div class="flex items-center gap-3 px-1">
@@ -403,6 +487,107 @@
       {/if}
     </div>
   </section>
+  {/if}
+
+  {#if activeTab === 'tools'}
+  <!-- Tool Viewer — mirrors the Skill viewer. General tools (is_general) are
+       universal and shown locked; the rest are granted per shell, with a hint
+       for any held skill that requires the tool. -->
+  <section class="flex flex-col gap-2">
+    <div class="flex items-center gap-3 px-1">
+      <h2 class="text-[10px] uppercase tracking-[0.15em] text-white/40 shrink-0">Tool Viewer</h2>
+      <div class="relative" bind:this={toolBtnRef}>
+        <button
+          type="button"
+          onclick={() => toolsOpen = !toolsOpen}
+          class="flex items-center gap-2 w-44 px-3 py-1.5 rounded-full border text-xs transition
+                 {toolsOpen
+                    ? 'text-white border-white/20 bg-white/[0.04]'
+                    : 'text-white/70 hover:text-white border-white/[0.10] hover:border-white/20'}"
+        >
+          <span class="flex-1 text-left font-mono truncate">
+            {activeTool?.name ?? (allTools.length ? 'Select a tool' : '—')}
+          </span>
+          <svg
+            class="text-white/40 shrink-0"
+            width="10" height="14" viewBox="0 0 10 14" fill="none" stroke="currentColor"
+            stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="2.5,5 5,2.5 7.5,5" />
+            <polyline points="2.5,9 5,11.5 7.5,9" />
+          </svg>
+        </button>
+        {#if toolsOpen && allTools.length}
+          <div
+            class="absolute top-full left-0 mt-2 w-max max-w-[80vw] max-h-96 overflow-y-auto rounded-2xl border py-2 z-40"
+            style="background: var(--menu-bg);
+                   border-color: var(--menu-border);
+                   box-shadow: var(--menu-shadow);"
+          >
+            {#each allTools as t}
+              {@const isActive = t.tool_id === activeToolId}
+              {@const granted = grantedIds.has(t.tool_id)}
+              {@const reqs = requiredBy[t.tool_id] ?? []}
+              <div
+                class="flex items-center px-1 transition whitespace-nowrap
+                       {isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}"
+              >
+                {#if t.is_general}
+                  <!-- Universal — granted to every shell; not toggleable. -->
+                  <span class="px-2 py-1 text-sm leading-none text-white/30" title="Granted to every shell">🔒</span>
+                {:else}
+                  <button
+                    type="button"
+                    aria-label={granted ? 'Revoke' : 'Grant'}
+                    onclick={(e) => { e.stopPropagation(); toggleToolGrant(t.tool_id) }}
+                    class="px-2 py-1 text-sm leading-none text-white/70 hover:text-white transition"
+                  >
+                    {granted ? '☑' : '☐'}
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  onclick={() => { selectTool(t.tool_id); toolsOpen = false }}
+                  class="flex-1 text-left px-2 py-1.5 text-[12px] font-mono text-white/80 hover:text-white transition"
+                >
+                  {t.name}
+                </button>
+                {#if t.is_general}
+                  <span class="px-2 text-[10px] text-white/30 shrink-0">all shells</span>
+                {:else if reqs.length}
+                  <span class="px-2 text-[10px] text-white/40 shrink-0">via {reqs.join(', ')}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+    <div
+      class="rounded-2xl border border-white/[0.08] p-4 min-h-[12rem] text-[12px]"
+      style="background: var(--glass-bg);"
+    >
+      {#if activeTool}
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-[10px] uppercase tracking-[0.15em] text-white/40">{activeTool.kind}</span>
+          {#if activeTool.is_general}
+            <span class="text-[10px] uppercase tracking-[0.15em] text-white/30">· universal</span>
+          {:else if (requiredBy[activeTool.tool_id] ?? []).length}
+            <span class="text-[10px] uppercase tracking-[0.15em] text-white/30">· via {requiredBy[activeTool.tool_id].join(', ')}</span>
+          {/if}
+        </div>
+        {#if activeTool.description}
+          <div class="text-white/50 text-xs mb-3 leading-relaxed">{activeTool.description}</div>
+        {/if}
+        {#if activeToolSpec}
+          <pre class="text-[11px] font-mono text-white/70 whitespace-pre-wrap break-words bg-black/30 border border-white/[0.06] rounded-lg p-3 overflow-x-auto">{activeToolSpec}</pre>
+        {/if}
+      {:else if !loading}
+        <div class="text-white/40 text-xs">No tool selected.</div>
+      {/if}
+    </div>
+  </section>
+  {/if}
 </div>
 
 <!-- Unified edit modal — 650×700, fixed dialog with an overlay that cancels

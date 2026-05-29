@@ -165,6 +165,14 @@ def _attach_skills(con: sqlite3.Connection, shell_id: int, spec: str) -> None:
         "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) VALUES (?, ?)",
         [(shell_id, sid) for sid in ids],
     )
+    # Materialise the attached skills' required tools into shell_tools
+    # (migration 056); general tools stay universal and need no grant.
+    con.execute(
+        "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+        "SELECT ?, tool_id FROM skill_tools "
+        "WHERE skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)",
+        (shell_id, shell_id),
+    )
 
 
 def seed_skills(con: sqlite3.Connection) -> list[str]:
@@ -218,16 +226,16 @@ def seed_models(con: sqlite3.Connection) -> list[str]:
 
 
 def seed_tools(con: sqlite3.Connection) -> list[str]:
-    """INSERT every tool in `assets/tools/` not already present, then scope
-    each skill-bound tool to its skill via the [skill_map] table in the tools
-    seed manifest. Entries without a dot are handler-family prefixes
+    """INSERT every tool in `assets/tools/` not already present, then link each
+    skill-bound tool to its skill in skill_tools via the [skill_map] table in
+    the tools seed manifest. Entries without a dot are handler-family prefixes
     (`file` matches `file.*`, scoping the whole family to one skill). Entries
     with a dot are exact handler matches, used when one family splits across
     skills (`flag.create` vs `flag.resolve`). A tool whose handler matches
-    nothing in the map stays general (skill_id NULL — the api_* verbs).
-    Returns the names newly seeded. Caller commits. Tools need no per-shell
-    grant — a general tool is universal, a skill-bound tool comes with its
-    skill."""
+    nothing in the map stays general (is_general=1 — the api_* verbs). Returns
+    the names newly seeded. Caller commits. No per-shell grant is written here:
+    a general tool is universal; a skill-bound tool is materialised into
+    shell_tools when its skill is assigned (migration 056)."""
     seeded = seed_from_assets(con, "tools")
     skill_map = tomllib.loads(
         (ASSETS / "tools" / "_seed.toml").read_text()).get("skill_map", {})
@@ -240,14 +248,21 @@ def seed_tools(con: sqlite3.Connection) -> list[str]:
             continue
         if "." in key:
             con.execute(
-                "UPDATE tools SET skill_id=? WHERE skill_id IS NULL AND handler=?",
+                "INSERT OR IGNORE INTO skill_tools (skill_id, tool_id) "
+                "SELECT ?, tool_id FROM tools WHERE handler=?",
                 (row[0], key),
             )
         else:
             con.execute(
-                "UPDATE tools SET skill_id=? WHERE skill_id IS NULL AND handler LIKE ?",
+                "INSERT OR IGNORE INTO skill_tools (skill_id, tool_id) "
+                "SELECT ?, tool_id FROM tools WHERE handler LIKE ?",
                 (row[0], key + ".%"),
             )
+    # Anything not linked to a skill is a general tool (the api_* verbs).
+    con.execute(
+        "UPDATE tools SET is_general=1 "
+        "WHERE tool_id NOT IN (SELECT tool_id FROM skill_tools)"
+    )
     return seeded
 
 
