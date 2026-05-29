@@ -23,7 +23,7 @@
 set -euo pipefail
 
 ENV_FILE="${HOME}/.config/dos-arch/.env"
-SECRETS_DIR="${HOME}/.config/dos-arch/broker"
+SECRETS_VOL="dos-broker-secrets"   # docker named volume (matches broker-up.sh)
 IMAGE="dos-broker:latest"
 # Provider secrets to migrate from .env on first run. Add names here as new
 # providers are wired; import is non-clobbering so re-runs are safe.
@@ -34,8 +34,7 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
   echo "ERROR: ${IMAGE} not built — run ./install/build-image.sh first." >&2
   exit 1
 }
-mkdir -p "$(dirname "${ENV_FILE}")" "${SECRETS_DIR}"
-chmod 700 "${SECRETS_DIR}"
+mkdir -p "$(dirname "${ENV_FILE}")"
 touch "${ENV_FILE}"; chmod 600 "${ENV_FILE}"
 
 echo "==> [1/3] admin token"
@@ -47,9 +46,9 @@ else
   echo "    BROKER_ADMIN_TOKEN generated -> ${ENV_FILE}"
 fi
 
-echo "==> [2/3] KEK + store (inside ${IMAGE})"
+echo "==> [2/3] KEK + store (named volume ${SECRETS_VOL}, inside ${IMAGE})"
 # init: generates /secrets/master.key (0600) + secrets.db if absent. Idempotent.
-docker run --rm -v "${SECRETS_DIR}:/secrets" \
+docker run --rm -v "${SECRETS_VOL}:/secrets" \
   -e BROKER_SECRETS_DB=/secrets/secrets.db -e BROKER_KEK_PATH=/secrets/master.key \
   -w /app \
   --entrypoint python "${IMAGE}" -m secrets_store init
@@ -58,15 +57,15 @@ echo "==> [3/3] import provider keys from .env (one-time, non-clobbering)"
 # --env-file gives THIS throwaway container the plaintext keys just long enough
 # to encrypt them into the store. import-env skips names already stored and
 # names absent from the env, so re-runs never clobber a rotated value.
-docker run --rm -v "${SECRETS_DIR}:/secrets" \
+docker run --rm -v "${SECRETS_VOL}:/secrets" \
   --env-file "${ENV_FILE}" \
   -e BROKER_SECRETS_DB=/secrets/secrets.db -e BROKER_KEK_PATH=/secrets/master.key \
   -w /app \
   --entrypoint python "${IMAGE}" -m secrets_store import-env "${IMPORT_NAMES[@]}"
 
 echo
-echo "==> secret store ready at ${SECRETS_DIR}"
+echo "==> secret store ready in volume ${SECRETS_VOL}"
 echo "    next: ./install/broker-up.sh   (starts the broker reading from the store)"
-echo "    verify (no plaintext): docker run --rm -v ${SECRETS_DIR}:/secrets \\"
+echo "    verify (no plaintext): docker run --rm -v ${SECRETS_VOL}:/secrets \\"
 echo "      -e BROKER_SECRETS_DB=/secrets/secrets.db -w /app --entrypoint python ${IMAGE} \\"
 echo "      -m secrets_store list"

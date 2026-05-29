@@ -97,7 +97,20 @@ docker run -d --name "${NAME}" --network "${NET}" \
 echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8001"
 
 echo "==> [6/6] health check"
-sleep 2
-docker run --rm --network "${NET}" --entrypoint python "${IMAGE}" -c \
-  "import urllib.request as u; print(u.urlopen('http://${NAME}:8000/health').read().decode())"
-echo "    dos-api reachable as http://${NAME}:8000 on ${NET}"
+# Poll, don't single-shot: the FastAPI startup hooks (catalogue + cloud/remote
+# model sync, the latter via the broker) delay uvicorn readiness past a fixed
+# sleep, which would fail this check even though the container is fine.
+ok=""
+for _ in $(seq 1 20); do
+  if docker run --rm --network "${NET}" --entrypoint python "${IMAGE}" -c \
+      "import urllib.request as u; u.urlopen('http://${NAME}:8000/health', timeout=3)" \
+      >/dev/null 2>&1; then
+    ok=1; break
+  fi
+  sleep 1
+done
+if [[ -n "${ok}" ]]; then
+  echo "    dos-api reachable as http://${NAME}:8000 on ${NET}"
+else
+  echo "    WARNING: ${NAME} did not pass health check within 20s — check 'docker logs ${NAME}'" >&2
+fi

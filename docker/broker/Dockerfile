@@ -33,8 +33,14 @@ WORKDIR /app
 COPY broker.py /app/broker.py
 COPY secrets_store.py /app/secrets_store.py
 
-# ── non-root ─────────────────────────────────────────────────────────────────
-RUN useradd -m -u 1000 broker
+# ── non-root + secrets mountpoint ─────────────────────────────────────────────
+# /secrets is a docker NAMED VOLUME at run time (KEK + secrets.db). Pre-create
+# it owned by `broker` so a fresh named volume inherits that ownership and this
+# non-root container can write it. (A host bind mount would carry host-user
+# ownership that, under rootless docker, the mapped container uid can't write —
+# which is why we use a named volume here, not a bind mount.)
+RUN useradd -m -u 1000 broker \
+ && mkdir -p /secrets && chown broker:broker /secrets
 USER broker
 
 EXPOSE 8788

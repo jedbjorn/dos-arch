@@ -10,23 +10,22 @@
 # broker by Docker DNS name (http://dos-broker:8788).
 #
 # As of Phase 1 the broker no longer reads provider keys from the environment.
-# Secrets live in an envelope-encrypted store the broker owns, on a mounted
-# volume (`${SECRETS_DIR}` -> /secrets: secrets.db + the KEK master.key). The
-# only thing passed from the environment is BROKER_ADMIN_TOKEN, which gates the
-# secret-management admin API — NOT a provider credential.
+# Secrets live in an envelope-encrypted store the broker owns, on a docker
+# NAMED VOLUME (`${SECRETS_VOL}` -> /secrets: secrets.db + the KEK master.key).
+# A named volume (not a host bind mount) so the non-root broker can write it
+# under rootless docker — see the Dockerfile note. The only thing passed from
+# the environment is BROKER_ADMIN_TOKEN, which gates the secret-management
+# admin API — NOT a provider credential.
 #
-# PREREQUISITE: the store must be seeded before egress works. On a fresh
-# install run, in the broker image (cwd shell_core):
-#     python -m broker.secrets_store init
-#     python -m broker.secrets_store import-env ANTHROPIC_API_KEY OPENAI_API_KEY ...
-# (the install script automates this). An empty store => egress returns 502
-# until a secret is set, here or via the Keys UI.
+# PREREQUISITE: the store must be seeded before egress works — run
+# ./install/secrets-init.sh first (generates the KEK + imports .env keys). An
+# empty store => egress returns 502 until a secret is set there or via the Keys UI.
 #
 # Idempotent: safe to re-run.
 set -euo pipefail
 
 ENV_FILE="${HOME}/.config/dos-arch/.env"
-SECRETS_DIR="${HOME}/.config/dos-arch/broker"   # persists secrets.db + master.key
+SECRETS_VOL="dos-broker-secrets"   # docker named volume: secrets.db + master.key
 NET="dos-net"
 NAME="dos-broker"
 IMAGE="dos-broker:latest"
@@ -39,11 +38,6 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
   echo "ERROR: ${IMAGE} not built — run ./install/build-image.sh first." >&2
   exit 1
 }
-
-# The secrets volume must persist across container recreations — it holds the
-# KEK and the encrypted store. 0700: only the operator reads it.
-mkdir -p "${SECRETS_DIR}"
-chmod 700 "${SECRETS_DIR}"
 
 # Admin token gates the secret-management API. Extract it from the env file if
 # present; pass ONLY this one value into the container (never the whole .env, so
@@ -71,12 +65,12 @@ docker rm -f "${NAME}" >/dev/null 2>&1 || true
 # never the public interface. (Per-client auth on the broker is Phase 2.)
 docker run -d --name "${NAME}" --network "${NET}" \
   -p 127.0.0.1:8788:8788 \
-  -v "${SECRETS_DIR}:/secrets" \
+  -v "${SECRETS_VOL}:/secrets" \
   -e "BROKER_SECRETS_DB=/secrets/secrets.db" \
   -e "BROKER_KEK_PATH=/secrets/master.key" \
   "${ADMIN_ARGS[@]}" \
   --restart unless-stopped "${IMAGE}" >/dev/null
-echo "    ${NAME} running on ${NET} + 127.0.0.1:8788 (secrets on volume ${SECRETS_DIR})"
+echo "    ${NAME} running on ${NET} + 127.0.0.1:8788 (secrets on volume ${SECRETS_VOL})"
 
 echo "==> [3/3] health check (from a throwaway container on ${NET})"
 sleep 1
