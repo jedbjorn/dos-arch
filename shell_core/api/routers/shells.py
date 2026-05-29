@@ -190,7 +190,10 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
     # gives the viewer an honest snapshot of what would actually render. No
     # session yet → placeholders and the default anthropic dialect.
     sess = con.execute(
-        "SELECT cs.chat_session_id, s.active_archive_id, m.name AS model_name, m.tool_dialect "
+        "SELECT cs.chat_session_id, s.active_archive_id, m.name AS model_name, m.tool_dialect, "
+        "(SELECT COUNT(*) FROM chat_sessions cs2 "
+        " WHERE cs2.shell_id = cs.shell_id AND cs2.started_at <= cs.started_at"
+        ") AS session_rank "
         "FROM chat_sessions cs JOIN shells s ON s.shell_id = cs.shell_id "
         "LEFT JOIN models m ON m.model_id = cs.model_id "
         "WHERE cs.shell_id=? AND cs.is_active=1 "
@@ -199,7 +202,9 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
     ).fetchone()
     runtime_ctx = {
         "datetime":   datetime.now(),
-        "session_id": sess["chat_session_id"] if sess else "—",
+        # Per-shell numeric rank (0001, 0002…), matching boot_document.py — the
+        # human-readable session number, NOT the chat_session_id UUID.
+        "session_id": f"{sess['session_rank']:04d}" if sess else "—",
         "archive_id": (sess["active_archive_id"] if sess else None) or "—",
         "shell_id":   shell_id,
         "model":      (sess["model_name"] if sess else None),
