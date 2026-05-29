@@ -206,11 +206,16 @@ def render_operating_context(shell_row: sqlite3.Row) -> str:
 
 
 def render_active_projects(con: sqlite3.Connection, shell_id: int) -> str:
-    """Section D — the shell's non-deleted project assignments."""
+    """Section D — projects the shell inherits from its owning user.
+
+    Visibility is derived, not stored (docs/core-data-model.md): a shell has no
+    project rows of its own — it sees the projects its user has *joined* via
+    user_projects (shell → shells.user_id → user_projects → projects)."""
     rows = con.execute(
         "SELECT p.shortname, p.purpose, p.status FROM projects p "
-        "JOIN project_shells ps ON ps.project_id = p.project_id "
-        "WHERE ps.shell_id=? AND ps.is_deleted=0 AND COALESCE(p.is_deleted,0)=0 "
+        "JOIN user_projects up ON up.project_id = p.project_id "
+        "WHERE up.user_id = (SELECT user_id FROM shells WHERE shell_id=?) "
+        "AND up.is_deleted=0 AND COALESCE(p.is_deleted,0)=0 "
         "ORDER BY p.shortname",
         (shell_id,),
     ).fetchall()

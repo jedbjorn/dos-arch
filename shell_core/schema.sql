@@ -1,7 +1,9 @@
 -- shell_infra — SQLite schema (substrate-only, single-user, no auth)
--- Phase 4 redesign. Stripped of CRM concepts (accounts/contacts/staff/team/
--- meetings/opportunities/email/aimail/notifications/mentions/follows) and of
--- the auth surface (sessions/password_hash/api_key/etc).
+-- Phase 4 redesign stripped the legacy CRM + auth surfaces. The core data
+-- model (docs/core-data-model.md, migrations 058-059) then re-introduced a
+-- lean relational core around the project spine: user_projects membership,
+-- contacts, emails, events, and a unified notes feed — replacing the
+-- shell-group mesh (project_shells/shell_groups/...) with derived visibility.
 
 -- ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -359,54 +361,144 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS project_shells (
-    project_shell_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id       INTEGER NOT NULL REFERENCES projects(project_id),
-    shell_id         INTEGER NOT NULL REFERENCES shells(shell_id),
-    role             TEXT,
-    added_date       DATE NOT NULL DEFAULT (date('now')),
-    is_deleted       INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (project_id, shell_id)
-);
+-- ── Project membership (user-scoped, N:M) ────────────────────────────────────
+-- A shell inherits its projects from its user: shell → shells.user_id →
+-- user_projects → projects. Visibility is derived, never stored per-shell.
+-- Replaces the abandoned shell-group mesh (see docs/core-data-model.md).
 
--- ── Shell groups (lightweight permission boundary) ───────────────────────────
--- A shell sees only the projects in the groups it belongs to. Membership is
--- shell-level, not user-level: one user may own several shells with different
--- group membership (e.g. a specialized shell scoped to a single project).
--- An is_admin group's members bypass scoping and see every project.
-
-CREATE TABLE IF NOT EXISTS shell_groups (
-    group_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug        TEXT    NOT NULL UNIQUE,
-    name        TEXT    NOT NULL,
-    description TEXT,
-    is_admin    INTEGER NOT NULL DEFAULT 0,
-    is_deleted  INTEGER NOT NULL DEFAULT 0,
-    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS shell_group_members (
-    membership_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id      INTEGER NOT NULL REFERENCES shell_groups(group_id),
-    shell_id      INTEGER NOT NULL REFERENCES shells(shell_id),
-    added_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    is_deleted    INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (group_id, shell_id)
-);
-
-CREATE TABLE IF NOT EXISTS project_groups (
-    project_group_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id   INTEGER NOT NULL REFERENCES shell_groups(group_id),
+CREATE TABLE IF NOT EXISTS user_projects (
+    user_project_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(user_id),
     project_id INTEGER NOT NULL REFERENCES projects(project_id),
+    role       TEXT NOT NULL DEFAULT 'member'
+                 CHECK(role IN ('owner','member')),   -- creator=owner; multi-owner allowed
     added_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_deleted INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (group_id, project_id)
+    UNIQUE (user_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_projects_user    ON user_projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_projects_project ON user_projects(project_id);
+
+-- ── Contacts (external people + geocoded location) ───────────────────────────
+-- N:M to projects via contact_projects, plus an editable default_project_id
+-- (must be one of the contact's projects — soft rule, enforced in app).
+
+CREATE TABLE IF NOT EXISTS contacts (
+    contact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    email      TEXT,
+    phone      TEXT,
+    -- structured / geocoded location (not raw text):
+    formatted_address TEXT,
+    locality   TEXT,
+    region     TEXT,
+    country    TEXT,
+    postal_code TEXT,
+    lat        REAL,
+    lng        REAL,
+    default_project_id INTEGER REFERENCES projects(project_id),
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_shell_group_members_shell
-    ON shell_group_members(shell_id);
-CREATE INDEX IF NOT EXISTS idx_project_groups_group
-    ON project_groups(group_id);
+CREATE TABLE IF NOT EXISTS contact_projects (
+    contact_project_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(contact_id),
+    project_id INTEGER NOT NULL REFERENCES projects(project_id),
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (contact_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contact_projects_project ON contact_projects(project_id);
+
+-- ── Emails (correspondence, N:1 contact, re-fileable project) ────────────────
+-- project_id is seeded from the contact's default at creation, then editable.
+
+CREATE TABLE IF NOT EXISTS emails (
+    email_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(contact_id),
+    project_id INTEGER REFERENCES projects(project_id),  -- seeded from contact default, editable
+    direction  TEXT CHECK(direction IN ('inbound','outbound')),
+    subject    TEXT,
+    body       TEXT,
+    occurred_at TIMESTAMP,                 -- sent / received time
+    message_id TEXT,                       -- optional: real mail-sync later
+    thread_id  TEXT,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_emails_contact ON emails(contact_id);
+CREATE INDEX IF NOT EXISTS idx_emails_project ON emails(project_id);
+
+-- ── Events (calendar + location), N:M to contacts/users/projects ─────────────
+-- The "default" project is the is_primary row of event_projects (no separate
+-- FK column — one source for "which project").
+
+CREATE TABLE IF NOT EXISTS events (
+    event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    start_at   TIMESTAMP,
+    end_at     TIMESTAMP,
+    formatted_address TEXT, locality TEXT, region TEXT,
+    country TEXT, postal_code TEXT, lat REAL, lng REAL,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS event_contacts (
+    event_id   INTEGER NOT NULL REFERENCES events(event_id),
+    contact_id INTEGER NOT NULL REFERENCES contacts(contact_id),
+    UNIQUE (event_id, contact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_contacts_contact ON event_contacts(contact_id);
+
+CREATE TABLE IF NOT EXISTS event_users (
+    event_id INTEGER NOT NULL REFERENCES events(event_id),
+    user_id  INTEGER NOT NULL REFERENCES users(user_id),
+    UNIQUE (event_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_users_user ON event_users(user_id);
+
+CREATE TABLE IF NOT EXISTS event_projects (
+    event_id   INTEGER NOT NULL REFERENCES events(event_id),
+    project_id INTEGER NOT NULL REFERENCES projects(project_id),
+    is_primary INTEGER NOT NULL DEFAULT 0,   -- the editable "default" project
+    UNIQUE (event_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_projects_project ON event_projects(project_id);
+
+-- ── Notes (unified annotation feed; exclusive arc) ───────────────────────────
+-- Typed nullable FK targets + a CHECK enforcing the valid target per kind.
+-- author_user_id is who wrote it; the target user_id is a note *about* a user.
+
+CREATE TABLE IF NOT EXISTS notes (
+    note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind    TEXT NOT NULL CHECK(kind IN
+              ('note','document','meeting_prep','meeting_result')),
+    body    TEXT,
+    author_user_id INTEGER REFERENCES users(user_id),
+    -- target arc (kind-constrained per matrix):
+    contact_id INTEGER REFERENCES contacts(contact_id),
+    event_id   INTEGER REFERENCES events(event_id),
+    project_id INTEGER REFERENCES projects(project_id),
+    user_id    INTEGER REFERENCES users(user_id),
+    -- document kind only:
+    doc_url  TEXT, doc_mime TEXT, doc_size INTEGER,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+         (kind='note' AND
+            (contact_id IS NOT NULL) + (event_id IS NOT NULL)
+          + (project_id IS NOT NULL) + (user_id IS NOT NULL) = 1)
+      OR (kind='document' AND user_id IS NULL AND contact_id IS NULL AND
+            (event_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+      OR (kind IN ('meeting_prep','meeting_result') AND event_id IS NOT NULL
+            AND contact_id IS NULL AND project_id IS NULL AND user_id IS NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_notes_contact ON notes(contact_id);
+CREATE INDEX IF NOT EXISTS idx_notes_event   ON notes(event_id);
+CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(project_id);
+CREATE INDEX IF NOT EXISTS idx_notes_user    ON notes(user_id);
 
 -- ── Shell decisions (per-shell decision log) ─────────────────────────────────
 

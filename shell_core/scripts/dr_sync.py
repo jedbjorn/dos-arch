@@ -833,8 +833,6 @@ _DB_PURPOSE_ENTRIES = {
     "shell_prompt_automations": "Per-shell scheduled prompts (recurring, cycle count, last fire)",
     "shell_logs":             "Per-shell prompt/result audit log (legacy surface; chat_messages is primary now)",
     "shell_skills":           "Many-to-many: shells ↔ skills (which skills a shell has loaded)",
-    "shell_groups":           "Shell group definitions (slug, name, is_admin)",
-    "shell_group_members":    "Many-to-many: shell_groups ↔ shells",
 
     # ── chat (browser-chat sidebar / dispatcher) ──────────────────────────
     "chat_sessions":  "Browser-chat session metadata (per-shell, model, started/ended)",
@@ -844,8 +842,17 @@ _DB_PURPOSE_ENTRIES = {
     "flags":          "Open/resolved blockers per shell (display_name, priority, description, parent chain)",
     "plans":          "Multi-step planning entries per shell (objective, content, status)",
     "projects":       "Project registry (shortname, title, purpose, standing, status)",
-    "project_shells": "Many-to-many: projects ↔ shells (who works on what)",
-    "project_groups": "Many-to-many: projects ↔ shell_groups",
+    "user_projects":  "Many-to-many: users ↔ projects (membership; role owner|member). Shells inherit",
+
+    # ── core data model: contacts / emails / events / notes ───────────────
+    "contacts":         "External people + geocoded location; default_project_id (editable)",
+    "contact_projects": "Many-to-many: contacts ↔ projects",
+    "emails":           "Correspondence, N:1 contact; project_id seeded from contact default, editable",
+    "events":           "Calendar events + geocoded location",
+    "event_contacts":   "Many-to-many: events ↔ contacts",
+    "event_users":      "Many-to-many: events ↔ users",
+    "event_projects":   "Many-to-many: events ↔ projects (is_primary marks the default project)",
+    "notes":            "Unified annotation feed (note/document/meeting_prep/result); exclusive-arc target",
 
     # ── skills + tools ────────────────────────────────────────────────────
     "skills": "Skill library — markdown bodies shipped with the substrate, lazy-loaded by name",
