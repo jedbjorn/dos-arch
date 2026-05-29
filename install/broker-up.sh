@@ -65,13 +65,18 @@ echo "    ${NET} ready"
 
 echo "==> [2/3] (re)start ${NAME}"
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
+# Published to 127.0.0.1:8788 so the HOST dispatcher (pm2, not on dos-net) can
+# route provider calls through the broker too (Phase 1, I5) — it stays
+# dos-net-internal for shell containers and bound to localhost for the host,
+# never the public interface. (Per-client auth on the broker is Phase 2.)
 docker run -d --name "${NAME}" --network "${NET}" \
+  -p 127.0.0.1:8788:8788 \
   -v "${SECRETS_DIR}:/secrets" \
   -e "BROKER_SECRETS_DB=/secrets/secrets.db" \
   -e "BROKER_KEK_PATH=/secrets/master.key" \
   "${ADMIN_ARGS[@]}" \
   --restart unless-stopped "${IMAGE}" >/dev/null
-echo "    ${NAME} running on ${NET} (secrets on volume ${SECRETS_DIR})"
+echo "    ${NAME} running on ${NET} + 127.0.0.1:8788 (secrets on volume ${SECRETS_DIR})"
 
 echo "==> [3/3] health check (from a throwaway container on ${NET})"
 sleep 1

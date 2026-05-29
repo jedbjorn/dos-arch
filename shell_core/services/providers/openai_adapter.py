@@ -19,6 +19,7 @@ contract is genuinely provider-neutral and not just Anthropic in disguise.
 from __future__ import annotations
 
 import json
+import os
 
 import openai
 
@@ -40,9 +41,21 @@ class OpenAIAdapter(ProviderAdapter):
     def __init__(self, endpoint: str | None = None) -> None:
         # max_retries=5 — the SDK retries 429/5xx internally; ProviderError is
         # raised only once that budget is spent. `endpoint` is accepted for
-        # interface uniformity (see get_adapter) and ignored here; the Ollama
-        # subclass uses it to point the same SDK at a local server.
-        self._client = openai.OpenAI(max_retries=5)
+        # interface uniformity (see get_adapter) and ignored here.
+        #
+        # When BROKER_BASE is set (Phase 1), route through the credential broker
+        # (the broker injects Authorization on egress; the placeholder api_key
+        # is overwritten). base_url carries the `/v1` suffix the SDK expects, so
+        # it requests {broker}/openai/v1/chat/completions. NOTE: this is the
+        # `openai` provider only — OllamaAdapter subclasses ProviderAdapter (not
+        # this class) and is unaffected.
+        broker = os.environ.get("BROKER_BASE")
+        if broker:
+            self._client = openai.OpenAI(
+                base_url=f"{broker.rstrip('/')}/openai/v1",
+                api_key="broker-injected", max_retries=5)
+        else:
+            self._client = openai.OpenAI(max_retries=5)
 
     @staticmethod
     def _to_native_messages(messages: list) -> list:

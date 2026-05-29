@@ -10,10 +10,11 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 
-// The dispatcher needs ANTHROPIC_API_KEY. Secrets live in the operator's
-// config dir, never in the repo — parse them here so pm2 hands them to the
-// dispatcher process. A missing file yields an empty env; the dispatcher then
-// exits at startup with a clear "ANTHROPIC_API_KEY not set" error.
+// Parse the operator's .env so pm2 can hand selected values to processes.
+// As of Phase 1 the dispatcher routes provider calls through the broker
+// (BROKER_BASE, set per-app below) and holds no provider key — but .env still
+// supplies non-provider config, and the legacy ANTHROPIC_API_KEY path remains
+// for a broker-less setup. A missing file yields an empty env.
 function loadEnv() {
   const env = {};
   const file = path.join(os.homedir(), '.config', 'dos-arch', '.env');
@@ -46,7 +47,11 @@ module.exports = {
       cwd: __dirname,
       script: path.join(__dirname, 'shell_core/services/dispatch_live.py'),
       interpreter: path.join(__dirname, '.venv/bin/python3'),
-      env: loadEnv(),
+      // BROKER_BASE routes provider calls through the credential broker
+      // (Phase 1) — published to localhost by broker-up.sh — so the dispatcher
+      // holds no provider key; the broker injects auth on egress. The provider
+      // adapters prefer BROKER_BASE over any ANTHROPIC_API_KEY still in .env.
+      env: { ...loadEnv(), BROKER_BASE: 'http://127.0.0.1:8788' },
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,

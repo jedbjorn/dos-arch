@@ -15,6 +15,8 @@ OpenAI / Gemini / local adapters do real message restructuring here.
 
 from __future__ import annotations
 
+import os
+
 import anthropic
 
 from .base import ParsedResponse, ProviderAdapter, ProviderError
@@ -52,9 +54,19 @@ class AnthropicAdapter(ProviderAdapter):
     def __init__(self, endpoint: str | None = None) -> None:
         # max_retries=5 — the SDK retries 429/5xx/overloaded internally;
         # ProviderError is raised only once that budget is spent. `endpoint`
-        # is accepted for interface uniformity (see get_adapter) and ignored;
-        # this adapter uses the Anthropic SDK default base URL.
-        self._client = anthropic.Anthropic(max_retries=5)
+        # is accepted for interface uniformity (see get_adapter) and ignored.
+        #
+        # When BROKER_BASE is set (Phase 1), route through the credential broker
+        # so this process holds NO provider key — the broker injects x-api-key
+        # on egress. The SDK still requires a non-empty api_key, but the broker
+        # overwrites the header, so a placeholder is correct and never used.
+        broker = os.environ.get("BROKER_BASE")
+        if broker:
+            self._client = anthropic.Anthropic(
+                base_url=f"{broker.rstrip('/')}/anthropic",
+                api_key="broker-injected", max_retries=5)
+        else:
+            self._client = anthropic.Anthropic(max_retries=5)
 
     def format_request(
         self,
