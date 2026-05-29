@@ -63,6 +63,12 @@ export const syncCloudModels       = ()                => post('/models/cloud/sy
 // one provider per config page. List includes inactive rows.
 export const getProviderModels     = (provider)        => get(`/models/remote/${provider}`)
 export const syncProviderModels    = (provider)        => post(`/models/remote/${provider}/sync`)
+
+// Keys — secret management via the broker admin API. Values are never returned;
+// the list is metadata only (name, last_four, timestamps).
+export const getKeys               = ()                => get('/keys')
+export const setKey                = (name, value)     => put(`/keys/${encodeURIComponent(name)}`, { value })
+export const deleteKey             = (name)            => del_(`/keys/${encodeURIComponent(name)}`)
 export const getMyShells           = ()                => get('/shells/mine')
 export const activateShell         = (shell_id)        => patch(`/shells/${shell_id}/activate`)
 export const getShellChat          = (shell_id)        => get(`/shells/${shell_id}/chat`)

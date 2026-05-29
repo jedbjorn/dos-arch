@@ -69,15 +69,30 @@ DRSYNC_PY="${REPO}/.venv/bin/python3"
 # The remote model-catalog sync (Anthropic/OpenAI /v1/models) runs from the
 # API — at startup and behind the /anthropicconfig + /openaiconfig "Refresh"
 # button — and those reads need the provider API keys. The API stays
-# CREDENTIAL-FREE: it routes the reads through the broker (the one
-# secret-holding component, already on dos-net), which injects the key on
-# egress. We hand the API only the broker URL — not a secret — so the sync
-# has somewhere to send the request. No key ever lands in this container.
+# CREDENTIAL-FREE for PROVIDER keys: it routes the reads through the broker
+# (the one secret-holding component, already on dos-net), which injects the
+# key on egress. We hand the API only the broker URL — not a provider secret.
+#
+# The API also backs the Keys UI (/keys), which manages secrets via the
+# broker's admin API — so it needs the admin gate token (BROKER_ADMIN_TOKEN).
+# That is the broker's own auth gate, NOT a provider credential; extracted from
+# the env file, never echoed, and the only secret this container carries.
+ENV_FILE="${HOME}/.config/dos-arch/.env"
+ADMIN_ARGS=()
+if [[ -r "${ENV_FILE}" ]] && grep -q '^BROKER_ADMIN_TOKEN=' "${ENV_FILE}"; then
+  TOKEN="$(grep -E '^BROKER_ADMIN_TOKEN=' "${ENV_FILE}" | head -1 | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//')"
+  ADMIN_ARGS=(-e "BROKER_ADMIN_TOKEN=${TOKEN}")
+  echo "    admin token: wired (Keys UI enabled)"
+else
+  echo "    admin token: BROKER_ADMIN_TOKEN not in ${ENV_FILE} — Keys UI will be unavailable" >&2
+fi
+
 echo "==> [5/6] start ${NAME}"
 docker run -d --name "${NAME}" --network "${NET}" \
   -v "${CORE}:/substrate/shell_core" \
   -p 127.0.0.1:8001:8000 \
   -e "BROKER_BASE=${BROKER_BASE}" \
+  "${ADMIN_ARGS[@]}" \
   --restart unless-stopped "${IMAGE}" >/dev/null
 echo "    ${NAME} running on ${NET}, published to 127.0.0.1:8001"
 
