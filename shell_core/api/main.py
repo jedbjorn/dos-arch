@@ -192,6 +192,44 @@ async def _populate_catalogue() -> None:
             _sys.path.remove(str(scripts_dir))
 
 
+# ── Ensure shell API keys on startup (CC-102 Phase 1) ─────────────────────────
+# A fresh bootstrap seeds forge + sysadmin with no api_key/api_key_hash, so
+# token-scoped calls (caller resolved from the Bearer, e.g. flag.create) fail.
+# This hook mints a key for any keyless shell on every `make up`. Idempotent
+# (shells with both columns are skipped), self-healing, and best-effort — a
+# failure here must not block startup. MUST be a startup hook (runs after
+# broker-up) not bootstrap.py (runs before it). The same generate-if-absent
+# flow is kept in Phase 2; only the plaintext backend moves (DB → broker vault).
+
+@app.on_event("startup")
+async def _ensure_shell_keys() -> None:
+    import sqlite3
+    import sys as _sys
+    from pathlib import Path
+    here        = Path(__file__).resolve()
+    scripts_dir = here.parents[1] / "scripts"
+    db_path     = here.parents[2] / "shell_core" / "shell_db.db"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from ensure_api_keys import ensure_keys  # type: ignore[import-not-found]
+        conn = sqlite3.connect(db_path)
+        try:
+            keyed = ensure_keys(conn)
+            conn.commit()
+            if keyed:
+                print(f"[shell-keys] startup: keyed {len(keyed)} shell(s) — "
+                      f"{', '.join(keyed)}", flush=True)
+            else:
+                print("[shell-keys] startup: every shell already keyed", flush=True)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[shell-keys] startup FAILED: {e!r}", flush=True)
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))
+
+
 # ── Cloud model catalog sync on startup ──────────────────────────────────────
 # Refresh the `models` rows for provider='ollama_cloud' from Ollama Cloud's
 # anonymous /api/tags on every API restart. Best-effort: a network failure
