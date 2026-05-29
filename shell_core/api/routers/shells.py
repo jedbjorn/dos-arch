@@ -20,6 +20,29 @@ _DOWNLOAD_DIALECTS = ("anthropic", "openai", "parsed")
 
 router = APIRouter(tags=["shells"])
 
+
+def _ensure_shared_dirs(shell_id: int, shortname: str) -> None:
+    """Create the shell's host-side scratch tree at creation.
+
+    The launcher (run.py) used to re-ensure this on every boot, so a shell
+    made via POST /shells always had its tree before first use. The API-system
+    cutover removed run.py, leaving only db_init (Forge + Sys-Admin) calling
+    ensure_shared_dirs — so API-created shells got no tree and the `shared`
+    tool returned not_found. This restores the guarantee at the creation point.
+
+    scripts/ is not a package; import it via a scoped sys.path insert, the same
+    pattern api/main.py's startup hooks use for dr_sync."""
+    import sys as _sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    _sys.path.insert(0, str(scripts_dir))
+    try:
+        from shared_dirs import ensure_shared_dirs  # type: ignore[import-not-found]
+        ensure_shared_dirs(shell_id, shortname)
+    finally:
+        if str(scripts_dir) in _sys.path:
+            _sys.path.remove(str(scripts_dir))
+
 # Warn / auto-clear thresholds as a fraction of the session model's context
 # window — a fixed token count cannot fit every model. A model with no
 # context_window recorded falls back to DEFAULT_CONTEXT_WINDOW.
@@ -93,6 +116,11 @@ def create_shell(request: Request, body: CreateShellBody, con = Depends(get_db))
     )
     # Tools need no per-shell grant — general tools are universal, and a
     # skill-bound tool comes with its skill (attached above).
+
+    # Host-side scratch tree (~/dos-arch-shared/<NN>-<shortname>/). Before
+    # commit so a mkdir failure rolls back the shell row rather than leaving
+    # one with no tree — the gap run.py used to cover (see _ensure_shared_dirs).
+    _ensure_shared_dirs(new_id, short)
     con.commit()
     return {"shell_id": new_id, "shortname": short, "skills_attached": len(skill_ids)}
 

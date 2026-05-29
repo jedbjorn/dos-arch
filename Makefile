@@ -3,7 +3,7 @@ DB   := $(CORE)/shell_db.db
 SCHEMA := $(CORE)/schema.sql
 BACKUP_DIR := $(HOME)/db_backups/dos-arch
 
-.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models sync-cloud-models sync-remote-models up down restart status logs health create-user gen-api-key dispatch
+.PHONY: help install bootstrap migrate db-backup db-sync catalogue collect-hardware sync-models sync-cloud-models sync-remote-models up down restart deploy status logs health create-user gen-api-key dispatch
 
 help:
 	@echo "shell-infra — host-level substrate (API system; shells run via the dispatcher, not a terminal)"
@@ -23,6 +23,7 @@ help:
 	@echo "  make up                  pm2 start the API, UI, dispatcher + model-sync; only the broker is a container"
 	@echo "  make down                pm2 delete the API, UI, dispatcher + model-sync"
 	@echo "  make restart             pm2 restart the API, UI, dispatcher + model-sync"
+	@echo "  make deploy              migrate (with snapshot) then restart — the post-merge/redeploy ritual"
 	@echo "  make status              pm2 ls"
 	@echo "  make logs                pm2 logs (Ctrl-C to detach)"
 	@echo "  make health              curl http://127.0.0.1:8001/health"
@@ -84,6 +85,18 @@ down:
 
 restart:
 	@pm2 restart ecosystem.config.cjs
+
+# deploy — the post-merge / redeploy ritual: apply pending migrations (with the
+# pre-migration snapshot migrate.py takes), THEN restart the host apps with a
+# fresh env. Closes the gap left when api-up.sh's auto-migrate-on-recompose was
+# removed in the API-system cutover (CC-100 pt6): migrated + merged are not
+# deployed. NOTE: pm2 restart re-execs scripts and re-reads env, but does NOT
+# re-read changed ecosystem args — for a bind/port/args change use 'make down
+# && make up'.
+deploy:
+	@python3 $(CORE)/scripts/migrate.py
+	@pm2 restart ecosystem.config.cjs --update-env
+	@echo "Deployed — migrations applied + apps restarted. Verify: make health"
 
 status:
 	@pm2 ls
