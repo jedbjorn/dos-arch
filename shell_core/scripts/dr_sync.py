@@ -648,7 +648,7 @@ _FILEPATH_ENTRIES = [
     ("ecosystem",     ROOT / "ecosystem.config.cjs",                     "file", "pm2 process map — api/ui/dispatcher/model-sync host apps (api on 8001, ui on 5174)"),
     ("makefile",      ROOT / "Makefile",                                 "file", "Entry points: install, bootstrap, migrate, db-sync, db-backup, up/down/restart"),
     ("backups",       Path.home() / "db_backups" / "dos-arch",           "dir",  "DB snapshots — make db-backup + pre-migration snapshots from migrate.py"),
-    ("shared",        Path.home() / "shared",                            "dir",  "Per-shell scratch dirs (ensured by db_init for Forge/Sys-Admin)"),
+    ("shared",        Path.home() / "dos-arch-shared",                   "dir",  "Per-shell scratch dirs — ensured at creation (db_init for Forge/Sys-Admin, create_shell for API shells)"),
     ("global_claude", Path.home() / ".claude" / "CLAUDE.md",             "file", "Harness-injected universal preamble — laws, system override, shell selection"),
 ]
 

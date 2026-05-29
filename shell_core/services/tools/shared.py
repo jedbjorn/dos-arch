@@ -72,7 +72,8 @@ def handle_inspect(params: dict):
         return ToolError(
             "not_found",
             f"shared dir does not exist: {root} "
-            f"(expected on first `make launch` of this shell)",
+            f"(shells get their tree at creation — this one predates that fix "
+            f"or was made out-of-band)",
         )
 
     payload = {

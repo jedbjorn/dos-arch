@@ -38,11 +38,12 @@ module.exports = {
       summary: 'Substrate API (FastAPI/uvicorn) — memory + admin surface on 127.0.0.1:8001',
       cwd: path.join(__dirname, 'shell_core'),
       script: path.join(__dirname, '.venv/bin/uvicorn'),
-      // Bind 0.0.0.0 (not just loopback) so terminal-shell containers on
-      // dos-net can reach it via host.docker.internal:8001 (run.py adds
-      // --add-host=host.docker.internal:host-gateway). The substrate posture
-      // is single-operator + host firewall — keep 8001 off any public iface.
-      args: 'api.main:app --host 0.0.0.0 --port 8001',
+      // Bind loopback only. The 0.0.0.0 bind existed so terminal-shell
+      // containers on dos-net could reach the API via host.docker.internal —
+      // but that machinery (run.py, per-shell containers) was removed in the
+      // API-system cutover (CC-095/096). The only caller left is the
+      // dispatcher, on 127.0.0.1:8001. No reason to expose any other iface.
+      args: 'api.main:app --host 127.0.0.1 --port 8001',
       interpreter: 'none',
       // BROKER_BASE: startup model-sync hooks egress through the broker, like
       // the dispatcher. PYTHONPATH so `api.main:app` imports from shell_core.
