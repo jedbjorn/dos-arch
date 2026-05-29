@@ -93,8 +93,12 @@ METHOD_MAP = {"api_get": "GET", "api_post": "POST", "api_patch": "PATCH", "api_d
 # entries narrow ("one tool, one route"); the generic api_* surface stays
 # the right tool for anything ad-hoc.
 NAMED_API_ROUTES: dict[str, tuple[str, str]] = {
-    "flag.create":  ("POST",  "/flags"),
-    "flag.resolve": ("PATCH", "/flags/{flag_id}/resolve"),
+    "flag.create":     ("POST",  "/flags"),
+    "flag.resolve":    ("PATCH", "/flags/{flag_id}/resolve"),
+    # Content-only writes — no path params; the owner shell is resolved from
+    # the bearer token server-side (CC-101). The model supplies content only.
+    "identity.create": ("POST",  "/identity-entries"),
+    "decision.create": ("POST",  "/decisions"),
 }
 
 # {placeholder} → value substitution for NAMED_API_ROUTES paths. Consumed

@@ -9,7 +9,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from api.common.db import get_db
-from api.common.auth import _require_shell_creator
+from api.common.auth import _require_shell_creator, _caller_shell
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import (
     rerender_boot_document, rerender_shell_sessions, session_start_payload,
@@ -382,8 +382,9 @@ class CreateIdentityEntryBody(BaseModel):
     source_tag: str | None = None
 
 
-@router.post("/shells/{shell_id}/identity-entries", summary="Create a seed or L&S entry (count cap enforced via trigger)")
-def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = Depends(get_db)):
+def _do_create_identity_entry(con, shell_id: int, body: CreateIdentityEntryBody) -> dict:
+    """Shared INSERT path for both the path route and the token-scoped route.
+    shell_id is already resolved by the caller (path param or bearer token)."""
     if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
     if body.kind not in ("seed", "lns"):
@@ -418,6 +419,24 @@ def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = De
         (cur.lastrowid,)
     ).fetchone()
     return dict(row)
+
+
+@router.post("/shells/{shell_id}/identity-entries", summary="Create a seed or L&S entry (count cap enforced via trigger)")
+def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = Depends(get_db)):
+    return _do_create_identity_entry(con, shell_id, body)
+
+
+@router.post("/identity-entries", summary="Create a seed or L&S entry for the calling shell (shell_id from bearer token)")
+def create_identity_entry_self(body: CreateIdentityEntryBody, request: Request, con = Depends(get_db)):
+    """Token-scoped twin of POST /shells/{shell_id}/identity-entries — the
+    owner is inferred from the bearer token (request.state.shell_id), so the
+    named tool's body carries content only, no path math (CC-101). The keyless
+    localhost UI has no caller shell; it uses the path route instead."""
+    shell_id = _caller_shell(request)
+    if shell_id is None:
+        raise HTTPException(422, "POST /identity-entries needs an API-key bearer token; "
+                                 "the keyless UI must use POST /shells/{shell_id}/identity-entries")
+    return _do_create_identity_entry(con, shell_id, body)
 
 
 class UpdateIdentityEntryBody(BaseModel):
@@ -475,15 +494,16 @@ def list_identity_entries(shell_id: int, kind: str = "", include_retired: bool =
 # ── Shell decisions (per-shell decision log) ─────────────────────────────────
 
 class CreateDecisionBody(BaseModel):
-    decision_date:      str
+    decision_date:      str | None = None  # defaults to today server-side when omitted
     priority:           str = "M"
     decision:           str
     rationale:          str | None = None
     parent_decision_id: int | None = None
 
 
-@router.post("/shells/{shell_id}/decisions", summary="Record a major (M) decision")
-def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_db)):
+def _do_create_decision(con, shell_id: int, body: CreateDecisionBody) -> dict:
+    """Shared INSERT path for both the path route and the token-scoped route.
+    shell_id is already resolved by the caller (path param or bearer token)."""
     if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
         raise HTTPException(404, "Shell not found")
     if body.priority not in ("M", "m"):
@@ -496,7 +516,7 @@ def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_d
         VALUES (?, ?, ?, ?, ?, ?)
     """, (
         shell_id,
-        body.decision_date.strip(),
+        (body.decision_date or "").strip() or str(date.today()),
         body.priority,
         body.decision.strip(),
         (body.rationale or "").strip() or None,
@@ -509,6 +529,24 @@ def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_d
         (cur.lastrowid,)
     ).fetchone()
     return dict(row)
+
+
+@router.post("/shells/{shell_id}/decisions", summary="Record a major (M) decision")
+def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_db)):
+    return _do_create_decision(con, shell_id, body)
+
+
+@router.post("/decisions", summary="Record a major (M) decision for the calling shell (shell_id from bearer token)")
+def create_decision_self(body: CreateDecisionBody, request: Request, con = Depends(get_db)):
+    """Token-scoped twin of POST /shells/{shell_id}/decisions — the owner is
+    inferred from the bearer token (request.state.shell_id), so the named tool's
+    body carries content only, no path math (CC-101). The keyless localhost UI
+    has no caller shell; it uses the path route instead."""
+    shell_id = _caller_shell(request)
+    if shell_id is None:
+        raise HTTPException(422, "POST /decisions needs an API-key bearer token; "
+                                 "the keyless UI must use POST /shells/{shell_id}/decisions")
+    return _do_create_decision(con, shell_id, body)
 
 
 @router.get("/shells/{shell_id}/decisions", summary="List + filter decisions for a shell")
