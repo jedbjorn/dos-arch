@@ -11,10 +11,11 @@ environment. Reads are live (TTL-cached), so a rotation through the admin API
 takes effect without a restart.
 
 Egress routes (path prefix -> upstream, auth injected from the store):
-  /anthropic/...   -> https://api.anthropic.com     (x-api-key)
-  /openai/...      -> https://api.openai.com          (Authorization: Bearer)
-  /gh/...          -> https://github.com             (Authorization: Basic)
-  /ghcodeload/...  -> https://codeload.github.com    (Authorization: Basic)
+  /anthropic/...    -> https://api.anthropic.com    (x-api-key)
+  /openai/...       -> https://api.openai.com        (Authorization: Bearer)
+  /ollama_cloud/... -> https://ollama.com           (Authorization: Bearer)
+  /gh/...           -> https://github.com           (Authorization: Basic)
+  /ghcodeload/...   -> https://codeload.github.com  (Authorization: Basic)
 
 Admin API — secret management, gated by BROKER_ADMIN_TOKEN. This is NOT covered
 by the dos-net egress trust: shells can use the egress routes but must not be
@@ -68,6 +69,12 @@ def _inject_openai(headers: dict[str, str], secret: str) -> None:
     headers["authorization"] = "Bearer " + secret
 
 
+def _inject_ollama(headers: dict[str, str], secret: str) -> None:
+    # Ollama Cloud's native /api/chat takes the same Bearer scheme as OpenAI.
+    headers.pop("x-api-key", None)
+    headers["authorization"] = "Bearer " + secret
+
+
 def _inject_github(headers: dict[str, str], secret: str) -> None:
     # git-over-HTTPS Basic auth — username is ignored by GitHub for a PAT,
     # the token is validated as the password.
@@ -77,8 +84,9 @@ def _inject_github(headers: dict[str, str], secret: str) -> None:
 
 # ── route map: prefix -> (upstream base, secret name, injector) ───────────────
 ROUTES: dict[str, tuple] = {
-    "anthropic":  ("https://api.anthropic.com",   "ANTHROPIC_API_KEY", _inject_anthropic),
-    "openai":     ("https://api.openai.com",      "OPENAI_API_KEY",    _inject_openai),
+    "anthropic":    ("https://api.anthropic.com", "ANTHROPIC_API_KEY",    _inject_anthropic),
+    "openai":       ("https://api.openai.com",    "OPENAI_API_KEY",       _inject_openai),
+    "ollama_cloud": ("https://ollama.com",        "OLLAMA_CLOUD_API_KEY", _inject_ollama),
     "gh":         ("https://github.com",          "GITHUB_TOKEN",      _inject_github),
     "ghcodeload": ("https://codeload.github.com", "GITHUB_TOKEN",      _inject_github),
 }

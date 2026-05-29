@@ -86,7 +86,7 @@ sync-cloud-models:
 	@python3 $(CORE)/scripts/cloud_model_sync.py $(ARGS)
 
 sync-remote-models:
-	@python3 $(CORE)/scripts/remote_model_sync.py $(ARGS)
+	@BROKER_BASE=$${BROKER_BASE:-http://127.0.0.1:8788} python3 $(CORE)/scripts/remote_model_sync.py $(ARGS)
 
 up:
 	@pm2 start ecosystem.config.cjs
