@@ -307,7 +307,7 @@ def sync_provider(con: sqlite3.Connection, provider: str) -> tuple[int, int, int
                 last_verified=datetime('now')
             """,
             {"name": name, "display": m["display_name"], "provider": provider,
-             "auth_ref": auth_ref, "dialect": spec["dialect"],
+             "auth_ref": spec["auth_ref"], "dialect": spec["dialect"],
              "ctx": m["context_window"], "source_url": m["source_url"]},
         )
         if prior is None:
