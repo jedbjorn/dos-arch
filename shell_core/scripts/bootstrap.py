@@ -9,7 +9,7 @@ Creates a fresh substrate DB and seeds it to a working state:
   2. seed every skill from assets/skills/
   3. seed Forge (the shared bootstrap shell)
   4. create the first user (interactive — username + password)
-  5. seed the resident admin shell (sys-admin), owned by that user
+  5. seed the resident assistant shell (Exp-Prime), owned by that user
   6. done
 
 Refuses to run if the DB already exists — run `make db-backup` and remove
@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 from db_init import (
-    ROOT, ensure_forge, seed_models, seed_skills, seed_sys_admin, seed_tools,
+    ROOT, ensure_forge, seed_exp_prime, seed_models, seed_skills, seed_tools,
 )
 from create_user import prompt_and_create
 
@@ -75,9 +75,9 @@ def main() -> int:
         user_id = prompt_and_create(con)
         print()
 
-        sa_id, _ = seed_sys_admin(con, user_id)
+        ep_id, _ = seed_exp_prime(con, user_id)
         con.commit()
-        print(f"  seeded Sys-Admin (shell_id={sa_id}, partner=user_id {user_id})")
+        print(f"  seeded Exp-Prime (shell_id={ep_id}, partner=user_id {user_id})")
 
         # Tools after skills — seed_tools scopes each tool to its skill, so
         # the skills must already be seeded (they are, above).

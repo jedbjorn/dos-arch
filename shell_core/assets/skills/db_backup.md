@@ -2,7 +2,7 @@
 name: db_backup
 description: Snapshot the live DB to /db_backups/<project>/ before any structural change.
 category: workflow
-common: 1
+common: 0
 ---
 # db_backup
 
