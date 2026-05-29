@@ -12,9 +12,11 @@ transaction control; the runner wraps each migration in one. The runner:
   4. records it in schema_migrations,
   5. HALTS on the first failure — a half-migrated DB never goes live.
 
-Idempotent: applied migrations are skipped. Wired into install/api-up.sh so
-migrations apply at every recompose; also runnable on demand via
-`make migrate` (or `--status` to preview the pending set without applying).
+Idempotent: applied migrations are skipped. Run via `make migrate` (or
+`--status` to preview the pending set without applying) — setup.sh runs it
+before `make up`. NOTE: with the API now a pm2 host process (no api-up.sh),
+migrations no longer auto-apply on API restart; run `make migrate` as part of
+any deploy/recompose before bouncing the services (see CC-071).
 
 Usage:  python3 shell_core/scripts/migrate.py [--status]
 """

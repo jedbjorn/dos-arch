@@ -3,12 +3,17 @@
 #
 # Run AS THE OPERATOR (your normal login), from anywhere in the repo:
 #
-#   ./install/setup.sh [CLAUDE_VERSION]
+#   ./install/setup.sh
 #
-# Single-user model: rootless Docker, the substrate, and every container run
-# as the operator. There is no service user, no machinectl, no ACLs. The only
-# step that needs root is host-setup.sh; setup.sh sudo's it internally — sudo
-# prompts for YOUR password.
+# dos-arch is an API system: the API, UI, browser-chat dispatcher and
+# model-sync all run as host pm2 processes; the credential broker is the only
+# container (it holds secrets). There are no terminal shells and no per-shell
+# containers — shells are created and operated through the API + dispatcher.
+#
+# Single-user model: rootless Docker, the substrate, and the broker container
+# all run as the operator. There is no service user, no machinectl, no ACLs.
+# The only step that needs root is host-setup.sh; setup.sh sudo's it
+# internally — sudo prompts for YOUR password.
 #
 # Two interactive moments, both up front: the sudo password (step 1) and the
 # first-admin username/password (step 2, `make bootstrap`). Everything after
@@ -16,12 +21,11 @@
 #
 # Precondition — the secrets file must exist (a script cannot author it):
 #   mkdir -p ~/.config/dos-arch
-#   cp .env.example ~/.config/dos-arch/.env   # then fill in the two keys
+#   cp .env.example ~/.config/dos-arch/.env   # then fill in the keys
 #
 # Idempotent — safe to re-run.
 set -euo pipefail
 
-CLAUDE_VERSION="${1:-stable}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${HOME}/.config/dos-arch/.env"
 DB="${REPO_ROOT}/shell_core/shell_db.db"
@@ -47,14 +51,14 @@ echo "    operator : $(id -un)"
 echo "    repo     : ${REPO_ROOT}"
 echo "    sudo will prompt for YOUR password (step 1 only)."
 
-# ── [1/9] host bootstrap (root) ───────────────────────────────────────────────
+# ── [1/8] host bootstrap (root) ───────────────────────────────────────────────
 echo
-echo ">>> [1/9] host-setup.sh — system packages + rootless prerequisites"
+echo ">>> [1/8] host-setup.sh — system packages + rootless prerequisites"
 sudo ./install/host-setup.sh
 
-# ── [2/9] substrate DB + first admin user (interactive) ───────────────────────
+# ── [2/8] substrate DB + first admin user (interactive) ───────────────────────
 echo
-echo ">>> [2/9] make bootstrap — substrate DB + first admin user"
+echo ">>> [2/8] make bootstrap — substrate DB + first admin user"
 if [[ -f "${DB}" ]]; then
   echo "    ${DB} already exists — skipping bootstrap."
   echo "    (to recreate: 'make db-backup', remove the DB, re-run setup.sh)"
@@ -62,43 +66,42 @@ else
   make bootstrap
 fi
 
-# ── [3/9] Python venv + UI deps ───────────────────────────────────────────────
+# ── [3/8] Python venv + UI deps ───────────────────────────────────────────────
 echo
-echo ">>> [3/9] make install — Python venv + UI npm dependencies"
+echo ">>> [3/8] make install — Python venv + UI npm dependencies"
 make install
 
-# ── [4/9] rootless Docker ─────────────────────────────────────────────────────
+# ── [4/8] rootless Docker ─────────────────────────────────────────────────────
 echo
-echo ">>> [4/9] rootless-setup.sh — install + start rootless Docker"
+echo ">>> [4/8] rootless-setup.sh — install + start rootless Docker"
 ./install/rootless-setup.sh
 
-# ── [5/9] build images ────────────────────────────────────────────────────────
+# ── [5/8] build the broker image ──────────────────────────────────────────────
 echo
-echo ">>> [5/9] build-image.sh — dos-shell / dos-broker / dos-api images"
-./install/build-image.sh "${CLAUDE_VERSION}"
+echo ">>> [5/8] build-image.sh — dos-broker image (the only container)"
+./install/build-image.sh
 
-# ── [6/9] credential broker ───────────────────────────────────────────────────
+# ── [6/8] credential broker ───────────────────────────────────────────────────
 echo
-echo ">>> [6/9] broker-up.sh — credential broker container"
+echo ">>> [6/8] broker-up.sh — credential broker container"
 ./install/broker-up.sh
 
-# ── [7/9] substrate API ───────────────────────────────────────────────────────
+# ── [7/8] host services (pm2) ─────────────────────────────────────────────────
+# make up brings up all four host apps: API (uvicorn on 127.0.0.1:8001), UI,
+# browser-chat dispatcher, and model-sync. migrate runs first so the live
+# schema is current before the API + dispatcher open the DB.
 echo
-echo ">>> [7/9] api-up.sh — substrate API container"
-./install/api-up.sh
-
-# ── [8/9] host services ───────────────────────────────────────────────────────
-echo
-echo ">>> [8/9] make up — pm2 starts the UI + browser-chat dispatcher"
+echo ">>> [7/8] make migrate + make up — apply migrations, pm2 starts API/UI/dispatcher/model-sync"
+make migrate
 make up
 
-# ── [9/9] post-install — catalogue cron + hardware/model capture ──────────────
+# ── [8/8] post-install — catalogue cron + hardware/model capture ──────────────
 # Both are cheap and deterministic, so they belong in the install. sync-models
 # probes the host into user_hardware (always works) and reads Ollama's installed
 # set into the models registry (needs Ollama running) — if Ollama is absent the
 # hardware probe still lands and the model read is skipped, never fatal.
 echo
-echo ">>> [9/9] post-install — catalogue cron + hardware/model capture"
+echo ">>> [8/8] post-install — catalogue cron + hardware/model capture"
 ./install/cron-install.sh \
   || echo "    WARNING: cron install failed — run ./install/cron-install.sh by hand"
 make sync-models \
@@ -107,13 +110,15 @@ make sync-models \
 cat <<EOF
 
 === dos-arch substrate ready ===
-  rootless Docker · dos-shell/dos-broker/dos-api images · dos-broker + dos-api
-  containers on dos-net · UI + dispatcher under pm2 · nightly catalogue cron.
+  rootless Docker · dos-broker image · dos-broker container on dos-net ·
+  API + UI + dispatcher + model-sync under pm2 · nightly catalogue cron.
 
-  make launch     auth, pick a shell, boot it into its container
   make health     GET /health
   make status     pm2 process list
+  make logs       pm2 logs
 
-Local models are optional — install Ollama, pull a model, then re-run
-'make sync-models'. See the README for daily commands.
+Shells are created and operated through the API + browser-chat UI
+(http://127.0.0.1:5174), not a terminal. Local models are optional — install
+Ollama, pull a model, then re-run 'make sync-models'. See the README for
+daily commands.
 EOF

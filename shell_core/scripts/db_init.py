@@ -18,8 +18,7 @@ rendered template, skill attachment) an asset file can't carry. Models
 stay an inline literal (`_MODELS`) — a small, stable set.
 
 This module is a library, not a script. The full one-shot entry point is
-`bootstrap.py` (`make bootstrap`). The launcher (`run.py`) imports
-`ensure_forge` and calls it on every boot, so a DB missing Forge self-heals.
+`bootstrap.py` (`make bootstrap`), which calls `ensure_forge` to seed Forge.
 
 All seed functions are INSERT-missing-only — they never UPDATE existing
 rows, so local edits to the live DB survive a re-run. Propagating an
@@ -256,7 +255,6 @@ def ensure_forge(con: sqlite3.Connection) -> tuple[int, bool]:
     """Idempotently seed Forge (the shared bootstrap shell) from
     assets/shells/forge.md. Returns (forge_shell_id, created).
 
-    Also called by `run.py` on every boot — a DB missing Forge self-heals.
     Skills are seeded first so Forge's attachment resolves.
     """
     existing = con.execute(

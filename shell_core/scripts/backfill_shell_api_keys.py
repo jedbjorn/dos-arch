@@ -4,12 +4,13 @@
 Runs after migration 031 to give existing shells a key. Idempotent:
 only fills rows where api_key IS NULL — re-running is a no-op once
 every shell has one. Generates a 32-byte urlsafe token (same shape as
-gen_api_key.py / run.py), writes both `api_key` (plaintext, alpha
+gen_api_key.py), writes both `api_key` (plaintext, alpha
 simplification — see migration 031) and `api_key_hash` (sha256, what
 the auth_passthrough middleware verifies against).
 
-Wired into install/api-up.sh so a recompose lands new shells with keys
-without an extra step. Also runnable standalone.
+Run on demand (api-up.sh removed when the API moved to pm2). New shells
+created via POST /shells get a key at creation; this backfills any older
+rows whose api_key is NULL.
 """
 from __future__ import annotations
 

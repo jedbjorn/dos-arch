@@ -8,14 +8,12 @@ spaces), sortable, and stable — both halves are immutable for the life of the
 shell.
 
 Created host-side. `bootstrap.py` (via `db_init`) makes them when it seeds
-Forge + Sys-Admin; `run.py` re-ensures them at every launch (idempotent), so a
-shell created via `POST /shells` — which runs inside the `dos-api` container,
-with no access to the shared folder — still has its tree before its first
-session.
+Forge + Sys-Admin. dos-arch is an API system (no per-shell containers), so
+these are plain host-side scratch dirs — the browser-chat dispatcher's tools
+reach them directly on the host; there is no container bind-mount.
 
-The host shared folder is bind-mounted into each shell container at
-`/root/shared`, i.e. the container's own `~/shared`. `ensure_shared_dirs`
-operates on the host path; `shared_dir_container_path` returns the path as the
+`ensure_shared_dirs` operates on the host path; `shared_dir_container_path`
+(retained for callers that still ask) returns the path as the
 shell sees it from inside its container.
 """
 from __future__ import annotations

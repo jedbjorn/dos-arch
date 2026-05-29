@@ -1,10 +1,14 @@
 // pm2 process map for the dos-arch substrate — host-level services.
 // Run from the repo root:  pm2 start ecosystem.config.cjs
 //
-// Three apps run here: the SvelteKit UI, the browser-chat dispatcher, and the
-// Ollama model-sync watcher. The credential broker and the substrate API run
-// as their own containers on the dos-net network (dos-broker, dos-api) — see
-// install/broker-up.sh + api-up.sh.
+// Four apps run here: the substrate API, the SvelteKit UI, the browser-chat
+// dispatcher, and the Ollama model-sync watcher. The API moved off Docker to
+// pm2 (was the `dos-api` container) so it shares the host kernel with the
+// other DB writers (dispatch, modelsync): a WAL SQLite file opened directly
+// from BOTH a container and the host produced incoherent -shm wal-index reads
+// and intermittent "database disk image is malformed" (CC-095). Only the
+// credential broker stays containerized (dos-broker, secrets isolation) — see
+// install/broker-up.sh.
 
 const fs   = require('fs');
 const os   = require('os');
@@ -29,6 +33,30 @@ function loadEnv() {
 
 module.exports = {
   apps: [
+    {
+      name: 'dosarch-api',
+      summary: 'Substrate API (FastAPI/uvicorn) — memory + admin surface on 127.0.0.1:8001',
+      cwd: path.join(__dirname, 'shell_core'),
+      script: path.join(__dirname, '.venv/bin/uvicorn'),
+      // Bind 0.0.0.0 (not just loopback) so terminal-shell containers on
+      // dos-net can reach it via host.docker.internal:8001 (run.py adds
+      // --add-host=host.docker.internal:host-gateway). The substrate posture
+      // is single-operator + host firewall — keep 8001 off any public iface.
+      args: 'api.main:app --host 0.0.0.0 --port 8001',
+      interpreter: 'none',
+      // BROKER_BASE: startup model-sync hooks egress through the broker, like
+      // the dispatcher. PYTHONPATH so `api.main:app` imports from shell_core.
+      env: {
+        ...loadEnv(),
+        PYTHONPATH: path.join(__dirname, 'shell_core'),
+        PYTHONUNBUFFERED: '1',
+        BROKER_BASE: 'http://127.0.0.1:8788',
+      },
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 2000,
+      kill_timeout: 5000,
+    },
     {
       name: 'dosarch-ui',
       summary: 'SvelteKit substrate UI — /shells, /flags, /plans routes on 127.0.0.1:5174',
