@@ -1,0 +1,5 @@
+# Dev / test dependencies (not installed in the runtime image).
+#   .venv/bin/pip install -r shell_core/requirements-dev.txt
+# httpx + starlette.testclient are already pulled in transitively by the app.
+-r requirements.txt
+pytest==8.3.4

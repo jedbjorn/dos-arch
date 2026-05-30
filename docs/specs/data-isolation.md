@@ -55,14 +55,14 @@ description: Never 403 — that confirms existence
 ## Status
 
 > [!class1]
-> Living specification. 2026-05-30. **Flags + user-private surfaces built**
-> (the two reference patterns); **the dispatcher's domain reads and the CI
-> acceptance suite are the remaining work.** Tracked on CC-108. Source of truth
-> for *who is the caller* is `auth-provisioning.md`; this spec owns *what they
-> may see*.
+> Living specification. 2026-05-31. **Flags + user-private surfaces built, and
+> the CI acceptance harness now exists** (`tests/`, 21 passing). Remaining: the
+> dispatcher's domain reads and per-surface CI coverage for the domain routers
+> as they land. Tracked on CC-108. Source of truth for *who is the caller* is
+> `auth-provisioning.md`; this spec owns *what they may see*.
 
 ```linear
-Flags built :::class3 -> User-private :::class3 -> Dispatcher :::class1 -> CI suite :::class2 -> NOT NULL :::class4
+Flags built :::class3 -> User-private :::class3 -> CI harness :::class3 -> Domain :::class1 -> NOT NULL :::class4
 ```
 
 - ✅ **Project spine** — `flags` gained `project_id` / `created_by_user_id` /
@@ -84,8 +84,13 @@ Flags built :::class3 -> User-private :::class3 -> Dispatcher :::class1 -> CI su
   shell's own key (so shell-private calls are gated), but its *domain* reads
   (contacts/emails/events) must resolve the message-owner's `user_id` once those
   routers exist. Tracked with step 4.
-- ⏳ **CI isolation suite** — the executable acceptance gate; **no pytest
-  harness exists in the repo yet**, so this is its own setup task.
+- ✅ **CI isolation harness** — stood up at `tests/` (pytest; `pytest.ini`
+  `pythonpath=shell_core`). `conftest.py` builds a throwaway DB from `schema.sql`
+  + post-059 migrations and seeds **two tenants** (Alice/Bob) + a shared shell;
+  `test_isolation.py` asserts cross-tenant 404 / owner-200 across the
+  user-private surfaces, shared-card private-column nulling, the broker-keys
+  admin gate, and the flags membership layer. **21 passing.** Domain-router
+  coverage extends it as those routers land.
 - ⏳ **`project_id NOT NULL`** — enforced app-layer (422); the physical column
   constraint is a deferred table-rebuild migration.
 
@@ -308,8 +313,10 @@ safe and an unscoped query is the thing you have to go out of your way to write.
 
 ## Acceptance gate
 
-The spec's teeth: an **executable CI suite**, not a prose promise. No pytest
-harness exists in the repo yet, so standing one up is part of this work.
+The spec's teeth: an **executable CI suite**, not a prose promise — now stood up
+at `tests/` (pytest). `conftest.py` builds a throwaway DB from `schema.sql` +
+post-059 migrations and seeds two tenants + a shared shell; `test_isolation.py`
+holds the cases below. **21 passing.** Run it with `.venv/bin/python -m pytest`.
 
 > [!class1]
 > **The invariant, stated formally.** Authenticated as user A, no API path,
@@ -342,18 +349,20 @@ authenticated as B:
 ## Build order
 
 ```linear
-User-private :::class1 -> Dispatcher :::class2 -> CI suite :::class3 -> Domain :::class2 -> NOT NULL :::class4
+User-private :::class3 -> CI harness :::class3 -> Dispatcher :::class1 -> Domain :::class2 -> NOT NULL :::class4
 ```
 
 1. ✅ **User-private surfaces** — highest-risk, leaks substance not metadata.
    `shells.py` (identity / decisions / archives / chat / sessions /
    `current_state`) owner-gated by `shells.user_id` via `_require_shell_owner`;
    `keys.py` made admin-only. The `get_shell` card nulls private columns for
-   non-owners. Verified live; no CI suite yet (step 3).
-2. **Dispatcher** — route it through the shared tenant accessors; resolve the
-   message-owner's `user_id`. Closes the off-HTTP gap.
-3. **CI isolation suite** — stand up pytest; encode the acceptance gate;
-   backfill a red/green test per built surface (flags included, retroactively).
+   non-owners. Verified live + in CI.
+2. ✅ **CI isolation harness** — pytest at `tests/`; two-tenant fixture; red/green
+   per built surface (user-private + flags). Domain surfaces extend it as they
+   land.
+3. **Dispatcher** — route its *domain* reads through the shared tenant accessors;
+   resolve the message-owner's `user_id`. (Shell-private calls already gated —
+   it carries each shell's own key.)
 4. **Domain routers** — contacts / emails / events / notes as they land, each
    project-membership-scoped, preserving compartmentalization. Resolve the
    `notes` parked review here.

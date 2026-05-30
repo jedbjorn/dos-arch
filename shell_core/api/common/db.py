@@ -4,7 +4,12 @@ import sqlite3
 from datetime import date
 from fastapi import HTTPException
 
-DB = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'shell_db.db'))
+# Default to the substrate DB beside shell_core/. `SHELL_DB_PATH` overrides it —
+# used by the isolation test suite to point the whole app (including the
+# middleware's direct db() calls) at a throwaway per-run DB. Resolved at import;
+# the env is fixed per process.
+DB = os.environ.get("SHELL_DB_PATH") or os.path.abspath(
+    os.path.join(os.path.dirname(__file__), '..', '..', 'shell_db.db'))
 
 
 def db():
