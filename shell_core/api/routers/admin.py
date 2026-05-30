@@ -1,13 +1,106 @@
-"""Admin operations — shell assignment, skill attachment, browser-chat targeting, catalogue-sync health."""
+"""Admin operations — user + shell management, skill/tool attachment, browser-chat targeting, catalogue-sync health."""
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
+import hashlib
 import json
+import re
+import secrets
 import sqlite3
 
 from api.common.db import get_db
 from api.common.auth import _require_admin
+from api.common import broker
 
 router = APIRouter(tags=["admin"])
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EXP_PRIME_SHORT = "exprime"
+
+
+def _mint_exp_shell(con: sqlite3.Connection, user_id: int) -> dict:
+    """Mint an assistant shell (Exp-NN) for a new user — a clone of Exp-Prime's
+    base (role/mandate + skill/tool grants); identity (seed/L&S/memory) starts
+    blank. The full template-sync model is deferred (flag CC-106 era); this
+    copies the current grants by value so the new shell boots with Prime's kit."""
+    rows = con.execute("SELECT display_name FROM shells WHERE display_name LIKE 'Exp-%'").fetchall()
+    nums = [int(m.group(1)) for r in rows
+            if (m := re.match(r"Exp-(\d+)$", r["display_name"] or ""))]
+    n = (max(nums) + 1) if nums else 1
+    display, short = f"Exp-{n}", f"exp{n}"
+
+    prime = con.execute(
+        "SELECT shell_id, role, mandate FROM shells WHERE shortname=?",
+        (_EXP_PRIME_SHORT,)).fetchone()
+    role = prime["role"] if prime else None
+    mandate = prime["mandate"] if prime else None
+
+    api_key = secrets.token_urlsafe(32)
+    api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    cur = con.execute(
+        "INSERT INTO shells (display_name, shortname, role, mandate, user_id, "
+        "browser_chat, is_shared, is_admin, api_auth, api_key, api_key_hash) "
+        "VALUES (?, ?, ?, ?, ?, 1, 0, 0, 1, ?, ?)",
+        (display, short, role, mandate, user_id, api_key, api_key_hash),
+    )
+    new_id = cur.lastrowid
+    if prime:
+        con.execute(
+            "INSERT OR IGNORE INTO shell_skills (shell_id, skill_id) "
+            "SELECT ?, skill_id FROM shell_skills WHERE shell_id=?",
+            (new_id, prime["shell_id"]))
+        con.execute(
+            "INSERT OR IGNORE INTO shell_tools (shell_id, tool_id) "
+            "SELECT ?, tool_id FROM skill_tools "
+            "WHERE skill_id IN (SELECT skill_id FROM shell_skills WHERE shell_id=?)",
+            (new_id, new_id))
+    return {"shell_id": new_id, "display_name": display, "shortname": short}
+
+
+class CreateUserBody(BaseModel):
+    email:    str
+    is_admin: int = 0
+
+
+@router.post("/admin/users", summary="Admin: create a user (broker auth_user + app row + Exp-NN). Returns the one-time password.")
+def admin_create_user(request: Request, body: CreateUserBody, con=Depends(get_db)):
+    _require_admin(request)
+    email = body.email.strip()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(422, "A valid email is required (it is the login identifier).")
+    if con.execute("SELECT 1 FROM users WHERE email=? COLLATE NOCASE", (email,)).fetchone():
+        raise HTTPException(409, "A user with that email already exists.")
+
+    # 1) broker creates the credential record (random password, returned once).
+    bstat, bres = broker.post("/admin/auth/users", {"email": email})
+    if bstat == 409:
+        raise HTTPException(409, "Those credentials already exist in the auth backend.")
+    if bstat != 200 or "account_id" not in bres:
+        raise HTTPException(502, "Auth backend failed to create the user.")
+    account_id, password = bres["account_id"], bres["password"]
+
+    # 2) app relational row, related by account_id (no cross-DB FK).
+    try:
+        cur = con.execute(
+            "INSERT INTO users (username, email, account_id, is_admin, is_active) "
+            "VALUES (?, ?, ?, ?, 1)",
+            (email, email, account_id, 1 if body.is_admin else 0))
+        user_id = cur.lastrowid
+        # 3) auto-mint the user's assistant shell.
+        shell = _mint_exp_shell(con, user_id)
+        con.execute(
+            "INSERT INTO auth_events (user_id, account_id, email, kind, detail) "
+            "VALUES (?, ?, ?, 'user_create', ?)",
+            (user_id, account_id, email, shell["shortname"]))
+        con.commit()
+    except Exception:
+        con.rollback()
+        # The broker auth_user is now an orphan (no app-side delete-user yet);
+        # acceptable at invite-only scale — re-running with the same email 409s
+        # and an operator can reconcile. Surfaced rather than silently swallowed.
+        raise HTTPException(500, "User creation failed after the credential was provisioned; reconcile the auth backend.")
+
+    return {"user_id": user_id, "email": email, "account_id": account_id,
+            "password": password, "is_admin": bool(body.is_admin), "shell": shell}
 
 
 @router.get("/admin/shells", summary="Admin: list all shells with assigned user, skills, and tokens")

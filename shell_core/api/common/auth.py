@@ -15,13 +15,17 @@ def _caller_shell(request: Request) -> int | None:
 
 
 def _require_admin(request: Request) -> None:
-    """Admin-only ops. Allowed for the keyless localhost UI, and for an
-    API-key caller whose shell is flagged `is_admin=1` (Sys-Admin). Every
-    other API-key caller — the worker shells — is refused."""
-    if _caller_shell(request) is None:
-        return  # the localhost UI
-    if not getattr(request.state, "shell_is_admin", False):
-        raise HTTPException(403, "This shell is not an admin shell.")
+    """Admin-only ops. An API-key caller must be an admin shell (is_admin=1).
+    Otherwise the caller is a user session (or, in Phase 1, the legacy keyless
+    UI): require `is_admin`, which the middleware resolves from the session user
+    — a logged-in non-admin is refused. (The legacy keyless default is is_admin
+    =True until Phase 2 flips the keyless case to unauthenticated.)"""
+    if _caller_shell(request) is not None:
+        if not getattr(request.state, "shell_is_admin", False):
+            raise HTTPException(403, "This shell is not an admin shell.")
+        return
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403, "Admin only.")
 
 
 def _require_shell_creator(request: Request, con) -> None:

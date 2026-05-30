@@ -39,6 +39,7 @@ from __future__ import annotations
 import base64
 import hmac
 import os
+import sqlite3
 
 import httpx
 from starlette.applications import Starlette
@@ -47,6 +48,7 @@ from starlette.responses import (JSONResponse, PlainTextResponse, Response,
                                   StreamingResponse)
 from starlette.routing import Route
 
+import auth_store
 import secrets_store
 
 # Hop-by-hop / recomputed headers — never forwarded verbatim.
@@ -204,6 +206,123 @@ async def _admin_delete(request: Request) -> Response:
     return JSONResponse({"deleted": name, "existed": cur.rowcount > 0})
 
 
+# ── auth API (the broker as IdP) ──────────────────────────────────────────────
+# Same BROKER_ADMIN_TOKEN gate as the secret admin API: only the substrate API
+# holds the token, so shells (which can use the egress routes) cannot reach auth.
+
+async def _auth_body(request: Request) -> dict:
+    try:
+        return await request.json() or {}
+    except Exception:
+        return {}
+
+
+async def _auth_create_user(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    body = await _auth_body(request)
+    email = (body.get("email") or "").strip()
+    if not email:
+        return JSONResponse({"detail": "email required"}, 400)
+    con = auth_store.connect()
+    try:
+        out = auth_store.create_user(
+            con, email, password=body.get("password"), account_id=body.get("account_id"))
+    except sqlite3.IntegrityError:
+        return JSONResponse({"detail": "email already registered"}, 409)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, 400)
+    finally:
+        con.close()
+    return JSONResponse(out)
+
+
+async def _auth_verify(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    body = await _auth_body(request)
+    ident, password = (body.get("ident") or "").strip(), body.get("password") or ""
+    con = auth_store.connect()
+    try:
+        res = auth_store.verify_password(con, ident, password)
+    finally:
+        con.close()
+    if res is None:
+        return JSONResponse({"ok": False}, 200)
+    return JSONResponse({"ok": True, **res})
+
+
+async def _auth_set_password(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    body = await _auth_body(request)
+    account_id, password = body.get("account_id"), body.get("password")
+    if not account_id or not password:
+        return JSONResponse({"detail": "account_id + password required"}, 400)
+    con = auth_store.connect()
+    try:
+        ok = auth_store.set_password(con, account_id, password)
+    finally:
+        con.close()
+    return JSONResponse({"ok": ok}, 200 if ok else 404)
+
+
+async def _auth_totp_begin(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    account_id = (await _auth_body(request)).get("account_id")
+    if not account_id:
+        return JSONResponse({"detail": "account_id required"}, 400)
+    con = auth_store.connect()
+    try:
+        out = auth_store.totp_enroll_begin(con, account_id)
+    except KeyError:
+        return JSONResponse({"detail": "no such account"}, 404)
+    except ValueError:
+        return JSONResponse({"detail": "already enrolled"}, 409)
+    finally:
+        con.close()
+    return JSONResponse(out)
+
+
+async def _auth_totp_confirm(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    body = await _auth_body(request)
+    con = auth_store.connect()
+    try:
+        ok = auth_store.totp_enroll_confirm(con, body.get("account_id"), body.get("code") or "")
+    finally:
+        con.close()
+    return JSONResponse({"ok": ok}, 200 if ok else 401)
+
+
+async def _auth_totp_verify(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    body = await _auth_body(request)
+    con = auth_store.connect()
+    try:
+        ok = auth_store.totp_verify(con, body.get("account_id"), body.get("code") or "")
+    finally:
+        con.close()
+    return JSONResponse({"ok": ok}, 200 if ok else 401)
+
+
+async def _auth_reset_totp(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    account_id = (await _auth_body(request)).get("account_id")
+    if not account_id:
+        return JSONResponse({"detail": "account_id required"}, 400)
+    con = auth_store.connect()
+    try:
+        ok = auth_store.reset_totp(con, account_id)
+    finally:
+        con.close()
+    return JSONResponse({"ok": ok}, 200 if ok else 404)
+
+
 async def _health(request: Request) -> Response:
     con = secrets_store.connect()
     try:
@@ -226,6 +345,13 @@ app = Starlette(routes=[
     Route("/admin/secrets", _admin_list, methods=["GET"]),
     Route("/admin/secrets/{name}", _admin_set, methods=["PUT"]),
     Route("/admin/secrets/{name}", _admin_delete, methods=["DELETE"]),
+    Route("/admin/auth/users", _auth_create_user, methods=["POST"]),
+    Route("/admin/auth/verify", _auth_verify, methods=["POST"]),
+    Route("/admin/auth/set-password", _auth_set_password, methods=["POST"]),
+    Route("/admin/auth/totp/enroll-begin", _auth_totp_begin, methods=["POST"]),
+    Route("/admin/auth/totp/enroll-confirm", _auth_totp_confirm, methods=["POST"]),
+    Route("/admin/auth/totp/verify", _auth_totp_verify, methods=["POST"]),
+    Route("/admin/auth/reset-totp", _auth_reset_totp, methods=["POST"]),
     Route("/{prefix}/{rest:path}", _proxy,
           methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),
 ])
