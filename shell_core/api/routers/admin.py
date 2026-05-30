@@ -103,6 +103,45 @@ def admin_create_user(request: Request, body: CreateUserBody, con=Depends(get_db
             "password": password, "is_admin": bool(body.is_admin), "shell": shell}
 
 
+@router.get("/admin/users/full", summary="Admin: full user directory (email, admin, TOTP, shell count)")
+def admin_list_users(request: Request, con=Depends(get_db)):
+    _require_admin(request)
+    rows = con.execute(
+        """SELECT u.user_id, u.username, u.email, u.is_admin, u.is_active,
+                  (u.account_id IS NOT NULL)    AS provisioned,
+                  (u.totp_enrolled_at IS NOT NULL) AS totp_enrolled,
+                  (SELECT COUNT(*) FROM shells s WHERE s.user_id = u.user_id) AS shell_count
+           FROM users u ORDER BY u.user_id"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+class SetAdminBody(BaseModel):
+    is_admin: int
+
+
+@router.patch("/admin/users/{user_id}/admin", summary="Admin: grant/revoke a user's admin flag (last-admin guarded)")
+def admin_set_user_admin(request: Request, user_id: int, body: SetAdminBody, con=Depends(get_db)):
+    _require_admin(request)
+    row = con.execute("SELECT is_admin FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    new_val = 1 if body.is_admin else 0
+    if row["is_admin"] and not new_val:
+        # Lockout guard: never clear the last remaining (active) admin.
+        others = con.execute(
+            "SELECT COUNT(*) FROM users WHERE is_admin=1 AND is_active=1 AND user_id!=?",
+            (user_id,)).fetchone()[0]
+        if others == 0:
+            raise HTTPException(409, "Cannot remove the last admin.")
+    con.execute("UPDATE users SET is_admin=? WHERE user_id=?", (new_val, user_id))
+    con.execute(
+        "INSERT INTO auth_events (user_id, kind, detail) VALUES (?, 'admin_toggle', ?)",
+        (user_id, f"is_admin={new_val}"))
+    con.commit()
+    return {"user_id": user_id, "is_admin": bool(new_val)}
+
+
 @router.get("/admin/shells", summary="Admin: list all shells with assigned user, skills, and tokens")
 def admin_get_shells(request: Request, con = Depends(get_db)):
     _require_admin(request)

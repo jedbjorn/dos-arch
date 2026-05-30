@@ -1,11 +1,13 @@
 <script>
   // App header — route tabs sit on a translucent glass strip; active tab
   // gets a 2px accent underline via the shared .active-tab class.
+  import { onMount } from 'svelte'
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
+  import { getMe } from '$lib/api.js'
   import SideDrawer from './SideDrawer.svelte'
 
-  const TABS = [
+  const BASE_TABS = [
     { label: 'Workspace', href: '/workspace' },
     { label: 'Projects',  href: '/projects'  },
     { label: 'Flags',     href: '/flags'     },
@@ -13,6 +15,11 @@
     { label: 'Contacts',  href: '/contacts'  },
     { label: 'Calendar',  href: '/calendar'  },
   ]
+
+  // The Admin tab shows only for admins (the /admin page + API enforce too).
+  let me = $state(null)
+  onMount(async () => { try { me = await getMe() } catch {} })
+  const TABS = $derived(me?.is_admin ? [...BASE_TABS, { label: 'Admin', href: '/admin' }] : BASE_TABS)
 
   function isActive(href) { return $page.url.pathname.startsWith(href) }
 
