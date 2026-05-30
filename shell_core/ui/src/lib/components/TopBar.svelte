@@ -43,7 +43,6 @@
       <line x1="3" y1="11" x2="13" y2="11" />
     </svg>
   </button>
-  <span class="text-sm font-medium text-white tracking-tight mr-6">shell-infra</span>
   <nav class="flex items-center gap-1">
     {#each TABS as tab}
       {@const active = isActive(tab.href)}

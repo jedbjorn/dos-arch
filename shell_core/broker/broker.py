@@ -267,6 +267,22 @@ async def _auth_set_password(request: Request) -> Response:
     return JSONResponse({"ok": ok}, 200 if ok else 404)
 
 
+async def _auth_rotate_password(request: Request) -> Response:
+    if (err := _admin_guard(request)) is not None:
+        return err
+    account_id = (await _auth_body(request)).get("account_id")
+    if not account_id:
+        return JSONResponse({"detail": "account_id required"}, 400)
+    con = auth_store.connect()
+    try:
+        out = auth_store.rotate_password(con, account_id)
+    finally:
+        con.close()
+    if out is None:
+        return JSONResponse({"detail": "no such account"}, 404)
+    return JSONResponse(out)
+
+
 async def _auth_totp_begin(request: Request) -> Response:
     if (err := _admin_guard(request)) is not None:
         return err
@@ -348,6 +364,7 @@ app = Starlette(routes=[
     Route("/admin/auth/users", _auth_create_user, methods=["POST"]),
     Route("/admin/auth/verify", _auth_verify, methods=["POST"]),
     Route("/admin/auth/set-password", _auth_set_password, methods=["POST"]),
+    Route("/admin/auth/rotate-password", _auth_rotate_password, methods=["POST"]),
     Route("/admin/auth/totp/enroll-begin", _auth_totp_begin, methods=["POST"]),
     Route("/admin/auth/totp/enroll-confirm", _auth_totp_confirm, methods=["POST"]),
     Route("/admin/auth/totp/verify", _auth_totp_verify, methods=["POST"]),
