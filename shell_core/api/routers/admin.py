@@ -107,7 +107,7 @@ def admin_create_user(request: Request, body: CreateUserBody, con=Depends(get_db
 def admin_list_users(request: Request, con=Depends(get_db)):
     _require_admin(request)
     rows = con.execute(
-        """SELECT u.user_id, u.username, u.email, u.is_admin, u.is_active,
+        """SELECT u.user_id, u.username, u.email, u.initials, u.is_admin, u.is_active,
                   (u.account_id IS NOT NULL)    AS provisioned,
                   (u.totp_enrolled_at IS NOT NULL) AS totp_enrolled,
                   (SELECT COUNT(*) FROM shells s WHERE s.user_id = u.user_id) AS shell_count
@@ -140,6 +140,29 @@ def admin_set_user_admin(request: Request, user_id: int, body: SetAdminBody, con
         (user_id, f"is_admin={new_val}"))
     con.commit()
     return {"user_id": user_id, "is_admin": bool(new_val)}
+
+
+@router.post("/admin/users/{user_id}/rotate-password", summary="Admin: rotate a user's login password. Returns the new one-time password.")
+def admin_rotate_user_password(request: Request, user_id: int, con=Depends(get_db)):
+    _require_admin(request)
+    row = con.execute("SELECT account_id, email FROM users WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    if not row["account_id"]:
+        raise HTTPException(409, "User has no provisioned credential to rotate.")
+    # The broker (credential authority) mints + hashes the new password and
+    # returns the plaintext once; the app never sees or stores password material.
+    bstat, bres = broker.post("/admin/auth/rotate-password", {"account_id": row["account_id"]})
+    if bstat == 404:
+        raise HTTPException(502, "Auth backend has no matching credential for this user.")
+    if bstat != 200 or "password" not in bres:
+        raise HTTPException(502, "Auth backend failed to rotate the password.")
+    con.execute(
+        "INSERT INTO auth_events (user_id, account_id, email, kind, detail) "
+        "VALUES (?, ?, ?, 'password_rotate', 'admin')",
+        (user_id, row["account_id"], row["email"]))
+    con.commit()
+    return {"user_id": user_id, "email": row["email"], "password": bres["password"]}
 
 
 @router.get("/admin/shells", summary="Admin: list all shells with assigned user, skills, and tokens")

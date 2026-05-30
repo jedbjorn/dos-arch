@@ -182,6 +182,17 @@ def set_password(con: sqlite3.Connection, account_id: str, password: str) -> boo
     return cur.rowcount > 0
 
 
+def rotate_password(con: sqlite3.Connection, account_id: str) -> dict | None:
+    """Mint a fresh random password for an existing account and store its hash.
+    Returns {account_id, password} — the plaintext is returned ONCE — or None if
+    no such account. Same contract as create_user; the broker owns password
+    generation so the alphabet/length stay consistent."""
+    password = gen_password()
+    if not set_password(con, account_id, password):
+        return None
+    return {"account_id": account_id, "password": password}
+
+
 # ── TOTP ──────────────────────────────────────────────────────────────────────
 
 def _rate_ok(account_id: str) -> bool:
