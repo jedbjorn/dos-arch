@@ -105,6 +105,35 @@ def _log_event(con, request: Request, project_id, flag_id: int, action: str) -> 
     )
 
 
+# ── Visibility (CC-108 isolation) ─────────────────────────────────────────────
+# A flag is visible iff the caller is a member of its project AND (it is a team
+# flag OR the caller raised it). This single predicate is the whole access
+# model: project-team scope plus the per-flag privacy bit. user_id is None for
+# an unauthenticated caller — the membership subquery is then empty and the
+# created_by comparison is NULL, so the predicate matches nothing (closed by
+# default). Returned as (clause, params) so it composes into any flags query.
+def _visibility_sql(request: Request, alias: str = "f") -> tuple[str, list]:
+    uid = getattr(request.state, "user_id", None)
+    clause = (
+        f"{alias}.project_id IN "
+        f"(SELECT project_id FROM user_projects WHERE user_id = ? AND is_deleted = 0) "
+        f"AND ({alias}.team_flag = 1 OR {alias}.created_by_user_id = ?)"
+    )
+    return clause, [uid, uid]
+
+
+def _visible_row(con, request: Request, flag_id: int, cols: str = "1"):
+    """The flag row (selected cols) iff it exists, is live, AND is visible to the
+    caller — else None. Mutations use this so 'not yours' is indistinguishable
+    from 'not found' (404, never 403 — a 403 would confirm the row exists)."""
+    clause, params = _visibility_sql(request)
+    return con.execute(
+        f"SELECT {cols} FROM flags f "
+        f"WHERE f.flag_id = ? AND f.is_deleted = 0 AND {clause}",
+        [flag_id, *params],
+    ).fetchone()
+
+
 class FlagBody(BaseModel):
     display_name:   str = Field(max_length=250)
     description:    str = ""
@@ -187,6 +216,19 @@ def create_flag(body: FlagBody, request: Request, con = Depends(get_db)):
     # otherwise the caller's sole membership. shell_id is provenance only.
     user_id    = getattr(request.state, "user_id", None)
     project_id = body.project_id if body.project_id is not None else _default_project(con, user_id)
+    # A flag must belong to a project the caller is a member of. project_id is
+    # required (the spine); enforced here at the app layer with a clear 422
+    # rather than a NOT NULL surprise (the physical NOT NULL is a later, isolated
+    # migration). Membership is asserted so a caller can't file into another
+    # tenant's project (404, not 403 — don't confirm the project exists).
+    if project_id is None:
+        raise HTTPException(
+            422, "project_id is required — you belong to no project, or to several; name one.")
+    if not con.execute(
+        "SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ? AND is_deleted = 0",
+        (user_id, project_id),
+    ).fetchone():
+        raise HTTPException(404, "Project not found")
     con.execute("""
         INSERT INTO flags (display_name, priority, description,
                            start_date, parent_flag_id, estimated_days,
@@ -215,7 +257,7 @@ def create_flag(body: FlagBody, request: Request, con = Depends(get_db)):
 def update_flag_priority(flag_id: int, body: PriorityBody, request: Request, con = Depends(get_db)):
     if body.priority not in FLAG_PRIORITIES:
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
-    if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
+    if not _visible_row(con, request, flag_id):
         raise HTTPException(status_code=404, detail="Flag not found")
     con.execute("UPDATE flags SET priority = ? WHERE flag_id = ?", (body.priority, flag_id))
     _log_event(con, request, _flag_project(con, flag_id), flag_id, "updated")
@@ -227,7 +269,7 @@ def update_flag_priority(flag_id: int, body: PriorityBody, request: Request, con
 def update_flag_start_date(flag_id: int, body: StartDateBody, request: Request, con = Depends(get_db)):
     _valid_date(body.start_date)
     start_date = body.start_date.strip() or None
-    flag = con.execute("SELECT resolved, start_date, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+    flag = _visible_row(con, request, flag_id, "resolved, start_date, project_id")
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     if start_date is None:
@@ -246,14 +288,15 @@ def update_flag_start_date(flag_id: int, body: StartDateBody, request: Request, 
 
 
 @router.get("/flags", summary="List flags, optionally scoped to one shell, ordered by status then schedule")
-def get_all_flags(shell_id: int | None = None, con = Depends(get_db)):
-    """Pass `?shell_id=` to scope the list to one shell. Unscoped (no
-    param) keeps the prior behaviour — every flag in the substrate, for
-    the admin UI. The OPEN FLAGS prompt pointer and the surface_flags
-    skill both rely on this filter — the pointer's per-shell count and
-    the skill's per-shell triage must read the same rows."""
-    where = ["f.is_deleted = 0"]
-    params: list = []
+def get_all_flags(request: Request, shell_id: int | None = None, con = Depends(get_db)):
+    """Returns flags visible to the caller (project-team scope + the per-flag
+    privacy bit — see _visibility_sql). Pass `?shell_id=` to further scope the
+    list to one shell (the surface_flags skill's per-shell triage). The
+    visibility filter applies either way, so no caller sees another tenant's
+    flags."""
+    vis, vis_params = _visibility_sql(request)
+    where = ["f.is_deleted = 0", vis]
+    params: list = [*vis_params]
     if shell_id is not None:
         where.append("f.shell_id = ?")
         params.append(shell_id)
@@ -269,16 +312,18 @@ def get_all_flags(shell_id: int | None = None, con = Depends(get_db)):
 
 
 @router.get("/flags/search", summary="Search flags by name, description, resolution_notes, or numeric flag_id")
-def search_flags(q: str = "", con = Depends(get_db)):
+def search_flags(request: Request, q: str = "", con = Depends(get_db)):
     q = (q or "").strip()
     if not q:
         return []
+    vis, vis_params = _visibility_sql(request)
     like = f"%{q}%"
     params = [like, like, like]
     id_clause = ""
     if q.isdigit():
         id_clause = " OR f.flag_id = ?"
         params.append(int(q))
+    params.extend(vis_params)
     rows = con.execute(f"""
         SELECT {FLAG_LIST_COLS}
         {FLAG_BASE_FROM}
@@ -289,6 +334,7 @@ def search_flags(q: str = "", con = Depends(get_db)):
               OR f.resolution_notes LIKE ? COLLATE NOCASE
               {id_clause}
           )
+          AND {vis}
         ORDER BY CASE f.resolved WHEN 0 THEN 0 WHEN 2 THEN 1 WHEN 1 THEN 2 END,
                  fs.effective_start ASC NULLS LAST,
                  f.flag_id ASC
@@ -297,8 +343,11 @@ def search_flags(q: str = "", con = Depends(get_db)):
 
 
 @router.get("/flags/{flag_id}", summary="Get one flag by id")
-def get_flag(flag_id: int, con = Depends(get_db)):
-    row = con.execute(FLAG_DETAIL_SQL + " AND f.is_deleted = 0", (flag_id,)).fetchone()
+def get_flag(flag_id: int, request: Request, con = Depends(get_db)):
+    vis, vis_params = _visibility_sql(request)
+    row = con.execute(
+        FLAG_DETAIL_SQL + f" AND f.is_deleted = 0 AND {vis}", (flag_id, *vis_params)
+    ).fetchone()
     if not row:
         raise HTTPException(404, "Flag not found")
     return dict(row)
@@ -306,7 +355,7 @@ def get_flag(flag_id: int, con = Depends(get_db)):
 
 @router.delete("/flags/{flag_id}", summary="Soft-delete a flag (children re-parented to grandparent)")
 def delete_flag(flag_id: int, request: Request, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
+    if not _visible_row(con, request, flag_id):
         raise HTTPException(404, "Flag not found")
     project_id = _flag_project(con, flag_id)
     con.execute("""
@@ -322,7 +371,7 @@ def delete_flag(flag_id: int, request: Request, con = Depends(get_db)):
 
 @router.patch("/flags/{flag_id}/note", summary="Append a dated note to flag.resolution_notes")
 def add_flag_note(flag_id: int, body: NoteBody, request: Request, con = Depends(get_db)):
-    flag = con.execute("SELECT resolution_notes, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+    flag = _visible_row(con, request, flag_id, "resolution_notes, project_id")
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     stamp    = date.today().strftime("%b %-d, %Y")
@@ -339,7 +388,7 @@ def add_flag_note(flag_id: int, body: NoteBody, request: Request, con = Depends(
 
 @router.put("/flags/{flag_id}/resolution_notes", summary="Replace flag resolution notes")
 def put_flag_notes(flag_id: int, body: RawNotesBody, request: Request, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
+    if not _visible_row(con, request, flag_id):
         raise HTTPException(status_code=404, detail="Flag not found")
     raw = body.resolution_notes if body.resolution_notes is not None else body.notes
     val = raw.strip() if raw is not None else None
@@ -357,7 +406,7 @@ def resolve_flag(flag_id: int, body: ResolveBody, request: Request, con = Depend
         raise HTTPException(status_code=422, detail=str(e))
     if status not in (0, 1, 2):
         raise HTTPException(status_code=422, detail="status must be 0, 1, or 2")
-    flag = con.execute("SELECT resolved, resolution_notes, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+    flag = _visible_row(con, request, flag_id, "resolved, resolution_notes, project_id")
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     # status=0 is "Reopened" only when the flag was actually Resolved before;
@@ -400,10 +449,8 @@ def update_flag(flag_id: int, body: UpdateFlagBody, request: Request, con = Depe
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
     if body.start_date.strip():
         _valid_date(body.start_date)
-    flag = con.execute(
-        "SELECT resolved, resolution_notes, parent_flag_id, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0",
-        (flag_id,)
-    ).fetchone()
+    flag = _visible_row(con, request, flag_id,
+                        "resolved, resolution_notes, parent_flag_id, project_id")
     if not flag:
         raise HTTPException(404, "Flag not found")
 
