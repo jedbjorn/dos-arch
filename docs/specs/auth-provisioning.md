@@ -11,36 +11,7 @@ purpose: Auth, sessions, isolation, provisioning
 ## Status
 
 > [!class1]
-> Living specification. 2026-05-30. **Phase 1 (auth spine) implemented** —
-> broker-as-IdP; see the revision below, which supersedes the original
-> sessions/provisioning design where they differ.
-
-> [!class3]
-> **Architecture revision (2026-05-30) — broker-as-IdP.** Building Phase 1
-> resolved the original spec's open shape into a concrete split, recorded as a
-> Major decision:
-> - **The broker is the credential authority (IdP).** Its `auth_users` table
->   (in the broker's own `secrets.db`) holds `account_id` (uuid PK), `email`,
->   the scrypt **password**, and the envelope-encrypted **TOTP seed**, and it
->   verifies password + TOTP. The substrate API never stores or sees a
->   credential — it relays checks to the broker over the loopback admin seam.
-> - **The app (shell_db) holds relational identity only** — `users`
->   (`account_id`, `email`, `is_admin`, `is_active`, ownership), `sessions`
->   (SHA-256(token) → user, sliding 30d), `auth_events`. The two DBs relate by
->   the **immutable `account_id` + the session token — no cross-DB FK** (a
->   handoff, WireGuard-style). The app authenticates via the broker, authorizes
->   locally, and mints/stores/checks the session itself so the broker stays off
->   the per-request hot path.
-> - **The invite model is dropped.** The admin creates a user directly: the
->   system generates a random 16-char password (shown once, conveyed
->   out-of-band), auto-mints the user's `Exp-NN` assistant, and TOTP is enrolled
->   on first login. `invites` table and the `/redeem` flow are not built.
-> - **Per-user provider keys are deferred** to a follow-up (re-key the broker
->   secret store to `(account_id, name)` + carry shell→owner identity on egress)
->   — tracked separately.
-> - **Login passwords (TOTP-gated) may be echoed in the operator channel** —
->   they are not bearer-usable like an API key. API keys / TOTP seeds / KEKs are
->   never printed.
+> Draft — living specification. 2026-05-30. Not yet implemented.
 
 Peer to `docs/specs/agnostic-runtime.md` (browser-chat + runtime) and
 `docs/specs/isolation-model.md` (shell *execution* isolation — distinct from
