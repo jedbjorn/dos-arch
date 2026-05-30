@@ -33,6 +33,7 @@ def contacts():
 
         ids["alice"] = mk("AliceContact", [PROJ_A])
         ids["bob"] = mk("BobContact", [PROJ_B])
+        ids["bob_keep"] = mk("BobKeep", [PROJ_B])   # never deleted — invisibility cases
         ids["shared"] = mk("SharedContact", [PROJ_A, PROJ_B])
         con.commit()
         return ids
@@ -91,3 +92,72 @@ def test_delete_contact_isolation(alice, bob, contacts):
     c = contacts["bob"]
     assert alice.delete(f"/contacts/{c}").status_code == 404     # Alice can't delete Bob's
     assert bob.delete(f"/contacts/{c}").status_code == 200
+
+
+# ── Emails (file under one project — compartmentalization) ────────────────────
+
+@pytest.fixture(scope="module")
+def emails(contacts):
+    """Two emails about the *shared* contact — one filed under Alice's project,
+    one under Bob's. Each is visible only to that project's member, even though
+    both can see the contact card."""
+    con = sqlite3.connect(os.environ["SHELL_DB_PATH"])
+    try:
+        ids = {}
+        for key, pid in (("alice", PROJ_A), ("bob", PROJ_B)):
+            cur = con.execute(
+                "INSERT INTO emails (contact_id, project_id, direction, subject) "
+                "VALUES (?,?,?,?)", (contacts["shared"], pid, "inbound", f"to-{key}"))
+            ids[key] = cur.lastrowid
+        con.commit()
+        return ids
+    finally:
+        con.close()
+
+
+def test_email_read_isolation(alice, bob, anon, emails):
+    e = emails["alice"]
+    assert alice.get(f"/emails/{e}").status_code == 200
+    assert bob.get(f"/emails/{e}").status_code == 404
+    assert anon.get(f"/emails/{e}").status_code == 404
+
+
+def test_email_compartmentalization(bob, contacts, emails):
+    """Bob can see the shared contact's card (via project 501) but NOT an email
+    filed under Alice's project (500) — the contact is broader than its mail."""
+    assert bob.get(f"/contacts/{contacts['shared']}").status_code == 200   # card visible
+    assert bob.get(f"/emails/{emails['alice']}").status_code == 404        # mail compartmented
+
+
+def test_email_list_scoped(alice, bob, emails):
+    a_subjects = {r["subject"] for r in alice.get("/emails").json()["emails"]}
+    b_subjects = {r["subject"] for r in bob.get("/emails").json()["emails"]}
+    assert "to-alice" in a_subjects and "to-alice" not in b_subjects
+    assert "to-bob" in b_subjects and "to-bob" not in a_subjects
+
+
+def test_email_create_requires_filing_membership(alice, bob, contacts):
+    sc = contacts["shared"]
+    # Alice files under her project (500); Bob cannot file under 500.
+    assert alice.post("/emails", json={"contact_id": sc, "project_id": PROJ_A}).status_code == 200
+    assert bob.post("/emails", json={"contact_id": sc, "project_id": PROJ_A}).status_code == 404
+    # Alice cannot file under Bob's project (501) even for a contact she shares.
+    assert alice.post("/emails", json={"contact_id": sc, "project_id": PROJ_B}).status_code == 404
+
+
+def test_email_create_needs_visible_contact(alice, contacts):
+    """Alice cannot record an email against Bob-only contact she can't see."""
+    assert alice.post("/emails", json={"contact_id": contacts["bob_keep"],
+                                       "project_id": PROJ_A}).status_code == 404
+
+
+def test_email_refile_requires_membership(alice, emails):
+    e = emails["alice"]
+    assert alice.patch(f"/emails/{e}", json={"project_id": PROJ_B}).status_code == 404  # not a member
+    assert alice.patch(f"/emails/{e}", json={"subject": "edited"}).status_code == 200
+
+
+def test_email_delete_isolation(alice, bob, emails):
+    e = emails["bob"]
+    assert alice.delete(f"/emails/{e}").status_code == 404
+    assert bob.delete(f"/emails/{e}").status_code == 200
