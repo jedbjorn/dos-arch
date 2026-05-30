@@ -248,6 +248,9 @@ app.include_router(keys_router)
 from api.routers.flags import router as flags_router
 app.include_router(flags_router)
 
+from api.routers.contacts import router as contacts_router
+app.include_router(contacts_router)
+
 from api.routers.catalogue import router as catalogue_router
 app.include_router(catalogue_router)
 

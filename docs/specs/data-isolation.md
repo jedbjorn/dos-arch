@@ -147,8 +147,8 @@ is a surface nobody has classified — which is itself a finding.
 |---|---|---|---|---|
 | `flags` | project-team + bit | membership AND (`team_flag=1` OR creator) | `flags.py` | ✅ |
 | `project_events` | project-team | membership; event-only, no detail col | `flags.py` writer | ✅ |
-| `contacts` | project-team | visible via **any** shared project (N:M) | router TBD | ⏳ |
-| `contact_projects` | project-team | derived from `contacts` | router TBD | ⏳ |
+| `contacts` | project-team | member of **any** filed project (N:M) | `contacts.py` | ✅ |
+| `contact_projects` | project-team | filing gated by membership at create | `contacts.py` | ✅ |
 | `emails` | project-team | files under **one** `project_id` | router TBD | ⏳ |
 | `events` | project-team | via `event_projects` (N:M) | router TBD | ⏳ |
 | `event_contacts/users/projects` | project-team | derived from `events` | router TBD | ⏳ |
