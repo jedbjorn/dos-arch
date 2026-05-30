@@ -150,8 +150,8 @@ is a surface nobody has classified — which is itself a finding.
 | `contacts` | project-team | member of **any** filed project (N:M) | `contacts.py` | ✅ |
 | `contact_projects` | project-team | filing gated by membership at create | `contacts.py` | ✅ |
 | `emails` | project-team | member of the **one** filing `project_id` | `emails.py` | ✅ |
-| `events` | project-team | via `event_projects` (N:M) | router TBD | ⏳ |
-| `event_contacts/users/projects` | project-team | derived from `events` | router TBD | ⏳ |
+| `events` | project-team | member of **any** `event_projects` (N:M) | `events.py` | ✅ |
+| `event_contacts/users/projects` | project-team | filing gated by membership at create | `events.py` | ✅ |
 | `notes` | project-team* | derive from target's project (*user-target parked) | router TBD | ⏳ |
 | shell **profile card** | project-team / global | visible-gate; private cols nulled for non-owner | `shells.py` | ✅ |
 | `chat_sessions`/`chat_messages` | user-private | `_require_shell_owner` | `shells.py` | ✅ |

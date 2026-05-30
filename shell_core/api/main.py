@@ -254,6 +254,9 @@ app.include_router(contacts_router)
 from api.routers.emails import router as emails_router
 app.include_router(emails_router)
 
+from api.routers.events import router as events_router
+app.include_router(events_router)
+
 from api.routers.catalogue import router as catalogue_router
 app.include_router(catalogue_router)
 
