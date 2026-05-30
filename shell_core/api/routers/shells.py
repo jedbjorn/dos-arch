@@ -9,7 +9,10 @@ import uuid
 from datetime import date, datetime, timezone
 
 from api.common.db import get_db
-from api.common.auth import _require_shell_creator, _caller_shell
+from api.common.auth import (
+    _require_shell_creator, _caller_shell, _require_shell_owner,
+    _require_shell_visible, _require_archive_owner, _is_shell_owner,
+)
 from api.services.shell_messaging import _build_message_prompt
 from api.services.boot_document import (
     rerender_boot_document, rerender_shell_sessions, session_start_payload,
@@ -176,22 +179,29 @@ def activate_shell(shell_id: int, request: Request, con = Depends(get_db)):
 # ── Shell record ──────────────────────────────────────────────────────────────
 
 @router.get("/shells/{shell_id}", summary="Get one shell record")
-def get_shell(shell_id: int, con = Depends(get_db)):
+def get_shell(shell_id: int, request: Request, con = Depends(get_db)):
+    owner_row = _require_shell_visible(shell_id, request, con)
     row = con.execute("""
         SELECT shell_id, display_name, shortname, partner, role, mandate,
                current_state, connections, api_endpoints,
                active_archive_id, api_auth
         FROM shells WHERE shell_id = ?
     """, (shell_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Shell not found")
-    return dict(row)
+    out = dict(row)
+    # Card fields (name / shortname / partner / role / mandate) are the
+    # project-team/global face of a shell; current_state + connections +
+    # endpoints are user-private. Null the private columns for a caller who can
+    # see this shell only because it is is_shared (data-isolation spec, CC-108).
+    if not _is_shell_owner(owner_row, request):
+        for c in ("current_state", "connections", "api_endpoints",
+                  "active_archive_id", "api_auth"):
+            out[c] = None
+    return out
 
 
 @router.get("/shells/{shell_id}/prompt-sections", summary="Typed (label, body) catalog of the shell's boot prompt — viewer read")
-def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+def get_shell_prompt_sections(shell_id: int, request: Request, con = Depends(get_db)):
+    _require_shell_visible(shell_id, request, con)
     # Mirror runtime_ctx using the shell's most-recent active session if any —
     # gives the viewer an honest snapshot of what would actually render. No
     # session yet → placeholders and the default anthropic dialect.
@@ -225,7 +235,8 @@ def get_shell_prompt_sections(shell_id: int, con = Depends(get_db)):
 
 
 @router.get("/shells/{shell_id}/prompt-render", summary="Render a fresh full boot prompt (Blocks 1+2 catalog + Block 3 dynamic tail) for the shell, as a downloadable markdown file.")
-def render_shell_prompt(shell_id: int, dialect: str = "anthropic", con = Depends(get_db)):
+def render_shell_prompt(shell_id: int, request: Request, dialect: str = "anthropic", con = Depends(get_db)):
+    _require_shell_visible(shell_id, request, con)
     if dialect not in _DOWNLOAD_DIALECTS:
         raise HTTPException(400, f"Unknown dialect {dialect!r}; expected one of {list(_DOWNLOAD_DIALECTS)}")
     row = con.execute(
@@ -276,9 +287,8 @@ class PromptSectionWrite(BaseModel):
 
 
 @router.put("/shells/{shell_id}/prompt-sections/{label}", summary="Edit one prompt section's body — universal blocks fan out to all shells; per-shell labels write the shell's column.")
-def put_shell_prompt_section(shell_id: int, label: str, payload: PromptSectionWrite, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+def put_shell_prompt_section(shell_id: int, label: str, payload: PromptSectionWrite, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     if label not in _EDITABLE_SECTIONS:
         raise HTTPException(400, f"Section {label!r} is not editable via this endpoint")
     body = payload.body
@@ -300,7 +310,8 @@ def put_shell_prompt_section(shell_id: int, label: str, payload: PromptSectionWr
 
 
 @router.get("/shells/{shell_id}/sessions/{session_id}/session-start", summary="Boot document (materialized) + live dynamic tail — the dispatcher's per-turn read")
-def get_shell_session_start(shell_id: int, session_id: str, con = Depends(get_db)):
+def get_shell_session_start(shell_id: int, session_id: str, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     if not con.execute(
         "SELECT 1 FROM chat_sessions WHERE chat_session_id=? AND shell_id=?",
         (session_id, shell_id),
@@ -325,9 +336,8 @@ class UpdateShellBody(BaseModel):
 
 
 @router.patch("/shells/{shell_id}", summary="Update one or more shell fields")
-def update_shell(shell_id: int, body: UpdateShellBody, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+def update_shell(shell_id: int, body: UpdateShellBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     fields, args = [], []
     if body.display_name is not None:
         name = body.display_name.strip()
@@ -433,7 +443,8 @@ def _do_create_identity_entry(con, shell_id: int, body: CreateIdentityEntryBody)
 
 
 @router.post("/shells/{shell_id}/identity-entries", summary="Create a seed or L&S entry (count cap enforced via trigger)")
-def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, con = Depends(get_db)):
+def create_identity_entry(shell_id: int, body: CreateIdentityEntryBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     return _do_create_identity_entry(con, shell_id, body)
 
 
@@ -455,7 +466,8 @@ class UpdateIdentityEntryBody(BaseModel):
 
 
 @router.patch("/shells/{shell_id}/identity-entries/{entry_id}", summary="Retire an identity entry (Law 3 — preserved row, no edit)")
-def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntryBody, con = Depends(get_db)):
+def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntryBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     row = con.execute(
         "SELECT * FROM shell_identity_entries WHERE shell_id = ? AND entry_id = ?",
         (shell_id, entry_id)
@@ -480,13 +492,12 @@ def update_identity_entry(shell_id: int, entry_id: int, body: UpdateIdentityEntr
 
 
 @router.get("/shells/{shell_id}/identity-entries", summary="List a shell's seed + L&S entries")
-def list_identity_entries(shell_id: int, kind: str = "", include_retired: bool = False,
+def list_identity_entries(shell_id: int, request: Request, kind: str = "", include_retired: bool = False,
                           con = Depends(get_db)):
     """Inspect own seed/L&S mid-session — needed to find entry_ids before a
     retire PATCH. Active entries only by default; pass include_retired=true
     for the full curated history."""
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+    _require_shell_owner(shell_id, request, con)
     if kind and kind not in ("seed", "lns"):
         raise HTTPException(422, "kind must be 'seed' or 'lns'")
     sql = ("SELECT entry_id, shell_id, kind, entry_date, source_tag, body, "
@@ -543,7 +554,8 @@ def _do_create_decision(con, shell_id: int, body: CreateDecisionBody) -> dict:
 
 
 @router.post("/shells/{shell_id}/decisions", summary="Record a major (M) decision")
-def create_decision(shell_id: int, body: CreateDecisionBody, con = Depends(get_db)):
+def create_decision(shell_id: int, body: CreateDecisionBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     return _do_create_decision(con, shell_id, body)
 
 
@@ -561,11 +573,10 @@ def create_decision_self(body: CreateDecisionBody, request: Request, con = Depen
 
 
 @router.get("/shells/{shell_id}/decisions", summary="List + filter decisions for a shell")
-def list_decisions(shell_id: int, q: str = "", priority: str = "",
+def list_decisions(shell_id: int, request: Request, q: str = "", priority: str = "",
                    date_from: str = "", date_to: str = "",
                    include_deleted: bool = False, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+    _require_shell_owner(shell_id, request, con)
     sql = "SELECT * FROM shell_decisions WHERE shell_id = ?"
     args: list = [shell_id]
     if not include_deleted:
@@ -597,7 +608,8 @@ class UpdateDecisionBody(BaseModel):
 
 
 @router.patch("/shells/{shell_id}/decisions/{decision_id}", summary="Update or soft-delete a decision")
-def update_decision(shell_id: int, decision_id: int, body: UpdateDecisionBody, con = Depends(get_db)):
+def update_decision(shell_id: int, decision_id: int, body: UpdateDecisionBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     row = con.execute(
         "SELECT * FROM shell_decisions WHERE shell_id = ? AND decision_id = ?",
         (shell_id, decision_id)
@@ -637,7 +649,8 @@ def update_decision(shell_id: int, decision_id: int, body: UpdateDecisionBody, c
 
 
 @router.get("/shells/{shell_id}/archives/{session_id}", summary="Get one session archive by session_id")
-def get_archive_by_session(shell_id: int, session_id: str, con = Depends(get_db)):
+def get_archive_by_session(shell_id: int, session_id: str, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     row = con.execute(
         "SELECT * FROM shell_memory_archives WHERE shell_id = ? AND session_id = ?",
         (shell_id, session_id.strip()),
@@ -648,7 +661,8 @@ def get_archive_by_session(shell_id: int, session_id: str, con = Depends(get_db)
 
 
 @router.get("/shells/{shell_id}/archives", summary="Search session archives by date range or narrative content")
-def search_archives(shell_id: int, date_from: str = "", date_to: str = "", q: str = "", fields: str = "session_id,date", con = Depends(get_db)):
+def search_archives(shell_id: int, request: Request, date_from: str = "", date_to: str = "", q: str = "", fields: str = "session_id,date", con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     allowed = {"archive_id", "session_id", "date", "full_narrative"}
     selected = [f.strip() for f in fields.split(",") if f.strip() in allowed]
     if not selected:
@@ -674,9 +688,8 @@ class IgnoreMessagesBody(BaseModel):
 
 
 @router.patch("/shells/{shell_id}/ignore-messages", summary="Toggle whether this shell ignores incoming messages")
-def set_ignore_messages(shell_id: int, body: IgnoreMessagesBody, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+def set_ignore_messages(shell_id: int, body: IgnoreMessagesBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     if body.ignore:
         con.execute(
             "UPDATE shells SET ignore_messages=1, ignore_messages_since=datetime('now') WHERE shell_id=?",
@@ -774,7 +787,8 @@ class CreateArchiveBody(BaseModel):
 
 
 @router.post("/shell-memory-archives", summary="Open a new session archive row for a shell")
-def create_shell_memory_archive(body: CreateArchiveBody, con = Depends(get_db)):
+def create_shell_memory_archive(body: CreateArchiveBody, request: Request, con = Depends(get_db)):
+    _require_shell_owner(body.shell_id, request, con)
     try:
         con.execute("""
             INSERT INTO shell_memory_archives (shell_id, session_id, date, full_narrative)
@@ -796,9 +810,10 @@ def create_shell_memory_archive(body: CreateArchiveBody, con = Depends(get_db)):
 
 
 @router.get("/shell-memory-archives/{archive_id}", summary="Get one session archive by archive_id")
-def get_shell_memory_archive(archive_id: int, con = Depends(get_db)):
+def get_shell_memory_archive(archive_id: int, request: Request, con = Depends(get_db)):
     """Direct read by archive_id — the clean mid-session path to the current
     archive, whose id is in the shell's `## ACTIVE SESSION` block."""
+    _require_archive_owner(archive_id, request, con)
     row = con.execute("SELECT * FROM shell_memory_archives WHERE archive_id = ?", (archive_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Archive not found")
@@ -810,7 +825,8 @@ class UpdateArchiveBody(BaseModel):
 
 
 @router.patch("/shell-memory-archives/{archive_id}", summary="Append an entry to an archive's full_narrative")
-def update_shell_memory_archive(archive_id: int, body: UpdateArchiveBody, con = Depends(get_db)):
+def update_shell_memory_archive(archive_id: int, body: UpdateArchiveBody, request: Request, con = Depends(get_db)):
+    _require_archive_owner(archive_id, request, con)
     row = con.execute("SELECT * FROM shell_memory_archives WHERE archive_id = ?", (archive_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Archive not found")
@@ -830,9 +846,8 @@ def update_shell_memory_archive(archive_id: int, body: UpdateArchiveBody, con = 
 # ── Chat + sessions ───────────────────────────────────────────────────────────
 
 @router.get("/shells/{shell_id}/chat", summary="List chat messages for a shell (or just unread inbound)")
-def get_shell_chat(shell_id: int, pending: bool = False, con = Depends(get_db)):
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
+def get_shell_chat(shell_id: int, request: Request, pending: bool = False, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     if pending:
         rows = con.execute(
             """SELECT cm.message_id, cm.direction, cm.user_id, cm.body, cm.sent_at, cm.read_by_shell, cm.tokens
@@ -855,6 +870,7 @@ def get_shell_chat(shell_id: int, pending: bool = False, con = Depends(get_db)):
 
 @router.get("/shells/{shell_id}/chat/session", summary="Get the user's active chat session for this shell")
 def get_chat_session(shell_id: int, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     user_id = getattr(request.state, 'user_id', 1)
     row = con.execute(
         "SELECT chat_session_id, started_at, last_active, is_active, total_tokens, model_id FROM chat_sessions WHERE shell_id=? AND user_id=? AND is_active=1 ORDER BY last_active DESC LIMIT 1",
@@ -887,10 +903,9 @@ def _model_switch_note(con, old_model_id, new_model_id) -> str:
 
 @router.post("/shells/{shell_id}/chat/session", summary="Create a new chat session for this shell + user")
 def create_chat_session(shell_id: int, request: Request, body: dict | None = None, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     user_id = getattr(request.state, 'user_id', 1)
     session_id = str(uuid.uuid4())
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
     model_id = (body or {}).get("model_id")
     _check_model(con, model_id)
     con.execute("UPDATE chat_sessions SET is_active=0 WHERE shell_id=? AND user_id=?", (shell_id, user_id))
@@ -910,7 +925,8 @@ def create_chat_session(shell_id: int, request: Request, body: dict | None = Non
 
 
 @router.get("/shells/{shell_id}/sessions/active", summary="Get the active chat session with token usage")
-def get_active_session(shell_id: int, user_id: int, con = Depends(get_db)):
+def get_active_session(shell_id: int, user_id: int, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     row = con.execute(
         "SELECT chat_session_id, total_tokens, token_warning_sent FROM chat_sessions "
         "WHERE shell_id=? AND user_id=? AND is_active=1 AND total_tokens > 0 "
@@ -923,7 +939,8 @@ def get_active_session(shell_id: int, user_id: int, con = Depends(get_db)):
 
 
 @router.patch("/shells/{shell_id}/sessions/{session_id}", summary="Update session token counters, model, and warning flags")
-def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get_db)):
+def update_session(shell_id: int, session_id: str, body: dict, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     existing = con.execute(
         "SELECT model_id FROM chat_sessions WHERE chat_session_id=? AND shell_id=?",
         (session_id, shell_id),
@@ -965,7 +982,8 @@ def update_session(shell_id: int, session_id: str, body: dict, con = Depends(get
 
 
 @router.post("/shells/{shell_id}/sessions/{session_id}/clear", summary="Clear (deactivate) a chat session")
-def clear_session(shell_id: int, session_id: str, con = Depends(get_db)):
+def clear_session(shell_id: int, session_id: str, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     if not con.execute("SELECT 1 FROM chat_sessions WHERE chat_session_id=? AND shell_id=?", (session_id, shell_id)).fetchone():
         raise HTTPException(404, "Session not found")
     con.execute("UPDATE chat_sessions SET is_active=0 WHERE chat_session_id=?", (session_id,))
@@ -976,9 +994,8 @@ def clear_session(shell_id: int, session_id: str, con = Depends(get_db)):
 
 @router.post("/shells/{shell_id}/chat", summary="Post a user-chat message to a shell (inbound)")
 def post_shell_chat(shell_id: int, body: dict, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     user_id = getattr(request.state, 'user_id', 1)
-    if not con.execute("SELECT 1 FROM shells WHERE shell_id=?", (shell_id,)).fetchone():
-        raise HTTPException(404, "Shell not found")
     text = (body.get("body") or "").strip()
     if not text:
         raise HTTPException(400, "body required")
@@ -998,7 +1015,8 @@ def post_shell_chat(shell_id: int, body: dict, request: Request, con = Depends(g
 
 
 @router.post("/shells/{shell_id}/chat/reply", summary="Post a shell reply with token accounting + auto-clear")
-def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
+def post_shell_chat_reply(shell_id: int, body: dict, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     text = (body.get("body") or "").strip()
     if not text:
         raise HTTPException(400, "body required")
@@ -1104,6 +1122,7 @@ def post_shell_chat_reply(shell_id: int, body: dict, con = Depends(get_db)):
 
 @router.delete("/shells/{shell_id}/chat", summary="Soft-delete chat history for a shell (optionally before a message_id)")
 def delete_shell_chat(shell_id: int, body: dict, request: Request, con = Depends(get_db)):
+    _require_shell_owner(shell_id, request, con)
     user_id = getattr(request.state, 'user_id', 1)
     before_id = body.get("before_id")
     if before_id:
