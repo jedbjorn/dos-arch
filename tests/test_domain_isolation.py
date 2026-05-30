@@ -161,3 +161,62 @@ def test_email_delete_isolation(alice, bob, emails):
     e = emails["bob"]
     assert alice.delete(f"/emails/{e}").status_code == 404
     assert bob.delete(f"/emails/{e}").status_code == 200
+
+
+# ── Events (N:M projects/contacts/users) ──────────────────────────────────────
+
+@pytest.fixture(scope="module")
+def events():
+    """One event under Alice's project, one under Bob's."""
+    con = sqlite3.connect(os.environ["SHELL_DB_PATH"])
+    try:
+        ids = {}
+        for key, pid in (("alice", PROJ_A), ("bob", PROJ_B)):
+            cur = con.execute("INSERT INTO events (title) VALUES (?)", (f"event-{key}",))
+            eid = cur.lastrowid
+            con.execute("INSERT INTO event_projects (event_id, project_id, is_primary) VALUES (?,?,1)",
+                        (eid, pid))
+            ids[key] = eid
+        con.commit()
+        return ids
+    finally:
+        con.close()
+
+
+def test_event_read_isolation(alice, bob, anon, events):
+    e = events["alice"]
+    assert alice.get(f"/events/{e}").status_code == 200
+    assert bob.get(f"/events/{e}").status_code == 404
+    assert anon.get(f"/events/{e}").status_code == 404
+
+
+def test_event_list_scoped(alice, bob, events):
+    a = {r["title"] for r in alice.get("/events").json()["events"]}
+    b = {r["title"] for r in bob.get("/events").json()["events"]}
+    assert "event-alice" in a and "event-alice" not in b
+    assert "event-bob" in b and "event-bob" not in a
+
+
+def test_event_create_requires_membership(alice, bob):
+    body = {"title": "X", "project_ids": [PROJ_A]}
+    assert alice.post("/events", json=body).status_code == 200
+    assert bob.post("/events", json=body).status_code == 404           # not a member of 500
+    assert alice.post("/events", json={"title": "Y", "project_ids": [PROJ_B]}).status_code == 404
+
+
+def test_event_attach_invisible_contact_denied(alice, contacts):
+    """Alice can't attach a Bob-only contact she can't see to her event."""
+    body = {"title": "Z", "project_ids": [PROJ_A], "contact_ids": [contacts["bob_keep"]]}
+    assert alice.post("/events", json=body).status_code == 404
+
+
+def test_event_set_primary_must_be_filed(alice, events):
+    e = events["alice"]
+    assert alice.patch(f"/events/{e}", json={"primary_project_id": PROJ_B}).status_code == 422
+
+
+def test_event_mutate_delete_isolation(alice, bob, events):
+    e = events["alice"]
+    assert bob.patch(f"/events/{e}", json={"title": "hax"}).status_code == 404
+    assert bob.delete(f"/events/{e}").status_code == 404
+    assert alice.patch(f"/events/{e}", json={"title": "ok"}).status_code == 200
