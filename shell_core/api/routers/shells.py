@@ -707,7 +707,10 @@ def set_ignore_messages(shell_id: int, body: IgnoreMessagesBody, request: Reques
 # ── Shell messages ────────────────────────────────────────────────────────────
 
 @router.get("/shell-messages", summary="List shell messages by recipient (optionally filtered by read state)")
-def get_shell_messages(recipient_id: int, read: int | None = None, con = Depends(get_db)):
+def get_shell_messages(recipient_id: int, request: Request, read: int | None = None, con = Depends(get_db)):
+    # A shell's inbox is user-private to the recipient shell's owner (or the
+    # shell itself via its key). 404, not 403, for someone else's inbox.
+    _require_shell_owner(recipient_id, request, con)
     where, params = ["recipient_id = ?"], [recipient_id]
     if read is not None:
         where.append("read = ?"); params.append(read)
@@ -731,7 +734,10 @@ class CreateMessageBody(BaseModel):
 
 
 @router.post("/shell-messages", summary="Send a message between shells (auto-creates a recipient prompt)")
-def create_shell_message(body: CreateMessageBody, con = Depends(get_db)):
+def create_shell_message(body: CreateMessageBody, request: Request, con = Depends(get_db)):
+    # You may only send *as* a shell you own (or as that shell, via its key) —
+    # no impersonating another tenant's shell. The recipient may be any shell.
+    _require_shell_owner(body.sender_id, request, con)
     if not body.body.strip():
         raise HTTPException(422, "body is required")
     con.execute("""
@@ -767,10 +773,12 @@ def create_shell_message(body: CreateMessageBody, con = Depends(get_db)):
 
 
 @router.patch("/shell-messages/{message_id}", summary="Mark a shell message as read")
-def update_shell_message(message_id: int, con = Depends(get_db)):
+def update_shell_message(message_id: int, request: Request, con = Depends(get_db)):
     msg = con.execute("SELECT recipient_id FROM shell_messages WHERE message_id = ?", (message_id,)).fetchone()
     if not msg:
         raise HTTPException(404, "Message not found")
+    # Only the recipient (its owner / its key / admin) may mark it read.
+    _require_shell_owner(msg["recipient_id"], request, con)
     con.execute("UPDATE shell_messages SET read = 1 WHERE message_id = ?", (message_id,))
     con.commit()
     row = con.execute("SELECT * FROM shell_messages WHERE message_id = ?", (message_id,)).fetchone()
@@ -925,8 +933,11 @@ def create_chat_session(shell_id: int, request: Request, body: dict | None = Non
 
 
 @router.get("/shells/{shell_id}/sessions/active", summary="Get the active chat session with token usage")
-def get_active_session(shell_id: int, user_id: int, request: Request, con = Depends(get_db)):
-    _require_shell_owner(shell_id, request, con)
+def get_active_session(shell_id: int, request: Request, con = Depends(get_db)):
+    owner = _require_shell_owner(shell_id, request, con)
+    # Derive the user from the shell's owner — never a client-supplied user_id.
+    # A shell has exactly one owner; its sessions are that owner's.
+    user_id = owner["user_id"]
     row = con.execute(
         "SELECT chat_session_id, total_tokens, token_warning_sent FROM chat_sessions "
         "WHERE shell_id=? AND user_id=? AND is_active=1 AND total_tokens > 0 "

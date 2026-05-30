@@ -153,12 +153,13 @@ is a surface nobody has classified — which is itself a finding.
 | `events` | project-team | via `event_projects` (N:M) | router TBD | ⏳ |
 | `event_contacts/users/projects` | project-team | derived from `events` | router TBD | ⏳ |
 | `notes` | project-team* | derive from target's project (*user-target parked) | router TBD | ⏳ |
-| shell **profile card** | project-team / global | `display_name`/`shortname`/`role`/`mandate`/`shell_type` | `shells.py` | ⏳ |
+| shell **profile card** | project-team / global | visible-gate; private cols nulled for non-owner | `shells.py` | ✅ |
 | `chat_sessions`/`chat_messages` | user-private | `_require_shell_owner` | `shells.py` | ✅ |
 | `shell_memory_archives` | user-private | owner (by shell or archive_id) | `shells.py` | ✅ |
 | `shell_identity_entries` (seed/L&S) | user-private | `_require_shell_owner` | `shells.py` | ✅ |
 | `shell_decisions` | user-private | `_require_shell_owner` | `shells.py` | ✅ |
 | `shells.current_state` | user-private | owner; nulled for non-owner on card GET | `shells.py` | ✅ |
+| `shell_messages` (inbox) | user-private | read/mark by recipient owner; send by sender owner | `shells.py` | ✅ |
 | broker secrets | admin-only | `_require_admin` | `keys.py` | ✅ |
 | `sessions`/`auth_events`/`totp_secret` | user-private | own rows only | `auth.py` | ✅ (auth) |
 | `projects` catalogue | global | discovery; self-service join | `catalogue.py` | n/a |
