@@ -4,7 +4,15 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.routing import Match
 import hashlib
+import hmac
+import os
 import time
+
+# Shared secret proving a request came through the SvelteKit trust seam (the
+# /api proxy). The browser never holds it; only the UI server process does. When
+# set, a request that carries it is a "proxied" (user-surface) request — and an
+# unauthenticated proxied request resolves to NO user, not the legacy user 1.
+_INTERNAL_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
 
 from api.common.db import db
 from api.common.logging import _log_action
@@ -75,20 +83,44 @@ def _resolve_session(request: Request):
         con.close()
 
 
+def _is_proxied(request: Request) -> bool:
+    """True iff the request carries a valid internal-proxy secret — i.e. it came
+    through the SvelteKit trust seam (a user-surface request). Raises on a
+    present-but-wrong secret (caller is forging the proxy hop)."""
+    if not _INTERNAL_SECRET:
+        return False
+    presented = request.headers.get("x-internal-auth", "")
+    if not presented:
+        return False
+    if not hmac.compare_digest(presented, _INTERNAL_SECRET):
+        raise PermissionError("bad internal-proxy secret")
+    return True
+
+
 @app.middleware("http")
 async def auth_passthrough(request: Request, call_next):
     shell_id, shell_name, shell_is_admin, bad = _resolve_caller_shell(request)
     if bad:
         return JSONResponse(status_code=401, content={"detail": "Invalid API key."})
+    try:
+        proxied = _is_proxied(request)
+    except PermissionError:
+        return JSONResponse(status_code=401, content={"detail": "Bad proxy credential."})
     sess = _resolve_session(request)
     if sess is not None:
         # The multi-tenant path: a valid session cookie sets the real user.
         request.state.user_id, request.state.account_id, request.state.is_admin = sess
+    elif proxied:
+        # Came through the proxy (a browser request) but not logged in →
+        # unauthenticated. hooks.server.js redirects page loads to /login; API
+        # calls see no user. This is the Phase 2 cutover for the user surface.
+        request.state.user_id    = None
+        request.state.account_id = None
+        request.state.is_admin   = False
     else:
-        # Legacy single-user default for the keyless localhost UI + api-key
-        # callers. Phase 2 flips the keyless case to unauthenticated once the
-        # trust seam + /login exist; until then the UI and dispatcher keep
-        # working exactly as before.
+        # Direct / api-key / dev callers (the dispatcher, make health, local
+        # curl) keep the legacy single-user default — they never reach the
+        # browser-facing surface. Tightened further in the isolation pass.
         request.state.user_id    = 1
         request.state.account_id = None
         request.state.is_admin   = True

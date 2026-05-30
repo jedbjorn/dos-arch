@@ -1,6 +1,7 @@
 <script>
   import '../routes/layout.css'
   import { onMount } from 'svelte'
+  import { page } from '$app/stores'
   import { theme, applyTheme, loadThemeFromApi } from '$lib/theme.js'
   import TopBar from '$lib/components/TopBar.svelte'
   import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte'
@@ -12,6 +13,10 @@
 
   let { children } = $props()
 
+  // Pre-auth routes (login) render bare — no TopBar, no chat sidebar, and no
+  // API-backed chrome that would 401 before a session exists.
+  const bare = $derived($page.url.pathname === '/login')
+
   // Inline SVG noise — tiny, no extra request. Layered as a faint overlay
   // to break up the smooth gradient washes; mix-blend-overlay keeps it
   // visible against any background.
@@ -19,28 +24,41 @@
     "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")"
 </script>
 
-<!-- Split shell: TopBar spans the full viewport; below it, page content on
-     the left and the chat sidebar docked right. dos-arch is a chat-first
-     interface — the sidebar is always present. Background gradient + grain
-     live on body via layout.css; this root stays transparent so the canvas
-     shows through. -->
-<div class="flex flex-col h-screen overflow-hidden relative">
-  <!-- Grain overlay — fixed so it stays put while panels scroll. -->
-  <div
-    class="fixed inset-0 opacity-[0.05] pointer-events-none mix-blend-overlay z-0"
-    style="background-image: {GRAIN_URL};"
-  ></div>
-
-  <TopBar />
-
-  <div class="flex flex-1 min-h-0 relative z-10">
-    <div class="flex-1 overflow-y-auto">
-      <div class="max-w-[1250px] mx-auto w-full">
-        <main class="flex flex-col min-h-[calc(100vh-52px)]">
-          {@render children()}
-        </main>
-      </div>
+{#if bare}
+  <!-- Pre-auth: bare canvas, grain only, no chrome. -->
+  <div class="h-screen relative">
+    <div
+      class="fixed inset-0 opacity-[0.05] pointer-events-none mix-blend-overlay z-0"
+      style="background-image: {GRAIN_URL};"
+    ></div>
+    <div class="relative z-10 h-full">
+      {@render children()}
     </div>
-    <ChatSidebar />
   </div>
-</div>
+{:else}
+  <!-- Split shell: TopBar spans the full viewport; below it, page content on
+       the left and the chat sidebar docked right. dos-arch is a chat-first
+       interface — the sidebar is always present. Background gradient + grain
+       live on body via layout.css; this root stays transparent so the canvas
+       shows through. -->
+  <div class="flex flex-col h-screen overflow-hidden relative">
+    <!-- Grain overlay — fixed so it stays put while panels scroll. -->
+    <div
+      class="fixed inset-0 opacity-[0.05] pointer-events-none mix-blend-overlay z-0"
+      style="background-image: {GRAIN_URL};"
+    ></div>
+
+    <TopBar />
+
+    <div class="flex flex-1 min-h-0 relative z-10">
+      <div class="flex-1 overflow-y-auto">
+        <div class="max-w-[1250px] mx-auto w-full">
+          <main class="flex flex-col min-h-[calc(100vh-52px)]">
+            {@render children()}
+          </main>
+        </div>
+      </div>
+      <ChatSidebar />
+    </div>
+  </div>
+{/if}
