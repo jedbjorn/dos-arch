@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getMe, getAdminUsers, getShells, createUser, setUserAdmin, rotateUserPassword, assignShellUser } from '$lib/api.js'
+  import { getMe, getAdminUsers, getShells, createUser, setUserAdmin, resetUserAuth, assignShellUser } from '$lib/api.js'
   import GlassDropdown from '$lib/components/GlassDropdown.svelte'
   import Switch from '$lib/components/Switch.svelte'
 
@@ -34,14 +34,14 @@
 
   // edit-user modal — email/name/initials read-only; is_admin editable; rotate pw
   let editUser  = $state(null)   // a copy of the row being edited
-  let rotating  = $state(false)
-  let rotatedPw = $state(null)   // the freshly-minted one-time password
+  let resetting = $state(false)
+  let resetPw   = $state(null)   // the freshly-minted one-time password
 
   function openEdit(u) {
-    editUser = { ...u }; rotatedPw = null; error = ''
+    editUser = { ...u }; resetPw = null; error = ''
   }
   function closeEdit() {
-    editUser = null; rotatedPw = null; error = ''
+    editUser = null; resetPw = null; error = ''
   }
 
   async function loadAll() {
@@ -86,17 +86,20 @@
     }
   }
 
-  async function doRotate() {
+  async function doResetAuth() {
     if (!editUser) return
-    error = ''; rotating = true; rotatedPw = null
+    error = ''; resetting = true; resetPw = null
     try {
-      const res = await rotateUserPassword(editUser.user_id)
-      rotatedPw = res.password
+      const res = await resetUserAuth(editUser.user_id)
+      resetPw = res.password
       downloadCreds(res.email, res.password)
+      // TOTP was cleared server-side — reflect it in the open modal + the table.
+      editUser.totp_enrolled = 0
+      users = await getAdminUsers()
     } catch (e) {
-      error = e.message || 'Rotate failed'
+      error = e.message || 'Reset failed'
     } finally {
-      rotating = false
+      resetting = false
     }
   }
 
@@ -283,8 +286,9 @@
 {/if}
 
 <!-- Edit-user modal — email/name/initials read-only; is_admin via Switch
-     (persists on toggle); Rotate password mints a new one-time password and
-     downloads it as a .txt for handoff. -->
+     (persists on toggle); Reset User Auth mints a new one-time password AND
+     resets TOTP (locked-out-user recovery), downloading the password as a
+     .txt for handoff. -->
 {#if editUser}
   <div
     use:portal
@@ -327,27 +331,27 @@
           <span class="text-sm text-white/70">Admin</span>
         </div>
 
-        <!-- Password rotation. -->
+        <!-- Auth recovery — rotates password + resets TOTP together. -->
         <div class="border-t border-white/[0.08] pt-4">
           <div class="flex items-center justify-between gap-3">
             <div class="min-w-0">
-              <div class="text-sm text-white/80">Password</div>
-              <div class="text-xs text-white/40">Mint a new one-time password and download it.</div>
+              <div class="text-sm text-white/80">Authentication</div>
+              <div class="text-xs text-white/40">Mint a new one-time password and reset TOTP for a locked-out user.</div>
             </div>
-            <button type="button" onclick={doRotate} disabled={rotating}
+            <button type="button" onclick={doResetAuth} disabled={resetting}
               class="shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border border-white/20 text-white hover:bg-white/[0.06] transition disabled:opacity-40">
-              {rotating ? 'Rotating…' : 'Rotate password'}
+              {resetting ? 'Resetting…' : 'Reset User Auth'}
             </button>
           </div>
-          {#if rotatedPw}
+          {#if resetPw}
             <div class="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm">
-              <p class="text-emerald-200 font-medium mb-1">New password — downloaded as {editUser.email}-password.txt</p>
+              <p class="text-emerald-200 font-medium mb-1">Auth reset — password downloaded as {editUser.email}-password.txt</p>
               <div class="flex items-center gap-3">
-                <code class="font-mono text-base select-all bg-black/40 px-2 py-1 rounded">{rotatedPw}</code>
-                <button onclick={() => navigator.clipboard.writeText(rotatedPw)}
+                <code class="font-mono text-base select-all bg-black/40 px-2 py-1 rounded">{resetPw}</code>
+                <button onclick={() => navigator.clipboard.writeText(resetPw)}
                   class="text-xs rounded bg-white/10 px-2 py-1 hover:bg-white/20">copy</button>
               </div>
-              <p class="text-white/40 text-xs mt-2">Shown once — stored only as a hash. Their TOTP enrollment is unchanged.</p>
+              <p class="text-white/40 text-xs mt-2">Shown once — stored only as a hash. TOTP was cleared; the user re-enrolls on next login.</p>
             </div>
           {/if}
         </div>

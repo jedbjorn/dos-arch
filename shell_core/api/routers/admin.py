@@ -142,24 +142,28 @@ def admin_set_user_admin(request: Request, user_id: int, body: SetAdminBody, con
     return {"user_id": user_id, "is_admin": bool(new_val)}
 
 
-@router.post("/admin/users/{user_id}/rotate-password", summary="Admin: rotate a user's login password. Returns the new one-time password.")
-def admin_rotate_user_password(request: Request, user_id: int, con=Depends(get_db)):
+@router.post("/admin/users/{user_id}/reset-auth", summary="Admin-assisted recovery: rotate the user's password AND reset TOTP. Returns the new one-time password.")
+def admin_reset_user_auth(request: Request, user_id: int, con=Depends(get_db)):
     _require_admin(request)
     row = con.execute("SELECT account_id, email FROM users WHERE user_id=?", (user_id,)).fetchone()
     if not row:
         raise HTTPException(404, "User not found")
     if not row["account_id"]:
-        raise HTTPException(409, "User has no provisioned credential to rotate.")
-    # The broker (credential authority) mints + hashes the new password and
-    # returns the plaintext once; the app never sees or stores password material.
-    bstat, bres = broker.post("/admin/auth/rotate-password", {"account_id": row["account_id"]})
+        raise HTTPException(409, "User has no provisioned credential to reset.")
+    # The broker (credential authority) mints + hashes a fresh password AND clears
+    # TOTP atomically, returning the plaintext once; the app never sees or stores
+    # password material. This is the locked-out-user recovery path: new password +
+    # TOTP re-enrollment on next login.
+    bstat, bres = broker.post("/admin/auth/reset-user-auth", {"account_id": row["account_id"]})
     if bstat == 404:
         raise HTTPException(502, "Auth backend has no matching credential for this user.")
     if bstat != 200 or "password" not in bres:
-        raise HTTPException(502, "Auth backend failed to rotate the password.")
+        raise HTTPException(502, "Auth backend failed to reset the user's auth.")
+    # Keep the app-side enrollment mirror consistent with the broker (TOTP now cleared).
+    con.execute("UPDATE users SET totp_enrolled_at=NULL WHERE user_id=?", (user_id,))
     con.execute(
         "INSERT INTO auth_events (user_id, account_id, email, kind, detail) "
-        "VALUES (?, ?, ?, 'password_rotate', 'admin')",
+        "VALUES (?, ?, ?, 'auth_reset', 'admin: password + totp')",
         (user_id, row["account_id"], row["email"]))
     con.commit()
     return {"user_id": user_id, "email": row["email"], "password": bres["password"]}
