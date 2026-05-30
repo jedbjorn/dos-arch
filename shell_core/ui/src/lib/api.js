@@ -41,8 +41,9 @@ export const getMe              = ()         => get('/auth/me')
 export const getAdminUsers      = ()                 => get('/admin/users/full')
 export const createUser         = (email, is_admin = 0) => post('/admin/users', { email, is_admin })
 export const setUserAdmin       = (user_id, is_admin)   => patch(`/admin/users/${user_id}/admin`, { is_admin })
-// rotateUserPassword returns the new one-time password (shown/downloaded once).
-export const rotateUserPassword = (user_id)             => post(`/admin/users/${user_id}/rotate-password`)
+// resetUserAuth rotates the password AND resets TOTP (admin-assisted recovery);
+// returns the new one-time password (shown/downloaded once).
+export const resetUserAuth      = (user_id)             => post(`/admin/users/${user_id}/reset-auth`)
 export const assignShellUser    = (shell_id, user_id)   => patch(`/admin/shells/${shell_id}/assign-user`, { user_id })
 
 // ── Substrate endpoints ──────────────────────────────────────────────────────

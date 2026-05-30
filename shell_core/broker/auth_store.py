@@ -193,6 +193,18 @@ def rotate_password(con: sqlite3.Connection, account_id: str) -> dict | None:
     return {"account_id": account_id, "password": password}
 
 
+def reset_user_auth(con: sqlite3.Connection, account_id: str) -> dict | None:
+    """Admin-assisted recovery: rotate the password AND clear TOTP in one step,
+    so a locked-out user (forgot password and/or lost their authenticator) gets
+    a fresh one-time password and re-enrolls TOTP on next login. Returns
+    {account_id, password} (plaintext once) or None if no such account."""
+    out = rotate_password(con, account_id)
+    if out is None:
+        return None
+    reset_totp(con, account_id)
+    return out
+
+
 # ── TOTP ──────────────────────────────────────────────────────────────────────
 
 def _rate_ok(account_id: str) -> bool:
