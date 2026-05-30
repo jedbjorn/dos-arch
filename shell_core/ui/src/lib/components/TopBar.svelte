@@ -1,9 +1,12 @@
 <script>
   // App header — route tabs sit on a translucent glass strip; active tab
   // gets a 2px accent underline via the shared .active-tab class.
+  import { onMount } from 'svelte'
   import { page } from '$app/stores'
   import { goto } from '$app/navigation'
+  import { getMe } from '$lib/api.js'
   import SideDrawer from './SideDrawer.svelte'
+  import RightDrawer from './RightDrawer.svelte'
 
   const TABS = [
     { label: 'Workspace', href: '/workspace' },
@@ -16,11 +19,13 @@
 
   function isActive(href) { return $page.url.pathname.startsWith(href) }
 
-  let drawerOpen = $state(false)
+  let drawerOpen     = $state(false)   // left: app mode
+  let userDrawerOpen = $state(false)   // right: user/account
 
-  // Placeholder until auth lands — derive from the logged-in user then.
-  // Initials default keeps the avatar legible without any backing data.
-  const userInitials = '—'
+  // Loaded once here and passed to both drawers (single /auth/me, no flicker).
+  let me = $state(null)
+  onMount(async () => { try { me = await getMe() } catch {} })
+  const userInitials = $derived(me?.email ? me.email[0].toUpperCase() : '—')
 </script>
 
 <header
@@ -54,17 +59,17 @@
     {/each}
   </nav>
 
-  <!-- Avatar — right side, placeholder until auth ships. The aria-label
-       and title carry an explicit 'sign-in' affordance hint for future
-       wiring; for now the button is inert. -->
+  <!-- Avatar — opens the right (user/account) drawer, mirror of the left. -->
   <button
     type="button"
+    onclick={() => (userDrawerOpen = true)}
     aria-label="Account"
-    title="Account (placeholder — auth not wired)"
+    title="Account"
     class="ml-auto w-8 h-8 rounded-full border border-white/[0.10] flex items-center justify-center text-[11px] font-medium text-white/70 hover:text-white hover:border-white/20 transition"
   >
     {userInitials}
   </button>
 </header>
 
-<SideDrawer bind:open={drawerOpen} />
+<SideDrawer bind:open={drawerOpen} {me} />
+<RightDrawer bind:open={userDrawerOpen} {me} />

@@ -2,17 +2,13 @@
   // Slide-out left drawer triggered from the hamburger in TopBar.
   // Hosts secondary navigation (config pages) above and the theme
   // selector at the bottom.
-  import { onMount } from 'svelte'
   import { goto } from '$app/navigation'
-  import { getMe } from '$lib/api.js'
   import { theme, setTheme, THEMES } from '$lib/theme.js'
 
-  let { open = $bindable(false) } = $props()
-
-  // The Users section surfaces the admin panel, but only for admins (the
-  // /admin page + API enforce it too). Non-admins see a disabled stub.
-  let me = $state(null)
-  onMount(async () => { try { me = await getMe() } catch {} })
+  // me is loaded once by TopBar and passed in. The Users section surfaces the
+  // admin panel only for admins (the /admin page + API enforce it too);
+  // non-admins see a disabled stub.
+  let { open = $bindable(false), me = null } = $props()
 
   // Secondary nav — sectioned surfaces, kept in the drawer so the TopBar
   // stays focused on the remaining main surfaces (Projects / Flags).
