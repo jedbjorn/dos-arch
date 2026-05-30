@@ -14,8 +14,10 @@ import os
 import urllib.error
 import urllib.request
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from api.common.auth import _require_admin
 
 router = APIRouter(tags=["keys"])
 
@@ -53,7 +55,8 @@ def _call(method: str, path: str, body: dict | None = None):
 
 
 @router.get("/keys", summary="List stored secret metadata (names + last4 + timestamps; no values)")
-def list_keys():
+def list_keys(request: Request):
+    _require_admin(request)
     return _call("GET", "/admin/secrets")
 
 
@@ -62,12 +65,14 @@ class _KeyBody(BaseModel):
 
 
 @router.put("/keys/{name}", summary="Set or rotate a secret")
-def set_key(name: str, body: _KeyBody):
+def set_key(name: str, body: _KeyBody, request: Request):
+    _require_admin(request)
     if not body.value:
         raise HTTPException(status_code=400, detail="value required")
     return _call("PUT", f"/admin/secrets/{name}", {"value": body.value})
 
 
 @router.delete("/keys/{name}", summary="Delete a secret")
-def delete_key(name: str):
+def delete_key(name: str, request: Request):
+    _require_admin(request)
     return _call("DELETE", f"/admin/secrets/{name}")

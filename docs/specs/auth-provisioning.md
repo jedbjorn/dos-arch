@@ -247,88 +247,32 @@ Username :::class1 -> Password :::class2 -> TOTP code :::class2 -> Session :::cl
 
 ## Data isolation
 
-Isolation is **not** uniform per-user scoping. The core data model
-(`docs/core-data-model.md`) makes the **project** the spine, so most data is
-*shared within a project team* — teammates are meant to see each other's work.
-Visibility splits into **three classes**; the only genuinely private surfaces
-are a user's own shell-mind and a per-flag privacy bit. This is still the bulk
-of the work and where a real leak would happen.
+> [!class1]
+> **Promoted to its own spec.** The per-surface treatment — every table mapped
+> to a visibility class + predicate + enforcement point, the dispatcher, the
+> `project_events` log, and the executable CI acceptance gate — now lives in
+> **`docs/specs/data-isolation.md`**. This section keeps only the shape; that
+> spec owns the detail and the build status (CC-108).
 
-### Three visibility classes
+The core data model (`core-data-model.md`) makes the **project** the spine, so
+most data is *shared within a project team* — isolation is **not** uniform
+per-user scoping. Visibility splits into **three classes**:
 
 | Class | Surfaces | Rule |
 |---|---|---|
-| **Project-team** | contacts, emails, events, notes; flags; `project_events`; shell **profile card** (`display_name`, `shortname`, `role`, `mandate`, `shell_type`) | visible to **members** of the relevant project (`user_projects`) |
-| **User-private** | `chat_sessions` / `chat_messages`, `shell_memory_archives`, `shell_identity_entries` (seed + L&S), `shell_decisions`, `current_state`, API keys | **owner + that shell only** — never team-visible, even between teammates |
-| **Global** | the projects catalogue (discovery; join is self-service); `is_shared=1` system shells | every authenticated user |
+| **Project-team** | contacts, emails, events, notes; flags; `project_events`; shell **profile card** | members of the relevant project (`user_projects`) |
+| **User-private** | chats, `shell_memory_archives`, seed + L&S, `shell_decisions`, `current_state`, API keys | **owner only** — never team-visible |
+| **Global** | projects catalogue; `is_shared=1` system shells | every authenticated user |
 
 > [!class1]
-> The system's **only** isolation predicate beyond plain project membership is
-> the per-flag privacy bit. Everything project-scoped reduces to one membership
-> check; everything user-private reduces to ownership.
+> The system's **only** predicate beyond plain project membership is the
+> per-flag privacy bit (`team_flag`). Everything project-scoped reduces to one
+> membership check; everything user-private to ownership. The full predicate
+> SQL, the compartmentalization rule, the dispatcher contract, and the
+> acceptance suite are in `data-isolation.md`.
 
-### Domain data — project-membership-scoped, compartmentalized
-
-contacts / emails / events / notes are visible iff you are a member of a
-project the item is filed under:
-
-```sql
-project_id IN (SELECT project_id FROM user_projects
-               WHERE user_id = :me AND is_deleted = 0)
-```
-
-Contacts and events are N:M to projects (visible via *any* shared project);
-emails file under one project; notes derive from their target's projects.
-**Compartmentalized by design:** because a contact is N:M but each email files
-under one specific project, the contact *card* can be broader than its
-*correspondence* — you can see *who* a contact is without seeing *every*
-conversation about them. A deliberate security layer, not an accident.
-
-### Flags — project-scoped + a private bit
-
-Flags gain `project_id` (required), `created_by_user_id`, and `team_flag`
-(default `1`). Visibility:
-
-```sql
-project_id IN (my joined projects)
-  AND (team_flag = 1 OR created_by_user_id = :me)
-```
-
-`team_flag = 1` → the whole project team sees it **and any member may act on
-it** (resolve / edit / note); `team_flag = 0` → creator-only (the "private
-flag" right). `shell_id` is demoted to provenance ("which shell raised it") —
-no longer an access axis.
-
-### Logging — `project_events`, event-only
-
-Every flag action (and later, other project actions — tbd) writes an
-append-only `project_events` row: `project_id`, `entity_type` / `entity_id`,
-`action` (`created` / `updated` / `resolved` / `reopened` / `deleted`), the
-actor (`actor_user_id` and/or `actor_shell_id`), `created_at`. **It logs the
-event, never the data** — no field values, no note bodies — so it is uniformly
-team-visible with no per-entity filtering (a private flag's "updated by X"
-leaks nothing). Written app-layer in the **same transaction** as the action,
-not via triggers — a trigger can neither see the session actor nor name the
-semantic action.
-
-### The dispatcher
-
-It bypasses HTTP, so it gets no request dependency for free. It must resolve
-the **message-owner's** `user_id` and apply the same predicates — domain reads
-through the owner's `user_projects`, writes never outside the owner's tenant.
-
-> [!class1]
-> Acceptance test for isolation: authenticated as user A, no API path,
-> dispatcher action, or crafted request can read or mutate any row outside A's
-> visibility — where A's visibility = {A's private rows} ∪ {shared shells} ∪
-> {project-team rows for projects A has joined, minus other users' private
-> flags}. The CI suite asserts this against B's IDs (404 / empty).
-
-> [!class3]
-> **Parked for a dedicated pass:** the `notes` table in its entirety (kinds,
-> the `resolution_notes` overlap), and the `notes.user_id` arc — a note *about*
-> a user has no project to derive visibility from, and resolves with that
-> review.
+The auth half this spec owns ends at *who the caller is*; `data-isolation.md`
+picks up at *what that caller may see*.
 
 ## Shell types
 
