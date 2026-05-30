@@ -54,15 +54,17 @@ description: Never 403 — that confirms existence
 
 ## Status
 
-> [!class1]
-> Living specification. 2026-05-31. **Flags + user-private surfaces built, and
-> the CI acceptance harness now exists** (`tests/`, 21 passing). Remaining: the
-> dispatcher's domain reads and per-surface CI coverage for the domain routers
-> as they land. Tracked on CC-108. Source of truth for *who is the caller* is
-> `auth-provisioning.md`; this spec owns *what they may see*.
+> [!class3]
+> Living specification. 2026-05-31. **The data-isolation build is complete —
+> CC-108 closed.** Every HTTP surface is gated — flags, user-private, and all
+> four domain routers (contacts / emails / events / notes) — on one shared
+> membership primitive (`common/tenancy.py`), 404-not-403, with a two-tenant CI
+> suite (`tests/`, 54 passing). The one carried-forward item is the *dispatcher's*
+> domain reads, which has no trigger yet (see below). Source of truth for *who is
+> the caller* is `auth-provisioning.md`; this spec owns *what they may see*.
 
 ```linear
-Flags :::class3 -> User-private :::class3 -> CI harness :::class3 -> NOT NULL :::class3 -> Domain :::class1
+Flags :::class3 -> User-private :::class3 -> CI harness :::class3 -> NOT NULL :::class3 -> Domain :::class3
 ```
 
 - ✅ **Project spine** — `flags` gained `project_id` / `created_by_user_id` /
@@ -79,18 +81,26 @@ Flags :::class3 -> User-private :::class3 -> CI harness :::class3 -> NOT NULL ::
   returns the card to any visible caller but nulls the private columns for
   non-owners; the broker-keys surface (`keys.py`) is now admin-only (was
   ungated). Verified live: shell-self 200, cross-shell + unauthenticated 404,
-  dispatcher turn unbroken (PR pending).
-- ⏳ **Dispatcher domain reads** — the off-HTTP path already acts via each
-  shell's own key (so shell-private calls are gated), but its *domain* reads
-  (contacts/emails/events) must resolve the message-owner's `user_id` once those
-  routers exist. Tracked with step 4.
+  dispatcher turn unbroken (#174).
+- ✅ **Domain routers** — contacts (`contacts.py`), emails (`emails.py`), events
+  (`events.py`), notes (`notes.py`), all project-membership scoped on the shared
+  `common/tenancy.py` primitive (#177–#180). Emails carry the compartmentalization
+  (card broader than mail); notes resolve the parked `user_id` arc as
+  author-private. Each verified live + in CI.
+- ⏳ **Dispatcher domain reads** *(carried forward — not yet triggered)* — the
+  off-HTTP dispatcher acts via each shell's own key, so its shell-private calls
+  are already gated. Its *domain* reads would need to resolve the message-owner's
+  `user_id`, but the dispatcher does **not drive** contacts/emails/events/notes
+  today — so there is nothing to scope yet. Activate this when dispatcher-domain
+  usage is built; until then it is a no-op, not a gap.
 - ✅ **CI isolation harness** — stood up at `tests/` (pytest; `pytest.ini`
   `pythonpath=shell_core`). `conftest.py` builds a throwaway DB from `schema.sql`
   + post-059 migrations and seeds **two tenants** (Alice/Bob) + a shared shell;
   `test_isolation.py` asserts cross-tenant 404 / owner-200 across the
   user-private surfaces, shared-card private-column nulling, the broker-keys
-  admin gate, and the flags membership layer. **21 passing.** Domain-router
-  coverage extends it as those routers land.
+  admin gate, and the flags membership layer; `test_domain_isolation.py` covers
+  the four domain routers (incl. compartmentalization + author-private notes).
+  **54 passing.**
 - ✅ **`project_id NOT NULL`** — physical constraint landed (migration 064,
   table rebuild; drops/recreates the `flag_schedule` view around it). A flag can
   no longer be project-less at the DB level, not just at the 422. Asserted in CI.
