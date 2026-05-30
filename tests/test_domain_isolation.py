@@ -220,3 +220,91 @@ def test_event_mutate_delete_isolation(alice, bob, events):
     assert bob.patch(f"/events/{e}", json={"title": "hax"}).status_code == 404
     assert bob.delete(f"/events/{e}").status_code == 404
     assert alice.patch(f"/events/{e}", json={"title": "ok"}).status_code == 200
+
+
+# ── Notes (exclusive arc; user-target is author-private) ──────────────────────
+
+USER_A, USER_B = 10, 20   # see conftest
+
+
+@pytest.fixture(scope="module")
+def notes(contacts):
+    """A project note, a contact note (Alice-only contact), and a user-target
+    note authored by Alice *about* Bob (author-private)."""
+    con = sqlite3.connect(os.environ["SHELL_DB_PATH"])
+    try:
+        ids = {}
+
+        def mk(author, **target):
+            cols = ["kind", "body", "author_user_id", *target.keys()]
+            vals = ["note", "n", author, *target.values()]
+            cur = con.execute(
+                f"INSERT INTO notes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+            return cur.lastrowid
+
+        ids["proj"] = mk(USER_A, project_id=PROJ_A)
+        ids["contact"] = mk(USER_A, contact_id=contacts["alice"])
+        ids["user_by_alice"] = mk(USER_A, user_id=USER_B)   # about Bob, authored by Alice
+        con.commit()
+        return ids
+    finally:
+        con.close()
+
+
+def test_note_project_target_isolation(alice, bob, anon, notes):
+    n = notes["proj"]
+    assert alice.get(f"/notes/{n}").status_code == 200
+    assert bob.get(f"/notes/{n}").status_code == 404
+    assert anon.get(f"/notes/{n}").status_code == 404
+
+
+def test_note_contact_target_isolation(alice, bob, notes):
+    n = notes["contact"]
+    assert alice.get(f"/notes/{n}").status_code == 200
+    assert bob.get(f"/notes/{n}").status_code == 404      # contact is Alice-only
+
+
+def test_note_user_target_is_author_private(alice, bob, anon, admin, notes):
+    """The parked classification: a note *about* Bob, authored by Alice, is
+    visible to Alice (author) and admin — but NOT to Bob (the subject)."""
+    n = notes["user_by_alice"]
+    assert alice.get(f"/notes/{n}").status_code == 200    # author
+    assert admin.get(f"/notes/{n}").status_code == 200    # operator backstop
+    assert bob.get(f"/notes/{n}").status_code == 404      # subject cannot see it
+    assert anon.get(f"/notes/{n}").status_code == 404
+
+
+def test_note_list_requires_visible_target(alice, bob):
+    assert alice.get(f"/notes?project_id={PROJ_A}").status_code == 200
+    assert bob.get(f"/notes?project_id={PROJ_A}").status_code == 404      # not a member
+    assert alice.get("/notes").status_code == 422                         # no target
+
+
+def test_note_create_isolation(alice, bob):
+    assert alice.post("/notes", json={"kind": "note", "project_id": PROJ_A}).status_code == 200
+    assert bob.post("/notes", json={"kind": "note", "project_id": PROJ_A}).status_code == 404
+    assert alice.post("/notes", json={"kind": "note", "project_id": PROJ_B}).status_code == 404
+
+
+def test_note_create_user_target_no_membership(alice, bob):
+    """A user-target note needs no project membership (author-private), and the
+    subject still can't read it."""
+    r = alice.post("/notes", json={"kind": "note", "user_id": USER_B})
+    assert r.status_code == 200
+    nid = r.json()["note_id"]
+    assert bob.get(f"/notes/{nid}").status_code == 404
+
+
+def test_note_exclusive_arc_validation(alice):
+    assert alice.post("/notes", json={"kind": "note"}).status_code == 422               # no target
+    assert alice.post("/notes", json={"kind": "note", "project_id": PROJ_A,
+                                      "user_id": USER_B}).status_code == 422              # two targets
+    assert alice.post("/notes", json={"kind": "meeting_prep",
+                                      "project_id": PROJ_A}).status_code == 422           # wrong target
+
+
+def test_note_mutate_delete_isolation(alice, bob, notes):
+    n = notes["proj"]
+    assert bob.patch(f"/notes/{n}", json={"body": "hax"}).status_code == 404
+    assert bob.delete(f"/notes/{n}").status_code == 404
+    assert alice.patch(f"/notes/{n}", json={"body": "ok"}).status_code == 200

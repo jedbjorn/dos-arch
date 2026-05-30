@@ -152,7 +152,7 @@ is a surface nobody has classified — which is itself a finding.
 | `emails` | project-team | member of the **one** filing `project_id` | `emails.py` | ✅ |
 | `events` | project-team | member of **any** `event_projects` (N:M) | `events.py` | ✅ |
 | `event_contacts/users/projects` | project-team | filing gated by membership at create | `events.py` | ✅ |
-| `notes` | project-team* | derive from target's project (*user-target parked) | router TBD | ⏳ |
+| `notes` | project-team / author-private | derive from target; **user-target = author-private** | `notes.py` | ✅ |
 | shell **profile card** | project-team / global | visible-gate; private cols nulled for non-owner | `shells.py` | ✅ |
 | `chat_sessions`/`chat_messages` | user-private | `_require_shell_owner` | `shells.py` | ✅ |
 | `shell_memory_archives` | user-private | owner (by shell or archive_id) | `shells.py` | ✅ |
@@ -175,10 +175,10 @@ is a surface nobody has classified — which is itself a finding.
 > wiring the domain routers.
 
 > [!class3]
-> **Parked for a dedicated pass:** the `notes` table in full (kinds, the
-> `resolution_notes` overlap) and the `notes.user_id` arc — a note *about* a
-> user has no project to derive visibility from. Classify it with that review,
-> not by guessing here.
+> **Resolved (`notes.py`):** a note's visibility derives from its single target
+> — project / contact / event membership. The parked `notes.user_id` arc (a note
+> *about* a user, with no project to derive from) is classified **author-private**:
+> visible to its `author_user_id` + the admin backstop, never to the subject.
 
 ## Reference pattern
 
@@ -379,8 +379,8 @@ User-private :::class3 -> CI harness :::class3 -> Dispatcher :::class1 -> Domain
 
 ## Open questions
 
-- [ ] **`notes` classification** — the full kind matrix and the `notes.user_id`
-      arc (a note *about* a user has no project to derive from). Its own pass.
+- [x] **`notes` classification** — resolved in `notes.py`: visibility derives
+      from the target; the `notes.user_id` arc is **author-private**.
 - [ ] **Cross-user own-shells** — a user owns multiple shells (Exp-NN). Can they
       read across their *own* shells' private minds, or is each shell sealed even
       to its owner's other shells? Default assumption: owner-visible.
