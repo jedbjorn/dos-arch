@@ -17,26 +17,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.common.db import get_db
+from api.common.tenancy import assert_member as _assert_member, my_projects_subquery
 
 router = APIRouter(tags=["contacts"])
 
 
 # ── Visibility (project-team via contact_projects N:M) ────────────────────────
 # A contact is visible iff the caller is a member of at least one project the
-# contact is filed under. An unauthenticated caller resolves user_id=None, so the
-# membership subquery is empty and nothing matches — closed by default.
-
-def _membership_subquery(request: Request) -> tuple[str, list]:
-    uid = getattr(request.state, "user_id", None)
-    return ("SELECT project_id FROM user_projects "
-            "WHERE user_id = ? AND is_deleted = 0", [uid])
-
+# contact is filed under. Membership / closed-by-default semantics live in
+# api/common/tenancy.py — the one source every domain router shares.
 
 def _visible_contact(con, request: Request, contact_id: int, cols: str = "c.*"):
     """The contact row (selected cols) iff it exists, is live, AND the caller is
     a member of one of its projects. None otherwise — callers turn that into a
     404 so 'not yours' is indistinguishable from 'does not exist'."""
-    sub, params = _membership_subquery(request)
+    sub, params = my_projects_subquery(request)
     return con.execute(
         f"SELECT {cols} FROM contacts c "
         f"WHERE c.contact_id = ? AND c.is_deleted = 0 "
@@ -45,17 +40,6 @@ def _visible_contact(con, request: Request, contact_id: int, cols: str = "c.*"):
         f"            AND cp.project_id IN ({sub}))",
         (contact_id, *params),
     ).fetchone()
-
-
-def _assert_member(con, request: Request, project_id: int) -> None:
-    """The caller must be a member of `project_id` to file a contact under it.
-    404 (not 403) — don't confirm the project exists to a non-member."""
-    uid = getattr(request.state, "user_id", None)
-    if not con.execute(
-        "SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ? AND is_deleted = 0",
-        (uid, project_id),
-    ).fetchone():
-        raise HTTPException(404, "Project not found")
 
 
 _LOCATION_FIELDS = ("formatted_address", "locality", "region", "country",
@@ -131,7 +115,7 @@ def create_contact(body: CreateContactBody, request: Request, con = Depends(get_
 
 @router.get("/contacts", summary="List contacts visible to the caller (member of any filed project)")
 def list_contacts(request: Request, project_id: int | None = None, q: str = "", con = Depends(get_db)):
-    sub, params = _membership_subquery(request)
+    sub, params = my_projects_subquery(request)
     where = ["c.is_deleted = 0",
              f"EXISTS (SELECT 1 FROM contact_projects cp WHERE cp.contact_id = c.contact_id "
              f"AND cp.is_deleted = 0 AND cp.project_id IN ({sub}))"]

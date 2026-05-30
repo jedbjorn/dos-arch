@@ -149,7 +149,7 @@ is a surface nobody has classified — which is itself a finding.
 | `project_events` | project-team | membership; event-only, no detail col | `flags.py` writer | ✅ |
 | `contacts` | project-team | member of **any** filed project (N:M) | `contacts.py` | ✅ |
 | `contact_projects` | project-team | filing gated by membership at create | `contacts.py` | ✅ |
-| `emails` | project-team | files under **one** `project_id` | router TBD | ⏳ |
+| `emails` | project-team | member of the **one** filing `project_id` | `emails.py` | ✅ |
 | `events` | project-team | via `event_projects` (N:M) | router TBD | ⏳ |
 | `event_contacts/users/projects` | project-team | derived from `events` | router TBD | ⏳ |
 | `notes` | project-team* | derive from target's project (*user-target parked) | router TBD | ⏳ |
