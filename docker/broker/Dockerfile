@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 WORKDIR /app
 COPY broker.py /app/broker.py
 COPY secrets_store.py /app/secrets_store.py
+COPY auth_store.py /app/auth_store.py
 
 # ── non-root + secrets mountpoint ─────────────────────────────────────────────
 # /secrets is a docker NAMED VOLUME at run time (KEK + secrets.db). Pre-create

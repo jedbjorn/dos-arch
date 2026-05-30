@@ -9,6 +9,7 @@ import time
 from api.common.db import db
 from api.common.logging import _log_action
 from api.common.errors import _log_5xx
+from api.common.sessions import COOKIE_NAME, resolve_session
 
 app = FastAPI(title="dos-arch API")
 
@@ -62,13 +63,35 @@ def _resolve_caller_shell(request: Request) -> tuple[int | None, str | None, boo
     return row["shell_id"], row["shortname"], bool(row["is_admin"]), False
 
 
+def _resolve_session(request: Request):
+    """Resolve the session cookie to (user_id, account_id, is_admin), or None."""
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    con = db()
+    try:
+        return resolve_session(con, token)
+    finally:
+        con.close()
+
+
 @app.middleware("http")
 async def auth_passthrough(request: Request, call_next):
-    request.state.user_id   = 1
-    request.state.is_admin  = True
     shell_id, shell_name, shell_is_admin, bad = _resolve_caller_shell(request)
     if bad:
         return JSONResponse(status_code=401, content={"detail": "Invalid API key."})
+    sess = _resolve_session(request)
+    if sess is not None:
+        # The multi-tenant path: a valid session cookie sets the real user.
+        request.state.user_id, request.state.account_id, request.state.is_admin = sess
+    else:
+        # Legacy single-user default for the keyless localhost UI + api-key
+        # callers. Phase 2 flips the keyless case to unauthenticated once the
+        # trust seam + /login exist; until then the UI and dispatcher keep
+        # working exactly as before.
+        request.state.user_id    = 1
+        request.state.account_id = None
+        request.state.is_admin   = True
     request.state.shell_id       = shell_id
     request.state.shell_name     = shell_name
     request.state.shell_is_admin = shell_is_admin
@@ -77,7 +100,8 @@ async def auth_passthrough(request: Request, call_next):
     if request.method in MUTATION_METHODS:
         duration = int((time.monotonic() - t0) * 1000)
         ip = request.client.host if request.client else "unknown"
-        _log_action(request.method, request.url.path, response.status_code, duration, ip, user_id=1)
+        _log_action(request.method, request.url.path, response.status_code, duration, ip,
+                    user_id=getattr(request.state, "user_id", None) or 1)
     return response
 
 # Always-allowed query params (used outside individual endpoint signatures).
@@ -148,6 +172,9 @@ app.include_router(catalogue_router)
 
 from api.routers.admin import router as admin_router
 app.include_router(admin_router)
+
+from api.routers.auth import router as auth_router
+app.include_router(auth_router)
 
 
 @app.get("/health")

@@ -18,8 +18,49 @@ CREATE TABLE users (
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     theme_bg      TEXT    DEFAULT '#0f1117',
     theme_accent  TEXT    DEFAULT '#0072FF',
-    chat_history_window INTEGER
+    chat_history_window INTEGER,
+    -- Auth spine (migration 061). Reversible secrets (password, TOTP seed) live
+    -- in the broker IdP, not here; these are relational identity only.
+    account_id       TEXT,                      -- mirrors broker auth_users.account_id
+    is_admin         INTEGER NOT NULL DEFAULT 0,
+    totp_enrolled_at TEXT                        -- non-secret mirror of enrollment state
 );
+
+-- Email is the login key; account_id the durable cross-DB key. Partial unique
+-- indexes allow NULLs for not-yet-provisioned rows.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+  ON users(email COLLATE NOCASE) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account
+  ON users(account_id) WHERE account_id IS NOT NULL;
+
+-- ── Sessions + auth audit (migration 061) ─────────────────────────────────────
+-- Server-side sessions: SHA-256(token) → user. Raw token never stored. Hot-path
+-- lookup, instant revoke. Sliding 30-day expiry (renewal throttled app-side).
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash   TEXT    PRIMARY KEY,
+    user_id      INTEGER NOT NULL,
+    account_id   TEXT,
+    ua_hash      TEXT,
+    created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    expires_at   TEXT    NOT NULL,
+    revoked      INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- Append-only auth audit. Secrets never logged.
+CREATE TABLE IF NOT EXISTS auth_events (
+    event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER,
+    account_id TEXT,
+    email      TEXT,
+    kind       TEXT NOT NULL,
+    detail     TEXT,
+    ip         TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_user ON auth_events(user_id);
 
 -- ── Shells ────────────────────────────────────────────────────────────────────
 
