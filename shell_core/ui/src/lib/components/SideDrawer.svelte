@@ -5,13 +5,16 @@
   import { goto } from '$app/navigation'
   import { theme, setTheme, THEMES } from '$lib/theme.js'
 
-  let { open = $bindable(false) } = $props()
+  // me is loaded once by TopBar and passed in. The Users section surfaces the
+  // admin panel only for admins (the /admin page + API enforce it too);
+  // non-admins see a disabled stub.
+  let { open = $bindable(false), me = null } = $props()
 
   // Secondary nav — sectioned surfaces, kept in the drawer so the TopBar
   // stays focused on the remaining main surfaces (Projects / Flags).
   // Shells: the shell viewer. Models: per-provider activation pages.
-  // Keys: secret rotation. User: auth is a future flag, stubbed (disabled).
-  const SECTIONS = [
+  // Keys: secret rotation. Users: admin panel (user + shell management).
+  const SECTIONS = $derived([
     { title: 'Shells', items: [
       { label: 'Shells', href: '/shells' },
     ] },
@@ -23,10 +26,10 @@
     { title: 'Keys', items: [
       { label: 'API Keys', href: '/keysconfig' },
     ] },
-    { title: 'User', items: [
-      { label: 'Authentication', note: 'coming soon', disabled: true },
-    ] },
-  ]
+    { title: 'Users', items: me?.is_admin
+        ? [{ label: 'Admin', href: '/admin' }]
+        : [{ label: 'Admin', note: 'admins only', disabled: true }] },
+  ])
 
   function go(href) { close(); goto(href) }
 

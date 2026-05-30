@@ -36,6 +36,13 @@ export const login              = (body)     => post('/auth/login', body)
 export const logout             = ()         => post('/auth/logout')
 export const getMe              = ()         => get('/auth/me')
 
+// ── Admin: user management ─────────────────────────────────────────────────────
+// createUser returns the one-time password (shown once for the operator to copy).
+export const getAdminUsers      = ()                 => get('/admin/users/full')
+export const createUser         = (email, is_admin = 0) => post('/admin/users', { email, is_admin })
+export const setUserAdmin       = (user_id, is_admin)   => patch(`/admin/users/${user_id}/admin`, { is_admin })
+export const assignShellUser    = (shell_id, user_id)   => patch(`/admin/shells/${shell_id}/assign-user`, { user_id })
+
 // ── Substrate endpoints ──────────────────────────────────────────────────────
 
 export const getHealth          = ()         => get('/health')
