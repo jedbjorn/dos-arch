@@ -28,6 +28,14 @@ const put   = (p, b) => request('PUT',    p, b ?? {})
 const patch = (p, b) => request('PATCH',  p, b ?? {})
 const del_  = (p, b) => request('DELETE', p, b)
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+// login is two-step: POST {email, password} returns {stage: 'totp'|'enroll'|
+// 'authed'}; resend with {email, password, code} to finish. The session cookie
+// is set by the API and relayed through the /api trust seam.
+export const login              = (body)     => post('/auth/login', body)
+export const logout             = ()         => post('/auth/logout')
+export const getMe              = ()         => get('/auth/me')
+
 // ── Substrate endpoints ──────────────────────────────────────────────────────
 
 export const getHealth          = ()         => get('/health')

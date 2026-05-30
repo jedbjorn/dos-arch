@@ -65,6 +65,14 @@ module.exports = {
       script: 'node_modules/.bin/vite',
       args:   'dev --host 127.0.0.1 --port 5174',
       interpreter: 'none',
+      // The SvelteKit server is the trust seam (routes/api/[...path] +
+      // hooks.server.js): it proxies /api/* to the API and presents the shared
+      // INTERNAL_PROXY_SECRET so the API can tell a real proxied request from a
+      // direct hit. API_TARGET points the seam at the loopback API.
+      env: {
+        ...loadEnv(),
+        API_TARGET: 'http://127.0.0.1:8001',
+      },
       autorestart: true,
       max_restarts: 10,
       restart_delay: 2000,

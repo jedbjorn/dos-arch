@@ -37,13 +37,23 @@ docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
 mkdir -p "$(dirname "${ENV_FILE}")"
 touch "${ENV_FILE}"; chmod 600 "${ENV_FILE}"
 
-echo "==> [1/3] admin token"
+echo "==> [1/3] auth secrets"
 if grep -q '^BROKER_ADMIN_TOKEN=' "${ENV_FILE}"; then
   echo "    BROKER_ADMIN_TOKEN already set — leaving it"
 else
   # 32 random bytes hex. openssl is ubiquitous; the value is never echoed.
   printf 'BROKER_ADMIN_TOKEN=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
   echo "    BROKER_ADMIN_TOKEN generated -> ${ENV_FILE}"
+fi
+# INTERNAL_PROXY_SECRET — shared between the SvelteKit trust seam and the API so
+# the API can tell a proxied (browser) request from a direct hit. Without it the
+# seam can't enforce auth on the user surface (the API falls back to legacy
+# single-user). Read by both dosarch-api and dosarch-ui via loadEnv().
+if grep -q '^INTERNAL_PROXY_SECRET=' "${ENV_FILE}"; then
+  echo "    INTERNAL_PROXY_SECRET already set — leaving it"
+else
+  printf 'INTERNAL_PROXY_SECRET=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
+  echo "    INTERNAL_PROXY_SECRET generated -> ${ENV_FILE}"
 fi
 
 echo "==> [2/3] KEK + store (named volume ${SECRETS_VOL}, inside ${IMAGE})"
