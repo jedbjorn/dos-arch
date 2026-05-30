@@ -13,7 +13,10 @@ purpose: Auth, sessions, isolation, provisioning
 > [!class1]
 > Living specification. 2026-05-30. **Auth spine + login + hardening pass
 > implemented** (sessions, broker-IdP login, password + TOTP, admin user
-> management). Data isolation across all routers is the remaining phase.
+> management). **Data isolation now designed** — the three-class visibility
+> model below (project-team / user-private / global), plus the `flags` +
+> `project_events` schema changes; implementation across routers + dispatcher
+> is the remaining build (tracked on CC-108).
 
 > [!class3]
 > **Implementation notes — hardening pass (2026-05-30).** Four decisions below
@@ -60,8 +63,11 @@ access as the ultimate backstop.
 
 > [!class4]
 > The hard part is not the login page. It is data isolation: every router
-> assumes `user_id=1`. Multi-tenant means auditing every query so no user can
-> read or touch another's shells, chats, skills, flags, or memory.
+> assumes `user_id=1`. Multi-tenant means auditing every query against the
+> three visibility classes — so no user can read another's **private** surfaces
+> (chats, memory, seed/L&S, decisions) or another project's team data, while
+> the data that *is* meant to be shared (a project's contacts, mail, flags)
+> stays visible to its team.
 
 > [!class1]
 > Core invariant, true at every layer below: **the server derives `user_id`
@@ -221,24 +227,88 @@ Username :::class1 -> Password :::class2 -> TOTP code :::class2 -> Session :::cl
 
 ## Data isolation
 
-Multi-tenant means every query is scoped to the owning user. This is the bulk
+Isolation is **not** uniform per-user scoping. The core data model
+(`docs/core-data-model.md`) makes the **project** the spine, so most data is
+*shared within a project team* — teammates are meant to see each other's work.
+Visibility splits into **three classes**; the only genuinely private surfaces
+are a user's own shell-mind and a per-flag privacy bit. This is still the bulk
 of the work and where a real leak would happen.
 
-- **Every router** that reads/writes `shells`, `chat_sessions`,
-  `chat_messages`, skills, flags, decisions, identity entries → filtered by
-  `user_id`. `shells.is_shared = 1` is the deliberate cross-tenant exception
-  (shared/system shells).
-- **The dispatcher** acts on behalf of users when it drains queued chat
-  messages; its DB writes must stay inside the message's owner tenant.
-  Audit it alongside the routers — it is a DB writer that bypasses the HTTP
-  boundary entirely.
-- **`/shells/mine`** already implies "mine" but resolves to `user_id=1`.
-  It becomes correct for free once the session-derived `user_id` flows in.
+### Three visibility classes
+
+| Class | Surfaces | Rule |
+|---|---|---|
+| **Project-team** | contacts, emails, events, notes; flags; `project_events`; shell **profile card** (`display_name`, `shortname`, `role`, `mandate`, `shell_type`) | visible to **members** of the relevant project (`user_projects`) |
+| **User-private** | `chat_sessions` / `chat_messages`, `shell_memory_archives`, `shell_identity_entries` (seed + L&S), `shell_decisions`, `current_state`, API keys | **owner + that shell only** — never team-visible, even between teammates |
+| **Global** | the projects catalogue (discovery; join is self-service); `is_shared=1` system shells | every authenticated user |
+
+> [!class1]
+> The system's **only** isolation predicate beyond plain project membership is
+> the per-flag privacy bit. Everything project-scoped reduces to one membership
+> check; everything user-private reduces to ownership.
+
+### Domain data — project-membership-scoped, compartmentalized
+
+contacts / emails / events / notes are visible iff you are a member of a
+project the item is filed under:
+
+```sql
+project_id IN (SELECT project_id FROM user_projects
+               WHERE user_id = :me AND is_deleted = 0)
+```
+
+Contacts and events are N:M to projects (visible via *any* shared project);
+emails file under one project; notes derive from their target's projects.
+**Compartmentalized by design:** because a contact is N:M but each email files
+under one specific project, the contact *card* can be broader than its
+*correspondence* — you can see *who* a contact is without seeing *every*
+conversation about them. A deliberate security layer, not an accident.
+
+### Flags — project-scoped + a private bit
+
+Flags gain `project_id` (required), `created_by_user_id`, and `team_flag`
+(default `1`). Visibility:
+
+```sql
+project_id IN (my joined projects)
+  AND (team_flag = 1 OR created_by_user_id = :me)
+```
+
+`team_flag = 1` → the whole project team sees it **and any member may act on
+it** (resolve / edit / note); `team_flag = 0` → creator-only (the "private
+flag" right). `shell_id` is demoted to provenance ("which shell raised it") —
+no longer an access axis.
+
+### Logging — `project_events`, event-only
+
+Every flag action (and later, other project actions — tbd) writes an
+append-only `project_events` row: `project_id`, `entity_type` / `entity_id`,
+`action` (`created` / `updated` / `resolved` / `reopened` / `deleted`), the
+actor (`actor_user_id` and/or `actor_shell_id`), `created_at`. **It logs the
+event, never the data** — no field values, no note bodies — so it is uniformly
+team-visible with no per-entity filtering (a private flag's "updated by X"
+leaks nothing). Written app-layer in the **same transaction** as the action,
+not via triggers — a trigger can neither see the session actor nor name the
+semantic action.
+
+### The dispatcher
+
+It bypasses HTTP, so it gets no request dependency for free. It must resolve
+the **message-owner's** `user_id` and apply the same predicates — domain reads
+through the owner's `user_projects`, writes never outside the owner's tenant.
 
 > [!class1]
 > Acceptance test for isolation: authenticated as user A, no API path,
-> dispatcher action, or crafted request can read or mutate any row owned by
-> user B. Shared shells are the only thing visible across tenants.
+> dispatcher action, or crafted request can read or mutate any row outside A's
+> visibility — where A's visibility = {A's private rows} ∪ {shared shells} ∪
+> {project-team rows for projects A has joined, minus other users' private
+> flags}. The CI suite asserts this against B's IDs (404 / empty).
+
+> [!class3]
+> **Parked for a dedicated pass:** the `notes` table in its entirety (kinds,
+> the `resolution_notes` overlap), and the `notes.user_id` arc — a note *about*
+> a user has no project to derive visibility from, and resolves with that
+> review.
 
 ## Shell types
 
@@ -453,6 +523,8 @@ New / changed objects (SQLite, `.sql` migrations — dos-arch convention):
 | `users.totp_secret` + `totp_enrolled_at` | TOTP enrollment (secret encrypted at rest). |
 | `shells.shell_type` | enum: `system`, `assistant`, `planner` (extensible). |
 | `auth_events` | append-only audit log: login ok/fail, TOTP fail, session create/revoke, invite redeem, admin reset, admin actions. Includes `CF-Connecting-IP`. Secrets never logged. |
+| `flags` (modify) | + `project_id` (required), `created_by_user_id`, `team_flag` (default 1; 0 = creator-only). `shell_id` demoted to provenance. |
+| `project_events` | append-only, project-scoped event log: `entity_type` / `entity_id`, `action`, `actor_user_id` / `actor_shell_id`, `created_at`. **Event-only — no data/detail column.** Flags are the first writer; other project actions wire in later. |
 
 > [!class4]
 > `shell_types` / `type_skills` / `type_tools` (the template-sync tables) are
@@ -474,9 +546,11 @@ Auth spine :::class1 -> Isolation :::class2 -> Provisioning :::class3
    `/api/[...path]` route + internal secret, FastAPI session resolution
    (delete hardcoded `user_id=1`). Password + TOTP login + `/login` route +
    CSRF tokens.
-2. **Isolation** — scope every router + the dispatcher by `user_id`; tenant
-   accessors + ownership asserts; verify the CI acceptance suite. Highest-risk
-   layer.
+2. **Isolation** — scope every router + the dispatcher by the three-class
+   model: user-private surfaces by `user_id`, project-team surfaces by
+   `user_projects` membership, flags by membership + `team_flag`. Add the
+   `flags` columns + `project_events` table; tenant accessors + ownership
+   asserts; verify the CI acceptance suite. Highest-risk layer.
 3. **Provisioning + admin** — `invites` table + admin mint endpoint; redeem →
    create user → enroll TOTP → mint `Exp-NN` (`shell_type='assistant'`)
    transaction. Plus the admin recovery endpoint (TOTP/password reset).
