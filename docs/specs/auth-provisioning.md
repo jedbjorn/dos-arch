@@ -13,10 +13,30 @@ purpose: Auth, sessions, isolation, provisioning
 > [!class1]
 > Living specification. 2026-05-30. **Auth spine + login + hardening pass
 > implemented** (sessions, broker-IdP login, password + TOTP, admin user
-> management). **Data isolation now designed** — the three-class visibility
-> model below (project-team / user-private / global), plus the `flags` +
-> `project_events` schema changes; implementation across routers + dispatcher
-> is the remaining build (tracked on CC-108).
+> management). **Data isolation: flags layer implemented** — the three-class
+> model is live on the `flags` surface (project spine + `project_events` +
+> visibility enforcement); the **user-private surfaces and the dispatcher are
+> the remaining build** (tracked on CC-108).
+
+> [!class3]
+> **Implementation progress — data isolation (CC-108, 2026-05-30).**
+> - ✅ **Project spine** — `flags` gained `project_id` / `created_by_user_id` /
+>   `team_flag`; seeded the System project (user 1 = owner) + a default flag
+>   (migration 062, #170). `shell_id` demoted to provenance.
+> - ✅ **`project_events`** — append-only, event-only audit log; flags are its
+>   first writer (every mutation logs in-transaction) (migration 063, #171).
+> - ✅ **Flags visibility enforcement** — one predicate (project membership AND
+>   (`team_flag=1` OR creator)) on all reads; mutations gate via a visible-row
+>   lookup (404, not 403); create requires + asserts membership; unauthenticated
+>   = closed by default (#172). Verified by a synthetic two-tenant predicate test.
+> - ⏳ **`project_id` NOT NULL** — enforced at the app layer (422); the physical
+>   column constraint is a deferred table-rebuild migration.
+> - ⏳ **CI isolation suite** — the spec's executable acceptance gate; **no
+>   pytest harness exists in the repo yet**, so this is its own setup task.
+> - ⏳ **User-private surfaces** (chats / archives / seed+L&S / decisions /
+>   current_state / API keys) + **dispatcher** tenant scoping — not started.
+> - ⏳ **`parent_flag_id`** cross-tenant scoping in `_validate_parent` (low
+>   severity — leaks existence only, not content).
 
 > [!class3]
 > **Implementation notes — hardening pass (2026-05-30).** Four decisions below
@@ -551,6 +571,9 @@ Auth spine :::class1 -> Isolation :::class2 -> Provisioning :::class3
    `user_projects` membership, flags by membership + `team_flag`. Add the
    `flags` columns + `project_events` table; tenant accessors + ownership
    asserts; verify the CI acceptance suite. Highest-risk layer.
+   *(Progress — see Status: ✅ flags layer (`flags` columns + `project_events`
+   + visibility enforcement, #170–#172); ⏳ user-private surfaces, dispatcher
+   scoping, physical `project_id` NOT NULL, and the CI suite remain.)*
 3. **Provisioning + admin** — `invites` table + admin mint endpoint; redeem →
    create user → enroll TOTP → mint `Exp-NN` (`shell_type='assistant'`)
    transaction. Plus the admin recovery endpoint (TOTP/password reset).
