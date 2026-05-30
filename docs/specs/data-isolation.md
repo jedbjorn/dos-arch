@@ -62,7 +62,7 @@ description: Never 403 — that confirms existence
 > `auth-provisioning.md`; this spec owns *what they may see*.
 
 ```linear
-Flags built :::class3 -> User-private :::class3 -> CI harness :::class3 -> Domain :::class1 -> NOT NULL :::class4
+Flags :::class3 -> User-private :::class3 -> CI harness :::class3 -> NOT NULL :::class3 -> Domain :::class1
 ```
 
 - ✅ **Project spine** — `flags` gained `project_id` / `created_by_user_id` /
@@ -91,8 +91,9 @@ Flags built :::class3 -> User-private :::class3 -> CI harness :::class3 -> Domai
   user-private surfaces, shared-card private-column nulling, the broker-keys
   admin gate, and the flags membership layer. **21 passing.** Domain-router
   coverage extends it as those routers land.
-- ⏳ **`project_id NOT NULL`** — enforced app-layer (422); the physical column
-  constraint is a deferred table-rebuild migration.
+- ✅ **`project_id NOT NULL`** — physical constraint landed (migration 064,
+  table rebuild; drops/recreates the `flag_schedule` view around it). A flag can
+  no longer be project-less at the DB level, not just at the 422. Asserted in CI.
 
 ## Three classes
 
@@ -366,8 +367,8 @@ User-private :::class3 -> CI harness :::class3 -> Dispatcher :::class1 -> Domain
 4. **Domain routers** — contacts / emails / events / notes as they land, each
    project-membership-scoped, preserving compartmentalization. Resolve the
    `notes` parked review here.
-5. **`project_id NOT NULL`** — the deferred table-rebuild migration, once every
-   writer reliably stamps a project.
+5. ✅ **`project_id NOT NULL`** — table-rebuild migration 064 (the lone writer,
+   `create_flag`, already stamps a project or 422s). Verified live + in CI.
 
 > [!class4]
 > Order is by blast radius, not convenience. User-private first because a miss

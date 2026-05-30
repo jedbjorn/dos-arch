@@ -117,3 +117,18 @@ def test_flag_list_excludes_other_tenant(bob):
     rows = r.json()
     rows = rows if isinstance(rows, list) else rows.get("flags", [])
     assert all(row.get("project_id") != 500 for row in rows), "Bob saw Alice's project flags"
+
+
+def test_flags_project_id_not_null_constraint():
+    """Migration 064 made flags.project_id physically NOT NULL — a flag can never
+    be project-less (unscoped, invisible). Asserts the constraint reached the
+    harness build (schema.sql + post-059 migrations)."""
+    import os
+    import sqlite3
+    con = sqlite3.connect(os.environ["SHELL_DB_PATH"])
+    try:
+        cols = {r[1]: r for r in con.execute("PRAGMA table_info(flags)")}
+        # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk)
+        assert cols["project_id"][3] == 1, "flags.project_id must be NOT NULL (064)"
+    finally:
+        con.close()
