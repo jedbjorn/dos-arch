@@ -2,16 +2,23 @@
   // Slide-out left drawer triggered from the hamburger in TopBar.
   // Hosts secondary navigation (config pages) above and the theme
   // selector at the bottom.
+  import { onMount } from 'svelte'
   import { goto } from '$app/navigation'
+  import { getMe } from '$lib/api.js'
   import { theme, setTheme, THEMES } from '$lib/theme.js'
 
   let { open = $bindable(false) } = $props()
 
+  // The Users section surfaces the admin panel, but only for admins (the
+  // /admin page + API enforce it too). Non-admins see a disabled stub.
+  let me = $state(null)
+  onMount(async () => { try { me = await getMe() } catch {} })
+
   // Secondary nav — sectioned surfaces, kept in the drawer so the TopBar
   // stays focused on the remaining main surfaces (Projects / Flags).
   // Shells: the shell viewer. Models: per-provider activation pages.
-  // Keys: secret rotation. User: auth is a future flag, stubbed (disabled).
-  const SECTIONS = [
+  // Keys: secret rotation. Users: admin panel (user + shell management).
+  const SECTIONS = $derived([
     { title: 'Shells', items: [
       { label: 'Shells', href: '/shells' },
     ] },
@@ -23,10 +30,10 @@
     { title: 'Keys', items: [
       { label: 'API Keys', href: '/keysconfig' },
     ] },
-    { title: 'User', items: [
-      { label: 'Authentication', note: 'coming soon', disabled: true },
-    ] },
-  ]
+    { title: 'Users', items: me?.is_admin
+        ? [{ label: 'Admin', href: '/admin' }]
+        : [{ label: 'Admin', note: 'admins only', disabled: true }] },
+  ])
 
   function go(href) { close(); goto(href) }
 
