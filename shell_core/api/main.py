@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import os
 import time
+from urllib.parse import urlsplit
 
 # Shared secret proving a request came through the SvelteKit trust seam (the
 # /api proxy). The browser never holds it; only the UI server process does. When
@@ -14,10 +15,25 @@ import time
 # unauthenticated proxied request resolves to NO user, not the legacy user 1.
 _INTERNAL_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
 
+# CSRF backstop: a proxied (browser) mutation must carry an Origin/Referer in
+# this allowlist. SameSite=Lax already strips the session cookie from cross-site
+# mutations; this is the stateless defense-in-depth layer behind it. Only
+# proxied (browser-surface) requests are checked — api-key shells, the
+# dispatcher, and CLI callers send no Origin and are never subject to it.
+# Comma-separated; the operator sets the public origin in .env (loadEnv →
+# dosarch-api). Dev origins default.
+_ALLOWED_ORIGINS = {
+    o.strip().rstrip("/")
+    for o in os.environ.get(
+        "APP_ALLOWED_ORIGINS", "http://localhost:5174,http://localhost:5173"
+    ).split(",")
+    if o.strip()
+}
+
 from api.common.db import db
 from api.common.logging import _log_action
 from api.common.errors import _log_5xx
-from api.common.sessions import COOKIE_NAME, resolve_session
+from api.common.sessions import COOKIE_NAME, note_session_ua, resolve_session
 
 app = FastAPI(title="dos-arch API")
 
@@ -78,7 +94,14 @@ def _resolve_session(request: Request):
         return None
     con = db()
     try:
-        return resolve_session(con, token)
+        res = resolve_session(con, token)
+        if res is not None:
+            # Audit-only UA-binding signal — logs a mismatch, never logs out.
+            note_session_ua(
+                con, token, request.headers.get("user-agent", ""),
+                request.headers.get("cf-connecting-ip")
+                or (request.client.host if request.client else None))
+        return res
     finally:
         con.close()
 
@@ -97,6 +120,22 @@ def _is_proxied(request: Request) -> bool:
     return True
 
 
+def _origin_allowed(request: Request) -> bool:
+    """True if a browser mutation's Origin (or, as a fallback, its Referer host)
+    is in the allowlist. False when neither header is present — a browser always
+    sends one on a state-changing request, so absence is treated as cross-origin."""
+    origin = request.headers.get("origin", "").strip()
+    if not origin:
+        ref = request.headers.get("referer", "").strip()
+        if ref:
+            p = urlsplit(ref)
+            if p.scheme and p.netloc:
+                origin = f"{p.scheme}://{p.netloc}"
+    if not origin:
+        return False
+    return origin.rstrip("/") in _ALLOWED_ORIGINS
+
+
 @app.middleware("http")
 async def auth_passthrough(request: Request, call_next):
     shell_id, shell_name, shell_is_admin, bad = _resolve_caller_shell(request)
@@ -106,24 +145,34 @@ async def auth_passthrough(request: Request, call_next):
         proxied = _is_proxied(request)
     except PermissionError:
         return JSONResponse(status_code=401, content={"detail": "Bad proxy credential."})
+    # CSRF backstop on the browser surface: a proxied state-changing request must
+    # carry an allow-listed Origin. SameSite=Lax is the primary defense; this
+    # rejects the residual cases (a side-effecting GET added later, a forced
+    # SameSite relaxation) before any handler runs.
+    if proxied and request.method in MUTATION_METHODS and not _origin_allowed(request):
+        return JSONResponse(status_code=403, content={"detail": "Cross-origin request rejected."})
     sess = _resolve_session(request)
     if sess is not None:
         # The multi-tenant path: a valid session cookie sets the real user.
         request.state.user_id, request.state.account_id, request.state.is_admin = sess
-    elif proxied:
-        # Came through the proxy (a browser request) but not logged in →
-        # unauthenticated. hooks.server.js redirects page loads to /login; API
-        # calls see no user. This is the Phase 2 cutover for the user surface.
-        request.state.user_id    = None
+    elif shell_id is not None:
+        # Authenticated api-key (shell) caller. Authorization is by shell scope
+        # (shell_id / shell_is_admin, enforced in api/common/auth.py); the acting
+        # user is the single substrate owner. NOT admin at the user level — a
+        # shell's admin rights are shell_is_admin, never an implicit user-admin.
+        request.state.user_id    = 1
         request.state.account_id = None
         request.state.is_admin   = False
     else:
-        # Direct / api-key / dev callers (the dispatcher, make health, local
-        # curl) keep the legacy single-user default — they never reach the
-        # browser-facing surface. Tightened further in the isolation pass.
-        request.state.user_id    = 1
+        # No session and no api key: unauthenticated. Browser requests (proxied)
+        # are redirected to /login by hooks.server.js; anonymous direct callers
+        # (the dispatcher's tokenless reads, local curl) get NO user and NO admin.
+        # This closes the fail-open where any non-proxied request — including the
+        # case where INTERNAL_PROXY_SECRET is unset — silently became user 1 +
+        # admin. Admin now requires a real session; it is never the default.
+        request.state.user_id    = None
         request.state.account_id = None
-        request.state.is_admin   = True
+        request.state.is_admin   = False
     request.state.shell_id       = shell_id
     request.state.shell_name     = shell_name
     request.state.shell_is_admin = shell_is_admin
