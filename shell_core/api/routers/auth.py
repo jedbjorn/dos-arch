@@ -12,27 +12,17 @@ and no server-side challenge to store.
 """
 from __future__ import annotations
 
-import hashlib
-import os
+import math
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from api.common import broker
 from api.common.db import get_db
-from api.common.sessions import (COOKIE_NAME, create_session, resolve_session,
-                                 revoke_session)
+from api.common.sessions import (COOKIE_NAME, cookie_secure, create_session,
+                                 resolve_session, revoke_session, ua_fingerprint)
 
 router = APIRouter(tags=["auth"])
-
-
-def _cookie_secure() -> bool:
-    # Off in local-http dev; set AUTH_COOKIE_SECURE=1 behind TLS (prod/CF).
-    return os.environ.get("AUTH_COOKIE_SECURE") == "1"
-
-
-def _ua_hash(request: Request) -> str:
-    return hashlib.sha256(request.headers.get("user-agent", "").encode()).hexdigest()[:32]
 
 
 def _client_ip(request: Request) -> str:
@@ -49,6 +39,45 @@ def _audit(con, user_id, account_id, email, kind, request, detail=None) -> None:
     con.commit()
 
 
+# Login backoff — exponential, keyed on email, derived from auth_events (no
+# in-process state; survives restart). After the nth failed attempt in the last
+# hour (since the last success), the next attempt must wait 3·2^(n-1) seconds,
+# capped at 15 min. Blocked attempts are logged as 'login_blocked' — a kind that
+# is NOT counted, so polling a locked account can't keep extending the timer.
+_BACKOFF_BASE_S = 3
+_BACKOFF_CAP_S = 900
+_BACKOFF_WINDOW = "-1 hour"
+_COUNTED_FAILS = ("login_fail", "totp_fail")
+
+
+def _login_wait_seconds(con, email: str) -> int:
+    """Seconds the caller must still wait before another login attempt, 0 if
+    clear. Counts only real credential failures within the rolling window that
+    occurred after the most recent successful login for this email."""
+    placeholders = ",".join("?" * len(_COUNTED_FAILS))
+    row = con.execute(
+        f"""
+        SELECT COUNT(*) AS fails,
+               (julianday('now') - julianday(MAX(created_at))) * 86400 AS elapsed
+        FROM auth_events
+        WHERE email = ? COLLATE NOCASE
+          AND kind IN ({placeholders})
+          AND created_at >= datetime('now', ?)
+          AND created_at > COALESCE(
+                (SELECT MAX(created_at) FROM auth_events
+                  WHERE email = ? COLLATE NOCASE AND kind = 'login_ok'),
+                '0000-01-01')
+        """,
+        (email, *_COUNTED_FAILS, _BACKOFF_WINDOW, email),
+    ).fetchone()
+    fails = row["fails"] or 0
+    if fails == 0:
+        return 0
+    cooldown = min(_BACKOFF_BASE_S * (2 ** (fails - 1)), _BACKOFF_CAP_S)
+    remaining = cooldown - (row["elapsed"] or 0)
+    return max(0, math.ceil(remaining))
+
+
 class LoginBody(BaseModel):
     email:    str
     password: str
@@ -58,6 +87,15 @@ class LoginBody(BaseModel):
 @router.post("/auth/login", summary="Email + password (+ TOTP) login; mints a session on success")
 def login(body: LoginBody, request: Request, response: Response, con=Depends(get_db)):
     email = body.email.strip()
+    # 0) backoff gate — reject (without hitting the broker) while inside the
+    # exponential cooldown for this email. Logged uncounted so polling can't
+    # extend the timer.
+    wait = _login_wait_seconds(con, email)
+    if wait > 0:
+        _audit(con, None, None, email, "login_blocked", request, f"wait={wait}s")
+        raise HTTPException(429, "Too many attempts. Try again later.",
+                            headers={"Retry-After": str(wait)})
+
     # 1) password — relayed to the broker IdP (uniform failure)
     _, verify = broker.post("/admin/auth/verify", {"ident": email, "password": body.password})
     if not verify.get("ok"):
@@ -97,12 +135,13 @@ def login(body: LoginBody, request: Request, response: Response, con=Depends(get
         con.commit()
 
     # 5) success — mint session, set cookie
-    token = create_session(con, user_id, account_id, _ua_hash(request))
+    token = create_session(con, user_id, account_id,
+                           ua_fingerprint(request.headers.get("user-agent", "")))
     _audit(con, user_id, account_id, email, "login_ok", request)
     _audit(con, user_id, account_id, email, "session_create", request)
     response.set_cookie(
         COOKIE_NAME, token, httponly=True, samesite="lax", path="/",
-        max_age=2592000, secure=_cookie_secure())
+        max_age=2592000, secure=cookie_secure())
     return {"stage": "authed",
             "user": {"user_id": user_id, "email": email, "is_admin": bool(urow["is_admin"])}}
 
@@ -111,7 +150,8 @@ def login(body: LoginBody, request: Request, response: Response, con=Depends(get
 def logout(request: Request, response: Response, con=Depends(get_db)):
     token = request.cookies.get(COOKIE_NAME)
     revoke_session(con, token)
-    response.delete_cookie(COOKIE_NAME, path="/")
+    # Attributes must match the set cookie or the browser won't clear a __Host- one.
+    response.delete_cookie(COOKIE_NAME, path="/", samesite="lax", secure=cookie_secure())
     return {"ok": True}
 
 

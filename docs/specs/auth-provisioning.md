@@ -11,7 +11,27 @@ purpose: Auth, sessions, isolation, provisioning
 ## Status
 
 > [!class1]
-> Draft — living specification. 2026-05-30. Not yet implemented.
+> Living specification. 2026-05-30. **Auth spine + login + hardening pass
+> implemented** (sessions, broker-IdP login, password + TOTP, admin user
+> management). Data isolation across all routers is the remaining phase.
+
+> [!class3]
+> **Implementation notes — hardening pass (2026-05-30).** Four decisions below
+> were refined when built; this block is authoritative where it differs from the
+> prose:
+> - **CSRF**: shipped as **SameSite=Lax + a server-side Origin/Referer allowlist
+>   on mutating methods** (`APP_ALLOWED_ORIGINS`), not the double-submit token.
+>   Only proxied (browser-surface) mutations are checked; api-key/dispatcher
+>   callers are exempt.
+> - **Trust boundary**: an absent/invalid internal secret resolves a request to
+>   **unauthenticated / no-admin** (not a literal 401-before-anything). `/health`
+>   and the dispatcher's tokenless reads keep working; admin is never a default.
+> - **UA fingerprint**: **audit-only signal** — a coarse `family|OS|major`
+>   fingerprint mismatch logs an `auth_events` anomaly (throttled) but never
+>   forces re-auth. Tolerant of minor/patch bumps by construction.
+> - **Login rate-limit**: per-email **exponential backoff** (3s, ×2 per failed
+>   attempt in a rolling 1h window, capped at 15 min), derived from `auth_events`;
+>   blocked polls are logged uncounted so they can't extend the cooldown.
 
 Peer to `docs/specs/agnostic-runtime.md` (browser-chat + runtime) and
 `docs/specs/isolation-model.md` (shell *execution* isolation — distinct from
@@ -491,7 +511,7 @@ password + TOTP + sessions + CSRF are all $0, in-process, self-hosted.
 | Auth boundary | SvelteKit BFF; FastAPI loopback trusts injected user |
 | Session mechanism | Server-side sessions + httpOnly cookie |
 | Network binding | **None** — network changes accepted (VPN-friendly) |
-| Browser binding | Cookie (httpOnly) + UA fingerprint (stable parts; tolerate minor bumps) |
+| Browser binding | Cookie (httpOnly; `__Host-` prefix under TLS) + UA fingerprint **audit-only** (logged, not enforced) |
 | Lifetime | Sliding 30 days |
 | Login factor | Password + TOTP MFA |
 | Email | **None** — scrapped; no email infra |
@@ -505,8 +525,9 @@ password + TOTP + sessions + CSRF are all $0, in-process, self-hosted.
 | Skills/tools/prompt | Synced per shell-type (deferred model) |
 | Exp-Prime | Canonical template + beta tester; live propagation |
 | Edge | Cloudflare: TLS + WAF + client IP (audit only) |
-| Session resolution | FastAPI (loopback), behind an internal-secret seam |
+| Session resolution | FastAPI (loopback), behind an internal-secret seam; no secret → unauthenticated/no-admin (not a hard 401) |
 | `/api` proxy | SvelteKit `/api/[...path]` server route (the trust seam) |
-| CSRF | SameSite=Lax + double-submit token on mutations |
+| CSRF | SameSite=Lax + **server-side Origin/Referer allowlist** on proxied mutations (`APP_ALLOWED_ORIGINS`) |
+| Login rate-limit | Per-email exponential backoff (3s ×2/fail, 1h window, 15-min cap), `auth_events`-derived |
 | Session token | SHA-256 hashed at rest |
 | TOTP secret | Encrypted at rest, broker-held key |
