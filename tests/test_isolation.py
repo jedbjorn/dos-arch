@@ -89,6 +89,33 @@ def test_create_decision_isolation(alice, shell_a, bob, shell_b, anon):
     assert anon.post(f"/shells/{A}/decisions", json=body).status_code == 404
 
 
+# ── Inter-shell messages (shell-messages) ────────────────────────────────────
+
+def test_shell_message_inbox_read_isolation(alice, shell_a, bob, anon, shell_b):
+    """A shell's inbox (recipient_id=Alice's shell) is readable only by its
+    owner / the shell itself / admin — not another tenant."""
+    path = f"/shell-messages?recipient_id={A}"
+    assert alice.get(path).status_code == 200
+    assert shell_a.get(path).status_code == 200
+    assert bob.get(path).status_code == 404
+    assert anon.get(path).status_code == 404
+    assert shell_b.get(path).status_code == 404
+
+
+def test_shell_message_send_no_impersonation(alice, bob, shell_b):
+    """You may send only *as* a shell you own — Bob cannot send as Alice's shell."""
+    body = {"sender_id": A, "recipient_id": 102, "body": "x", "auto_prompt": False}
+    assert alice.post("/shell-messages", json=body).status_code == 200
+    assert bob.post("/shell-messages", json=body).status_code == 404
+    assert shell_b.post("/shell-messages", json=body).status_code == 404
+
+
+def test_shell_message_mark_read_isolation(alice, bob, ids):
+    mid = ids["msg_to_a"]
+    assert bob.patch(f"/shell-messages/{mid}").status_code == 404
+    assert alice.patch(f"/shell-messages/{mid}").status_code == 200
+
+
 # ── Broker secrets (keys.py) — admin only ────────────────────────────────────
 
 def test_keys_admin_only(admin, bob, anon, shell_a):

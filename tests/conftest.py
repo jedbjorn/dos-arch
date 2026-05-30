@@ -103,6 +103,12 @@ def _seed(con: sqlite3.Connection) -> None:
         con.execute("INSERT INTO chat_messages (shell_id, direction, user_id, body, chat_session_id) "
                     "VALUES (?, 'inbound', ?, 'hi', ?)", (sid, uid, f"cs{sid}"))
 
+    # An inter-shell message to Alice's shell (Bob must not read it).
+    cur = con.execute(
+        "INSERT INTO shell_messages (sender_id, recipient_id, subject, body) VALUES (?,?,?,?)",
+        (SHELL_SHARED, SHELL_A, "hi", "secret-to-alice"))
+    _IDS["msg_to_a"] = cur.lastrowid
+
     # Two flags in Alice's project: one team-visible, one creator-private.
     cur = con.execute(
         "INSERT INTO flags (display_name, priority, created_date, shell_id, project_id, "
