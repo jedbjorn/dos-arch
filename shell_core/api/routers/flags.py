@@ -71,6 +71,40 @@ def _validate_parent(con, parent_flag_id):
         raise HTTPException(422, f"parent_flag_id {parent_flag_id} not found")
 
 
+def _default_project(con, user_id) -> int | None:
+    """A flag's project when the caller didn't name one: the caller's sole
+    project membership. None when they belong to zero or multiple projects —
+    that ambiguity is resolved by an explicit project_id (the UI picker)."""
+    if user_id is None:
+        return None
+    rows = con.execute(
+        "SELECT project_id FROM user_projects WHERE user_id = ? AND is_deleted = 0",
+        (user_id,),
+    ).fetchall()
+    return rows[0]["project_id"] if len(rows) == 1 else None
+
+
+def _flag_project(con, flag_id: int):
+    row = con.execute("SELECT project_id FROM flags WHERE flag_id = ?", (flag_id,)).fetchone()
+    return row["project_id"] if row else None
+
+
+def _log_event(con, request: Request, project_id, flag_id: int, action: str) -> None:
+    """Append a project_events row for a flag action, in the SAME transaction as
+    the action (the caller commits). Event-only — verb + actor + time, never the
+    data. No-op for a flag with no project_id (pre-spine rows): there is no
+    project to scope the event to."""
+    if project_id is None:
+        return
+    con.execute(
+        "INSERT INTO project_events "
+        "(project_id, entity_type, entity_id, action, actor_user_id, actor_shell_id) "
+        "VALUES (?, 'flag', ?, ?, ?, ?)",
+        (project_id, flag_id, action,
+         getattr(request.state, "user_id", None), _caller_shell(request)),
+    )
+
+
 class FlagBody(BaseModel):
     display_name:   str = Field(max_length=250)
     description:    str = ""
@@ -81,6 +115,7 @@ class FlagBody(BaseModel):
     parent_flag_id: int | None = None
     estimated_days: float | None = None
     shell_id:       int | None = None
+    project_id:     int | None = None
 
 
 class StartDateBody(BaseModel):
@@ -147,11 +182,17 @@ def create_flag(body: FlagBody, request: Request, con = Depends(get_db)):
     # Bearer token resolved one. The keyless localhost UI without an
     # explicit shell_id still lands shell_id=NULL — by design, "no owner".
     shell_id = body.shell_id if body.shell_id is not None else _caller_shell(request)
+    # Project spine (CC-108): created_by_user_id is the access axis; project_id
+    # is the flag's project — an explicit body value wins (the UI picker),
+    # otherwise the caller's sole membership. shell_id is provenance only.
+    user_id    = getattr(request.state, "user_id", None)
+    project_id = body.project_id if body.project_id is not None else _default_project(con, user_id)
     con.execute("""
         INSERT INTO flags (display_name, priority, description,
                            start_date, parent_flag_id, estimated_days,
-                           resolved, created_date, shell_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, date('now'), ?)
+                           resolved, created_date, shell_id,
+                           project_id, created_by_user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, date('now'), ?, ?, ?)
     """, (
         body.display_name.strip(),
         body.priority,
@@ -161,28 +202,32 @@ def create_flag(body: FlagBody, request: Request, con = Depends(get_db)):
         body.estimated_days,
         resolved,
         shell_id,
+        project_id,
+        user_id,
     ))
     flag_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+    _log_event(con, request, project_id, flag_id, "created")
     con.commit()
     return _get_flag(con, flag_id)
 
 
 @router.patch("/flags/{flag_id}/priority", summary="Update flag priority")
-def update_flag_priority(flag_id: int, body: PriorityBody, con = Depends(get_db)):
+def update_flag_priority(flag_id: int, body: PriorityBody, request: Request, con = Depends(get_db)):
     if body.priority not in FLAG_PRIORITIES:
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
     if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Flag not found")
     con.execute("UPDATE flags SET priority = ? WHERE flag_id = ?", (body.priority, flag_id))
+    _log_event(con, request, _flag_project(con, flag_id), flag_id, "updated")
     con.commit()
     return _get_flag(con, flag_id)
 
 
 @router.patch("/flags/{flag_id}/start_date", summary="Set or clear flag start_date; resolved transitions automatically")
-def update_flag_start_date(flag_id: int, body: StartDateBody, con = Depends(get_db)):
+def update_flag_start_date(flag_id: int, body: StartDateBody, request: Request, con = Depends(get_db)):
     _valid_date(body.start_date)
     start_date = body.start_date.strip() or None
-    flag = con.execute("SELECT resolved, start_date FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+    flag = con.execute("SELECT resolved, start_date, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     if start_date is None:
@@ -195,6 +240,7 @@ def update_flag_start_date(flag_id: int, body: StartDateBody, con = Depends(get_
         "UPDATE flags SET start_date = ?, resolved = ? WHERE flag_id = ?",
         (start_date, new_resolved, flag_id)
     )
+    _log_event(con, request, flag["project_id"], flag_id, "updated")
     con.commit()
     return _get_flag(con, flag_id)
 
@@ -259,22 +305,24 @@ def get_flag(flag_id: int, con = Depends(get_db)):
 
 
 @router.delete("/flags/{flag_id}", summary="Soft-delete a flag (children re-parented to grandparent)")
-def delete_flag(flag_id: int, con = Depends(get_db)):
+def delete_flag(flag_id: int, request: Request, con = Depends(get_db)):
     if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
         raise HTTPException(404, "Flag not found")
+    project_id = _flag_project(con, flag_id)
     con.execute("""
         UPDATE flags
            SET parent_flag_id = (SELECT parent_flag_id FROM flags WHERE flag_id = ?)
          WHERE parent_flag_id = ?
     """, (flag_id, flag_id))
     con.execute("UPDATE flags SET is_deleted = 1 WHERE flag_id = ?", (flag_id,))
+    _log_event(con, request, project_id, flag_id, "deleted")
     con.commit()
     return {"ok": True}
 
 
 @router.patch("/flags/{flag_id}/note", summary="Append a dated note to flag.resolution_notes")
-def add_flag_note(flag_id: int, body: NoteBody, con = Depends(get_db)):
-    flag = con.execute("SELECT resolution_notes FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+def add_flag_note(flag_id: int, body: NoteBody, request: Request, con = Depends(get_db)):
+    flag = con.execute("SELECT resolution_notes, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     stamp    = date.today().strftime("%b %-d, %Y")
@@ -284,30 +332,32 @@ def add_flag_note(flag_id: int, body: NoteBody, con = Depends(get_db)):
     existing = flag["resolution_notes"] or ""
     new_notes = (existing + "\n\n" + entry).strip()
     con.execute("UPDATE flags SET resolution_notes = ? WHERE flag_id = ?", (new_notes, flag_id))
+    _log_event(con, request, flag["project_id"], flag_id, "updated")
     con.commit()
     return _get_flag(con, flag_id)
 
 
 @router.put("/flags/{flag_id}/resolution_notes", summary="Replace flag resolution notes")
-def put_flag_notes(flag_id: int, body: RawNotesBody, con = Depends(get_db)):
+def put_flag_notes(flag_id: int, body: RawNotesBody, request: Request, con = Depends(get_db)):
     if not con.execute("SELECT 1 FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone():
         raise HTTPException(status_code=404, detail="Flag not found")
     raw = body.resolution_notes if body.resolution_notes is not None else body.notes
     val = raw.strip() if raw is not None else None
     con.execute("UPDATE flags SET resolution_notes = NULLIF(?, '') WHERE flag_id = ?", (val, flag_id))
+    _log_event(con, request, _flag_project(con, flag_id), flag_id, "updated")
     con.commit()
     return _get_flag(con, flag_id)
 
 
 @router.patch("/flags/{flag_id}/resolve", summary="Resolve, reopen, or set tracking on a flag")
-def resolve_flag(flag_id: int, body: ResolveBody, con = Depends(get_db)):
+def resolve_flag(flag_id: int, body: ResolveBody, request: Request, con = Depends(get_db)):
     try:
         status = body.effective_status
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     if status not in (0, 1, 2):
         raise HTTPException(status_code=422, detail="status must be 0, 1, or 2")
-    flag = con.execute("SELECT resolved, resolution_notes FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
+    flag = con.execute("SELECT resolved, resolution_notes, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0", (flag_id,)).fetchone()
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
     # status=0 is "Reopened" only when the flag was actually Resolved before;
@@ -336,18 +386,22 @@ def resolve_flag(flag_id: int, body: ResolveBody, con = Depends(get_db)):
             "UPDATE flags SET resolved = ?, resolved_date = NULL, resolution_notes = ? WHERE flag_id = ?",
             (status, new_notes, flag_id)
         )
+    # Event action mirrors the semantic transition: resolve / reopen / (tracking
+    # or first-open) → updated. Matches the project_events action enum.
+    event_action = "resolved" if status == 1 else ("reopened" if action == "Reopened" else "updated")
+    _log_event(con, request, flag["project_id"], flag_id, event_action)
     con.commit()
     return _get_flag(con, flag_id)
 
 
 @router.patch("/flags/{flag_id}", summary="Update one or more flag fields")
-def update_flag(flag_id: int, body: UpdateFlagBody, con = Depends(get_db)):
+def update_flag(flag_id: int, body: UpdateFlagBody, request: Request, con = Depends(get_db)):
     if body.priority and body.priority not in FLAG_PRIORITIES:
         _enum_error("priority", body.priority, FLAG_PRIORITIES)
     if body.start_date.strip():
         _valid_date(body.start_date)
     flag = con.execute(
-        "SELECT resolved, resolution_notes, parent_flag_id FROM flags WHERE flag_id = ? AND is_deleted = 0",
+        "SELECT resolved, resolution_notes, parent_flag_id, project_id FROM flags WHERE flag_id = ? AND is_deleted = 0",
         (flag_id,)
     ).fetchone()
     if not flag:
@@ -386,5 +440,6 @@ def update_flag(flag_id: int, body: UpdateFlagBody, con = Depends(get_db)):
             "UPDATE flags SET estimated_days = ? WHERE flag_id = ?",
             (body.estimated_days, flag_id)
         )
+    _log_event(con, request, flag["project_id"], flag_id, "updated")
     con.commit()
     return _get_flag(con, flag_id)
